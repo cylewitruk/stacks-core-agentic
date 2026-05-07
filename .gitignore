@@ -1,0 +1,22 @@
+# Ignore everything by default
+*
+
+# Keep repo metadata/config
+!.gitignore
+
+# Include specific top-level files
+!README.md
+!overview.md
+
+# Include only repo-owned directories
+!prompts/
+!prompts/**
+
+!schemas/
+!schemas/**
+
+!scripts/
+!scripts/**
+
+!repos/
+!repos/stacks-core/
