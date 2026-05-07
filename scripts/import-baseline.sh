@@ -7,11 +7,12 @@
 # Usage:
 #   import-baseline.sh SESSION_DIR RUN_ID [RERUN_ID]
 #
-# If RERUN_ID is omitted, RUN_ID is used for both. The downstream noise-floor
-# computation then sees zero variance — finalize-session.sh treats every
-# experiment improvement as significant. That's fine for a demo where you
-# just want to see the rest of the pipeline run; for accept/reject decisions
-# in production you should always supply a real RERUN_ID.
+# If RERUN_ID is omitted, RUN_ID is used for both. In that case this script
+# writes a conservative fallback noise floor into `baseline-noise-floor-pct`
+# so downstream phases do not treat every tiny delta as significant. Triage
+# can still use the DB to look for spans that recur across many blocks/txs
+# within the single imported run, but production-grade accept/reject decisions
+# should still prefer a real rerun.
 #
 # Outputs (in SESSION_DIR):
 #   same as run-baseline.sh
@@ -71,5 +72,9 @@ fi
 echo "imported baseline-run-id   : $RUN_ID"
 echo "imported baseline-rerun-id : $RERUN_ID"
 if [ "$RUN_ID" = "$RERUN_ID" ]; then
-  echo "WARNING: noise floor will be 0 (same id used for both)." >&2
+  SINGLE_RUN_FLOOR="${SINGLE_RUN_NOISE_FLOOR_PCT:-1.0}"
+  printf '%s\n' "$SINGLE_RUN_FLOOR" > "$OPT_SESSION_DIR/baseline-noise-floor-pct"
+  echo "WARNING: imported a single run only; using fallback noise floor ${SINGLE_RUN_FLOOR}%." >&2
+else
+  rm -f "$OPT_SESSION_DIR/baseline-noise-floor-pct"
 fi

@@ -26,10 +26,16 @@ BASELINE_RUN_ID="$(cat "$OPT_SESSION_DIR/baseline-run-id")"
 BASELINE_RERUN_ID="$(cat "$OPT_SESSION_DIR/baseline-rerun-id")"
 export BASELINE_RUN_ID BASELINE_RERUN_ID
 
+PRECOMPUTED_NOISE_FLOOR_PCT=""
+if [ -f "$OPT_SESSION_DIR/baseline-noise-floor-pct" ]; then
+  PRECOMPUTED_NOISE_FLOOR_PCT="$(cat "$OPT_SESSION_DIR/baseline-noise-floor-pct")"
+fi
+export PRECOMPUTED_NOISE_FLOOR_PCT
+
 # envsubst's SHELL-FORMAT arg is a literal list of $VAR tokens; single quotes
 # are required so the shell doesn't expand them before envsubst sees them.
 # shellcheck disable=SC2016
-envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELINE_RUN_ID $BASELINE_RERUN_ID $NON_TARGETS_PATH $CANDIDATES_SCHEMA_PATH' \
+envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELINE_RUN_ID $BASELINE_RERUN_ID $PRECOMPUTED_NOISE_FLOOR_PCT $NON_TARGETS_PATH $CANDIDATES_SCHEMA_PATH' \
   < "$PROMPTS_DIR/triage.md" \
   > "$OPT_SESSION_DIR/triage-prompt.md"
 

@@ -16,7 +16,11 @@ ANALYSES_DIR="$SESSION_DIR/analyses"
 SESSION_ID=$(jq -r '.session_id' "$CANDIDATES")
 BASELINE_RUN_ID=$(jq -r '.baseline_run_id' "$CANDIDATES")
 BASELINE_RERUN_ID=$(jq -r '.baseline_rerun_id' "$CANDIDATES")
-NOISE_FLOOR_PCT=$(jq -r '.noise_floor_pct' "$CANDIDATES")
+if [ -f "$SESSION_DIR/baseline-noise-floor-pct" ]; then
+  NOISE_FLOOR_PCT=$(cat "$SESSION_DIR/baseline-noise-floor-pct")
+else
+  NOISE_FLOOR_PCT=$(jq -r '.noise_floor_pct' "$CANDIDATES")
+fi
 
 # Glob every analysis.json. If no analyses exist (empty candidate set), emit
 # an empty targets list instead of erroring.

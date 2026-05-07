@@ -31,7 +31,10 @@ Do NOT modify the DB. Read-only queries via `sqlite3 "${STACKS_BENCH_DATA_DIR}/a
 # Rules
 
 - Do NOT cap the number of candidates. Emit as many or as few as the data supports.
-- Compute the per-host noise floor from the baseline run vs the baseline rerun. Reject any candidate whose plausible improvement is smaller than this floor.
+- Compute the per-host noise floor from the baseline run vs the baseline rerun, unless a precomputed fallback noise floor is provided below.
+- Precomputed fallback noise floor for single-run imports: `${PRECOMPUTED_NOISE_FLOOR_PCT}`
+- If `${PRECOMPUTED_NOISE_FLOOR_PCT}` is non-empty, use that exact value for `noise_floor_pct` instead of reporting `0`.
+- When only a single imported run is available, use aggregate DB evidence across blocks and transactions within that run to reject one-off outliers. Favor spans that recur broadly across the replay, not spans that spike in only a tiny number of blocks/txs.
 - Reject any span that overlaps with `non-targets.md`.
 - Each candidate's `id` must be a stable kebab-case string derivable from the span name; it is used as a path segment by downstream phases.
 - Keep `rationale` to one line. Detail belongs in the analyzer's later analysis.
