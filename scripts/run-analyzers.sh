@@ -65,14 +65,18 @@ run_analyzer() {
   # codebase-reading task, not a web-search task. The analyzer's cwd is its
   # own output dir (writable); $BASE is added for read access to the codebase
   # and the prompt forbids modifying it.
+  local -a CODEX_SANDBOX_ARGS CODEX_EXEC_ARGS
+  mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+  mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
+
   run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
     codex \
     -m "${CODEX_MODEL:-gpt-5.5}" \
-    --ask-for-approval never \
+    "${CODEX_SANDBOX_ARGS[@]}" \
     exec \
       --skip-git-repo-check \
       --cd "$OUT" --add-dir "$FRAMEWORK_ROOT" --add-dir "$BASE" \
-      --sandbox workspace-write --json \
+      "${CODEX_EXEC_ARGS[@]}" \
       --output-last-message "$OUT/analyzer-final-message.md" \
       "$(cat "$OUT/analyzer-prompt.md")" \
     > "$OUT/analyzer-events.jsonl" \
@@ -82,6 +86,7 @@ run_analyzer() {
     > "$OUT/analyzer-conversation-id"
 }
 export -f run_analyzer capture_codex_conversation_id run_with_timeout
+export -f codex_sandbox_args codex_exec_args
 export ANALYSES_DIR OPT_SESSION_DIR BASE
 
 # xargs -P fans out, preserving streaming logs per subagent.

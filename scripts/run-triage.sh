@@ -45,17 +45,20 @@ envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELIN
 # search and removing it cuts a network dependency / source of nondeterminism.
 # Add the framework root plus any env-overridden data/code roots explicitly so
 # the prompt can still read them even if the operator moves them elsewhere.
+mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
+
 run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
   codex \
-  -m "${CODEX_MODEL:-gpt-5.5}" \
-  --ask-for-approval never \
+    -m "${CODEX_MODEL:-gpt-5.5}" \
+    "${CODEX_SANDBOX_ARGS[@]}" \
   exec \
     --skip-git-repo-check \
     --cd "$OPT_SESSION_DIR" \
     --add-dir "$FRAMEWORK_ROOT" \
     --add-dir "$STACKS_BENCH_DATA_DIR" \
     --add-dir "$BASE" \
-    --sandbox workspace-write --json \
+    "${CODEX_EXEC_ARGS[@]}" \
     --output-last-message "$OPT_SESSION_DIR/triage-final-message.md" \
     "$(cat "$OPT_SESSION_DIR/triage-prompt.md")" \
   > "$OPT_SESSION_DIR/triage-events.jsonl" \

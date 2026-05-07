@@ -180,3 +180,19 @@ run_with_timeout() {
     "$@"
   fi
 }
+
+codex_sandbox_args() {
+  if [ "${CODEX_DANGEROUS_BYPASS_SANDBOX:-0}" = "1" ]; then
+    printf '%s\n' "--dangerously-bypass-approvals-and-sandbox"
+  else
+    printf '%s\n' "--ask-for-approval" "never"
+  fi
+}
+
+codex_exec_args() {
+  if [ "${CODEX_DANGEROUS_BYPASS_SANDBOX:-0}" = "1" ]; then
+    printf '%s\n' "--json"
+  else
+    printf '%s\n' "--sandbox" "workspace-write" "--json"
+  fi
+}
