@@ -1,16 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stacks-bench.local/schemas/analysis.schema.json",
-  "title": "Per-candidate analysis",
-  "description": "Output of one analyzer agent for one triage candidate. Either an accepted analysis a downstream optimizer can implement against, or a rejection with reason.",
+  "title": "Per-family analysis",
+  "description": "Output of one analyzer agent for one triage family. Either an accepted analysis (with the analyzer's chosen target span and proposed change) or a rejection with reason. Span identity is committed HERE, not at triage — the analyzer has the trace depth + code context needed to make that call.",
   "oneOf": [
     {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "schema_version",
-        "candidate_id",
+        "family_id",
         "status",
+        "target_span",
+        "fix_signature",
         "hotspot",
         "files",
         "evidence",
@@ -20,17 +22,36 @@
         "verification_plan"
       ],
       "properties": {
-        "schema_version": { "const": 1 },
-        "candidate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "schema_version": { "const": 2 },
+        "family_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Matches the `id` of the corresponding candidate in candidates.json."
+        },
         "status": { "const": "accepted" },
+        "target_span": {
+          "type": "string",
+          "description": "The specific span the analyzer chose as the optimization handle within this family. Distinct from anything in the candidate's `suspected_spans` if the analyzer's investigation pointed elsewhere."
+        },
+        "fix_signature": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Stable kebab-case slug describing the structural change being proposed (e.g. `marf-read-cache-rollback-wrapper`, `clarity-value-serialize-zero-copy`). The merge phase uses this as a strong dedup hint when collapsing analyses that converge on the same fix; it also serves as a stable audit handle. Two analyses proposing the same structural change should produce the same (or equivalent) fix_signature so the merger has a clear signal to group them."
+        },
         "hotspot": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["span", "self_wall_us", "calls", "location"],
+          "required": ["span", "self_wall_us", "total_wall_us", "calls", "location"],
           "properties": {
             "span": { "type": "string" },
-            "self_wall_us": { "type": "integer" },
-            "total_wall_us": { "type": "integer" },
+            "self_wall_us": {
+              "type": "integer",
+              "description": "Exclusive wall time at the target span (microseconds)."
+            },
+            "total_wall_us": {
+              "type": "integer",
+              "description": "Inclusive wall time at the target span, i.e. self plus subtree (microseconds). Required because the merge phase uses it to pick the canonical hotspot when multiple analyses converge on the same fix; the trace queries always expose it (`wall_ms` column)."
+            },
             "calls": { "type": "integer" },
             "location": { "type": "string" }
           }
@@ -42,7 +63,7 @@
         },
         "evidence": {
           "type": "string",
-          "description": "Why this hotspot is real and addressable. Cite specific code (function names, call patterns)."
+          "description": "Why this hotspot is real and addressable. Cite specific code (function names, call patterns) AND the trace evidence from the family's representative txs/blocks."
         },
         "proposed_change": {
           "type": "string",
@@ -53,20 +74,24 @@
         "verification_plan": {
           "type": "string",
           "description": "Which tests must pass / what behavior to spot-check after the change."
+        },
+        "global_materiality_note": {
+          "type": "string",
+          "description": "Optional: the analyzer's read on whether this fix benefits workloads beyond this family. If span_recurrence or aggregate queries show the target span is hot across many families, mention it. The merge phase uses these notes plus actual convergence to decide priority."
         }
       }
     },
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "candidate_id", "status", "reason"],
+      "required": ["schema_version", "family_id", "status", "reason"],
       "properties": {
-        "schema_version": { "const": 1 },
-        "candidate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "schema_version": { "const": 2 },
+        "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
         "status": { "const": "rejected" },
         "reason": {
           "type": "string",
-          "description": "Why this candidate is not viable: overlaps with non-targets, already optimized, cost is inherent, etc."
+          "description": "Why this family is not viable: dominated by outlier blocks, fix path not actionable, hotspot turns out to be in a non-target span, etc."
         }
       }
     }

@@ -44,54 +44,61 @@ The prompts, schemas, and scripts referenced throughout this playbook are
 checked in alongside this document, so the demo is reproducible from a fresh
 clone.
 
-## Three-tier agent architecture
+## Family-first agent architecture (schema v2)
 
-A single "coordinator" agent had to do too much — both deciding which profiler spans were worth investigating *and* exploring the (large) `stacks-core` codebase to fill out files / proposed_change / risk for each candidate, in one context. Quality decayed on the later candidates as context filled up.
+The pipeline splits the optimization workflow across four agent tiers plus shell-owned phases. The split exists because each decision in the loop needs different context: triage needs aggregate workload signal but no code; analyzers need code + traces for a single workload; the merge phase needs to reason about cross-family equivalence; optimizers need a clean implementation environment. Concentrating these into one agent (or making any tier do another's job) costs quality.
 
-The pipeline is split into three agent tiers, plus shell-owned phases for benchmarking and assembly:
+Crucially, **triage does NOT commit a target span**. Its job is to identify WHAT to investigate (representative txs, blocks, or contract.functions). The analyzer commits the span identity using its full trace + code context, and the merge phase deduplicates analyses that converge on the same fix.
 
 ```text
-                     [profiler hotspots]
+                     [profiler data + workload]
                             │
                             ▼
              ┌──────────────────────────────┐
              │  Triage agent (1 instance)   │   prompts/triage.md
-             │  • profiler JSON             │   → candidates.json
-             │  • SQLite DB (cross-run)     │
+             │  • profiler JSON + DB        │   → candidates.json (family-shaped)
+             │  • picks workload entry      │     {kind, representative_ids,
+             │    points; NOT span identity │      suspected_spans?, ...}
              │  • no codebase exploration   │
              └──────────────┬───────────────┘
-                            │
+                            │ one analyzer per family
                 ┌───────────┴────────────┐
                 ▼           ▼            ▼
         ┌───────────┐ ┌───────────┐ ┌───────────┐
         │ Analyzer  │ │ Analyzer  │ │ Analyzer  │   prompts/analyzer.md
-        │ (cand-1)  │ │ (cand-2)  │ │ (cand-3)  │   → analyses/<id>/analysis.json
-        │ deep code │ │ deep code │ │ deep code │      (accepted | rejected)
+        │ (fam-A)   │ │ (fam-B)   │ │ (fam-C)   │   → analyses/<family-id>/
+        │ traces +  │ │ traces +  │ │ traces +  │     analysis.json
+        │ code      │ │ code      │ │ code      │     {target_span,
+        │           │ │           │ │           │      fix_signature, ...}
         └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
               └─────────────┼─────────────┘
                             ▼
-            [shell: scripts/assemble-targets.sh]
-                            │
-                            ▼
-             optimization-targets.json (accepted only)
-                            │
-                ┌───────────┴────────────┐
-                ▼           ▼            ▼
-        ┌───────────┐ ┌───────────┐ ┌───────────┐
-        │ Optimizer │ │ Optimizer │ │ Optimizer │   prompts/optimizer.md
-        │ (target-a)│ │ (target-b)│ │ (target-c)│   → experiments/<id>/...
-        │ worktree  │ │ worktree  │ │ worktree  │
-        └───────────┘ └───────────┘ └───────────┘
+                  ┌──────────────────────┐
+                  │  Merge agent         │   prompts/merge-analyses.md
+                  │  (1 instance, LLM)   │   → optimization-targets.json
+                  │  • dedup convergent  │     (canonical fix per target;
+                  │    fixes by         │      merged_from records the
+                  │    structural       │      contributing families)
+                  │    equivalence       │
+                  └──────────┬───────────┘
+                             │ one optimizer per merged target
+                 ┌───────────┴────────────┐
+                 ▼           ▼            ▼
+         ┌───────────┐ ┌───────────┐ ┌───────────┐
+         │ Optimizer │ │ Optimizer │ │ Optimizer │   prompts/optimizer.md
+         │ (target-a)│ │ (target-b)│ │ (target-c)│   → experiments/<id>/...
+         │ worktree  │ │ worktree  │ │ worktree  │
+         └───────────┘ └───────────┘ └───────────┘
 ```
 
 Per tier:
 
-* **Triage** runs once. Tiny context (just profiler JSON + non-targets list). Produces `candidates.json`.
-* **Analyzer** runs in parallel, one per candidate. Each gets its full context budget for one span; reads `${BASE}` deeply but doesn't modify it. Produces `analyses/<candidate-id>/analysis.json` with `status: accepted | rejected`.
-* **Shell assembly** (`scripts/assemble-targets.sh`) collects accepted analyses into `optimization-targets.json`, preserving candidate order, dropping rejections.
-* **Optimizer** runs in parallel, one per accepted target, each in its own git worktree. Implements the change, runs tests, leaves a release binary for the coordinator script to benchmark.
+* **Triage** runs once. Picks 0..N candidate families (tx_family / block_family / contract_family). Reads profiler JSON + the SQLite DB but no source code. Produces `candidates.json`.
+* **Analyzer** runs in parallel, one per family. Each gets its full context budget for one family; reads `${BASE}` deeply, runs trace queries on the family's representative ids, commits `target_span` + `fix_signature`. Produces `analyses/<family-id>/analysis.json` with `status: accepted | rejected`.
+* **Merge** runs once over the accepted analyses (LLM consolidation pass; smaller / faster model is appropriate here). Identifies analyses that propose the same structural change and collapses them into a single optimization target with cross-family provenance. Produces `optimization-targets.json`. The coverage invariant is enforced: every accepted family appears in exactly one target's `merged_from` or in `rejected_by_merge`.
+* **Optimizer** runs in parallel, one per merged target, each in its own git worktree. Implements the change, runs tests, leaves a release binary for the coordinator script to benchmark.
 
-Shell owns: baseline + noise-check benchmarks (Phase 0), target assembly (Phase 1.6), release builds + serialized benchmarks (Phase 3), and summary generation (Phase 4). Agents own: triage, analysis, implementation. This separation is what allows steps to be deterministic and independently resumable.
+Shell owns: baseline + noise-check benchmarks (Phase 0), release builds + serialized benchmarks (Phase 3), and summary generation (Phase 4). Agents own: triage, per-family analysis, merge consolidation, implementation. This separation is what allows steps to be deterministic and independently resumable.
 
 ## Canonical paths
 
@@ -187,36 +194,37 @@ The first optimization session should:
 3. Set benchmark parameters explicitly via `/work/.env`; reuse them for the baseline + every experiment.
 4. Run the baseline + `bench rerun` from `/work/repos/stacks-core` (Phase 0).
 5. Run the triage agent → `candidates.json` (Phase 1).
-6. Fan out analyzer agents → `analyses/<id>/analysis.json` (Phase 1.5).
-7. Assemble `optimization-targets.json` (Phase 1.6).
+6. Fan out analyzer agents → `analyses/<family-id>/analysis.json` (Phase 1.5).
+7. Run `merge-analyses.sh` → `optimization-targets.json` (Phase 1.7).
 8. Fan out optimizer agents → per-target `implementation.md` or `abort.md` (Phase 2).
 9. Build + serially benchmark each accepted target (Phase 3).
 10. Run `finalize-session.sh` → `summary.json` (Phase 4).
 
 The first optimization session is successful if `validate-session.sh "$OPT_SESSION_DIR"` exits 0. Do not judge optimization quality from the first session — its purpose is to prove every tier runs and artifacts land in the right places.
 
-### 2. Ongoing optimization: triage → analyzers → optimizers
+### 2. Ongoing optimization: triage → analyzers → merge → optimizers
 
-Goal: use one baseline + one noise floor to drive isolated optimization experiments through the three-tier pipeline.
+Goal: use one baseline + one noise floor to drive isolated optimization experiments through the family-first pipeline.
 
 The shell coordinator script owns orchestration. It does NOT make decisions — every analytical decision lives in an agent prompt. The script's responsibilities, in order:
 
 1. Run the baseline benchmark and a `bench rerun` of the same baseline (Phase 0). The delta is the per-host noise floor.
 2. Render and launch the **triage agent** (Phase 1). Wait for `candidates.json`.
-3. Fan out **analyzer agents** in parallel, one per candidate (Phase 1.5). Wait for every `analyses/<id>/analysis.json`.
-4. Run `assemble-targets.sh` to produce `optimization-targets.json` from accepted analyses (Phase 1.6).
-5. Fan out **optimizer agents** in parallel, one per accepted target, each in its own git worktree (Phase 2).
+3. Fan out **analyzer agents** in parallel, one per family (Phase 1.5). Wait for every `analyses/<family-id>/analysis.json`.
+4. Run **merge-analyses.sh** to consolidate accepted analyses into `optimization-targets.json` (Phase 1.7). One LLM call dedupes analyses that converge on the same fix; coverage invariant is enforced.
+5. Fan out **optimizer agents** in parallel, one per merged target, each in its own git worktree (Phase 2).
 6. Force-rebuild each worktree's release `stacks-bench` binary, copy it out, and `cargo clean` the worktree.
 7. Run two benchmarks per experiment serialized under `BENCH_LOCK` (Phase 3).
 8. Run `finalize-session.sh` to produce `summary.json` (Phase 4).
 
 Agent responsibilities in one line each:
 
-| Tier      | Owns                                                                                    | Does NOT                               |
-| --------- | --------------------------------------------------------------------------------------- | -------------------------------------- |
-| Triage    | Pick candidate spans worth deep investigation from profiler data alone.                 | Read source code. Run benchmarks.      |
-| Analyzer  | Investigate ONE candidate deeply; produce a target the optimizer can implement against. | Modify source code. Run benchmarks.    |
-| Optimizer | Implement the change in a worktree; run `cargo nextest`; leave a release binary.        | Run benchmarks. Touch other worktrees. |
+| Tier      | Owns                                                                                                                            | Does NOT                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Triage    | Pick candidate workload families (tx / block / contract) from profiler data + DB.                                               | Read source code. Commit a target span. Run benchmarks. |
+| Analyzer  | Investigate ONE family deeply; commit `target_span` + `fix_signature`; produce an analysis the merge + optimizer phases act on. | Modify source code. Run benchmarks.                     |
+| Merge     | Dedupe analyses converging on the same structural fix; emit one canonical target per fix with `merged_from` provenance.         | Re-investigate. Modify analyses' substance.             |
+| Optimizer | Implement the change in a worktree; run `cargo nextest`; leave a release binary.                                                | Run benchmarks. Touch other worktrees.                  |
 
 Benchmarking is centralized in the shell coordinator so all experiments use the same parameters and the same `BENCH_LOCK`. `cargo nextest` runs (in optimizer phase) are serialized across parallel optimizers via `TEST_LOCK` to avoid port/dir conflicts.
 
@@ -615,29 +623,37 @@ Repeat with `run-2`. Use the same `STACKS_BENCH_DATA_DIR` and identical benchmar
 
 ## Shell-coordinator / agent-tier model
 
-Once the baseline flow works, the shell coordinator orchestrates three agent tiers:
+Once the baseline flow works, the shell coordinator orchestrates four agent tiers:
 
 ```text
 Shell coordinator (run-bench-agent-coordinator.sh)
-  - Runs from /work/repos/stacks-core or /work
-  - Phase 0: baseline + noise-check benchmark
-  - Phase 1: launches the triage agent
-  - Phase 1.5: fans out analyzer agents (parallel, --add-dir $BASE for read-only access)
-  - Phase 1.6: runs assemble-targets.sh
-  - Phase 2: fans out optimizer agents (parallel, one git worktree each)
-  - Phase 3: rebuilds + serially benchmarks each accepted target binary
-  - Phase 4: runs finalize-session.sh
+  - Runs from $FRAMEWORK_ROOT or any cwd (paths derived at runtime)
+  - Phase 0:   baseline + noise-check benchmark
+  - Phase 1:   launches the triage agent
+  - Phase 1.5: fans out analyzer agents (parallel, one per family)
+  - Phase 1.7: launches the merge agent (LLM consolidation pass)
+  - Phase 2:   fans out optimizer agents (parallel, one git worktree each)
+  - Phase 3:   rebuilds + serially benchmarks each accepted target binary
+  - Phase 4:   runs finalize-session.sh
   - Owns BENCH_LOCK and TEST_LOCK
 
 Triage agent (one instance, prompts/triage.md)
-  - Reads only profiler JSON + non-targets list
+  - Reads profiler JSON + DB + non-targets list
   - No codebase reads
-  - Emits candidates.json
+  - Emits candidates.json (family-shaped: kind + representative_ids)
+  - Does NOT commit target_span — that's the analyzer's job
 
-Analyzer agent (one per candidate, prompts/analyzer.md)
-  - Reads $BASE deeply for ONE candidate
+Analyzer agent (one per family, prompts/analyzer.md)
+  - Reads $BASE deeply + runs trace queries on the family's representatives
   - Does NOT modify source
   - Emits analysis.json (status: accepted | rejected)
+  - On accept: commits target_span + fix_signature
+
+Merge agent (one instance, prompts/merge-analyses.md)
+  - Reads accepted analyses
+  - Identifies semantic equivalence between proposed fixes
+  - Emits optimization-targets.json with merged_from provenance
+  - Falls back to non-zero exit on validation failure (no silent degradation)
 
 Optimizer agent (one per accepted target, prompts/optimizer.md)
   - Runs in exactly one experiment worktree
@@ -712,35 +728,50 @@ $BASELINE_RUN_ID $BASELINE_RERUN_ID
 
 `$STACKS_BENCH_DATA_DIR` exposes the persistent SQLite DB to the triage agent for run-over-run / cross-run analysis; `$BASE` is exposed so the agent can read the schema definitions in `${BASE}/stacks-bench/migrations/` before querying.
 
-**Analyzer** — `prompts/analyzer.md`, one instance per candidate:
+**Analyzer** — `prompts/analyzer.md`, one instance per family:
 
 ```text
-$CAND_ID            # stable kebab id from candidates.json
-$OUTPUT_DIR         # analyses/<cand-id>/  (cwd, writable)
-$BASE               # stable read-only checkout (added via --add-dir)
-$CANDIDATE_JSON     # one candidate object from candidates.json
+$FAMILY_ID              # stable kebab id from candidates.json (= family id)
+$OUTPUT_DIR             # analyses/<family-id>/  (cwd, writable)
+$BASE                   # stable read-only checkout
+$STACKS_BENCH_DATA_DIR  # SQLite DB for trace queries
+$QUERIES_DIR            # pre-built triage SQL queries
+$BASELINE_RUN_ID        # passed as :run_id to trace queries
+$FAMILY_JSON            # the family object: kind, representative_ids,
+                        # suspected_spans (hint), global_materiality
 ```
 
-**Optimizer** — `prompts/optimizer.md`, one instance per accepted target:
+**Merge** — `prompts/merge-analyses.md`, one instance per session:
 
 ```text
-$TARGET_ID          # stable kebab id
+$OPT_SESSION_ID $OPT_SESSION_DIR
+$BASELINE_RUN_ID $BASELINE_RERUN_ID $NOISE_FLOOR_PCT
+$OPTIMIZATION_TARGETS_SCHEMA_PATH
+$CODEX_MERGE_MODEL          # configurable; default gpt-5.3-codex-spark
+$ACCEPTED_ANALYSES_JSON     # JSON array of accepted analysis objects
+```
+
+**Optimizer** — `prompts/optimizer.md`, one instance per merged target:
+
+```text
+$TARGET_ID          # canonical kebab id (= fix_signature from merge)
 $WORKTREE_DIR       # this experiment's git worktree (cwd, writable)
 $OUTPUT_DIR         # experiments/<target-id>/
 $TEST_LOCK          # flock path for serialized test runs
 $TARGET_JSON        # full target object from optimization-targets.json
 ```
 
-`$CANDIDATE_JSON` and `$TARGET_JSON` are sliced by the coordinator script via `jq '.candidates[] | select(.id==$id)'` and `jq '.targets[] | select(.id==$id)'` respectively, so the agent never has to scan the full session-level file.
+`$FAMILY_JSON`, `$ACCEPTED_ANALYSES_JSON`, and `$TARGET_JSON` are sliced/aggregated by the coordinator scripts via jq before being passed inline to each agent, so no agent scans the full session-level files.
 
 ## Prompt templates
 
-Three prompt templates, rendered into the optimization-session dir before each `codex exec` call. The rendered prompt is the contract; the template is just an editable source.
+Four prompt templates, rendered into the optimization-session dir before each `codex exec` call. The rendered prompt is the contract; the template is just an editable source.
 
-* [prompts/triage.md](prompts/triage.md) — picks candidate spans from profiler data. Deploys to `/work/prompts/triage.md`.
-* [prompts/analyzer.md](prompts/analyzer.md) — deep single-candidate codebase analysis. Deploys to `/work/prompts/analyzer.md`.
-* [prompts/optimizer.md](prompts/optimizer.md) — single-target implementation in one worktree. Deploys to `/work/prompts/optimizer.md`.
-* [prompts/non-targets.md](prompts/non-targets.md) — read-only reference of profiler spans the agents must NOT pursue. Deploys to `/work/prompts/non-targets.md`.
+* [prompts/triage.md](prompts/triage.md) — picks candidate workload families (no span commitment).
+* [prompts/analyzer.md](prompts/analyzer.md) — deep single-family analysis; commits `target_span` + `fix_signature`.
+* [prompts/merge-analyses.md](prompts/merge-analyses.md) — LLM consolidation pass; dedupes convergent analyses into canonical optimization targets.
+* [prompts/optimizer.md](prompts/optimizer.md) — single-target implementation in one worktree.
+* [prompts/non-targets.md](prompts/non-targets.md) — read-only reference of profiler spans the agents must NOT pursue (span-level exclusion list, NOT subtree).
 
 All three prompt templates use `${VAR}` placeholders that the shell coordinator substitutes via `envsubst` before invoking `codex exec` (see "How Codex receives instructions"). The exposed variables are listed at the top of each template.
 
@@ -798,16 +829,16 @@ Things deliberately NOT carried over from `experiments/run.sh`:
 
 Each phase is a standalone script that takes `SESSION_DIR` as its only positional arg, sources shared helpers via `_lib.sh`, and then reads `${AGENTIC_ENV_FILE:-$FRAMEWORK_ROOT/.env}` plus its file-based inputs from the session dir. Each script writes outputs back into the session dir. You can run any of them directly for a controlled walkthrough; the orchestrator just chains them in order.
 
-| Phase | Script | Reads | Writes (in `SESSION_DIR`) |
-| --- | --- | --- | --- |
-| 0a | `run-baseline.sh` | `FRAMEWORK_ROOT/.env` (range vars) | `baseline-bench-run.json`, `baseline-rerun.json`, `baseline-{run,rerun}-id`, `bench-list.json`, `baseline-profiler-hotspots.json` |
-| 0b | `import-baseline.sh` | existing run id(s) in stacks-bench DB | same as 0a (alternative — skip the live benchmark) |
-| 1 | `run-triage.sh` | baseline-* artifacts | `candidates.json`, `triage-*` |
-| 1.5 | `run-analyzers.sh` | `candidates.json` | `analyses/<id>/analysis.json`, `analyses/<id>/analyzer-*` |
-| 1.6 | `assemble-targets.sh` | `candidates.json`, `analyses/*/analysis.json` | `optimization-targets.json` (stdout) |
-| 2 | `run-optimizers.sh` | `optimization-targets.json` | `experiments/<id>/{implementation,abort}.md`, build artifacts |
-| 3 | `bench-experiments.sh` | per-experiment release binary | `experiments/<id>/run-{1,2}/bench-run.json`, `run-ids` |
-| 4 | `finalize-session.sh` | targets + run-ids | `summary.json` (stdout), `summary.md` |
+| Phase | Script                  | Reads                                                 | Writes (in `SESSION_DIR`)                                                                                                            |
+| ----- | ----------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0a    | `run-baseline.sh`       | `FRAMEWORK_ROOT/.env` (range vars)                    | `baseline-bench-run.json`, `baseline-rerun.json`, `baseline-{run,rerun}-id`, `bench-list.json`, `baseline-profiler-hotspots.json`    |
+| 0b    | `import-baseline.sh`    | existing run id(s) in stacks-bench DB                 | same as 0a (alternative; skip the live benchmark)                                                                                    |
+| 1     | `run-triage.sh`         | baseline-* artifacts                                  | `candidates.json` (v2, family-shaped), `triage-*`                                                                                    |
+| 1.5   | `run-analyzers.sh`      | `candidates.json`                                     | `analyses/<family-id>/analysis.json`, `analyses/<family-id>/analyzer-*`                                                              |
+| 1.7   | `merge-analyses.sh`     | `candidates.json`, `analyses/*/analysis.json`         | `optimization-targets.json`, `merge-final-message.md`, `merge-events.jsonl`, `merge-conversation-id`                                 |
+| 2     | `run-optimizers.sh`     | `optimization-targets.json`                           | `experiments/<target-id>/{implementation,abort}.md`, build artifacts                                                                 |
+| 3     | `bench-experiments.sh`  | per-experiment release binary                         | `experiments/<target-id>/run-{1,2}/bench-run.json`, `run-ids`                                                                        |
+| 4     | `finalize-session.sh`   | targets + run-ids                                     | `summary.json` (stdout), `summary.md`                                                                                                |
 
 Walk-through example (with an existing baseline run id of 42):
 
@@ -817,12 +848,12 @@ SESSION="$FRAMEWORK_ROOT/sessions/demo-001/results"
 mkdir -p "$SESSION"
 
 "$FRAMEWORK_ROOT/scripts/import-baseline.sh" "$SESSION" 42
-"$FRAMEWORK_ROOT/scripts/run-triage.sh"           "$SESSION"; jq . "$SESSION/candidates.json"
-"$FRAMEWORK_ROOT/scripts/run-analyzers.sh"        "$SESSION"; ls "$SESSION/analyses"
-"$FRAMEWORK_ROOT/scripts/assemble-targets.sh"     "$SESSION" > "$SESSION/optimization-targets.json"
-"$FRAMEWORK_ROOT/scripts/run-optimizers.sh"       "$SESSION"
-"$FRAMEWORK_ROOT/scripts/bench-experiments.sh"    "$SESSION"
-"$FRAMEWORK_ROOT/scripts/finalize-session.sh"     "$SESSION" > "$SESSION/summary.json"
+"$FRAMEWORK_ROOT/scripts/run-triage.sh"        "$SESSION"; jq . "$SESSION/candidates.json"
+"$FRAMEWORK_ROOT/scripts/run-analyzers.sh"     "$SESSION"; ls "$SESSION/analyses"
+"$FRAMEWORK_ROOT/scripts/merge-analyses.sh"    "$SESSION"; jq '.targets | length' "$SESSION/optimization-targets.json"
+"$FRAMEWORK_ROOT/scripts/run-optimizers.sh"    "$SESSION"
+"$FRAMEWORK_ROOT/scripts/bench-experiments.sh" "$SESSION"
+"$FRAMEWORK_ROOT/scripts/finalize-session.sh"  "$SESSION" > "$SESSION/summary.json"
 cat "$SESSION/summary.md"
 ```
 
@@ -1027,9 +1058,9 @@ The session artifact tree is the contract between phases. [scripts/validate-sess
   candidates.json            # schema: schemas/candidates.schema.json
   candidates.md              # human view, derived from JSON
 
-  # Phase 1.5: analyzer agents (one per candidate)
+  # Phase 1.5: analyzer agents (one per family)
   analyses/
-    <candidate-id>/
+    <family-id>/
       analyzer-prompt.md
       analyzer-events.jsonl
       analyzer-stderr.log
@@ -1038,9 +1069,15 @@ The session artifact tree is the contract between phases. [scripts/validate-sess
       analysis.json          # schema: schemas/analysis.schema.json (status: accepted | rejected)
       analysis.md            # human-readable analysis writeup
 
-  # Phase 1.6: shell assembly
+  # Phase 1.7: merge phase (LLM consolidation)
+  merge-prompt.md            # rendered prompt
+  merge-events.jsonl
+  merge-stderr.log
+  merge-final-message.md     # audit summary including coverage check
+  merge-conversation-id
   optimization-targets.json  # schema: schemas/optimization-targets.schema.json
-                             # (built by scripts/assemble-targets.sh from accepted analyses)
+                             # (built by scripts/merge-analyses.sh from accepted analyses;
+                             # carries merged_from / convergence_count provenance)
 
   # Phase 2/3: optimizer subagents + serialized benchmarks (one per accepted target)
   experiments/
@@ -1083,21 +1120,22 @@ OPT_SESSION_DIR="/work/sessions/<OPT_SESSION_ID>/results"
 
 If validate prints `MISSING:`, the listed paths tell you which phase to re-run. Examples:
 
-* Missing `candidates.json` → re-run `run-triage.sh`.
-* Missing `analyses/<id>/analysis.json` for one or more candidates → re-run `run-analyzers.sh` (it will re-render prompts and re-invoke Codex for every candidate, including ones that already succeeded; if you want to skip already-completed analyses, hand-delete the missing dirs and re-run, or invoke Codex by hand for just the missing one).
-* Missing `optimization-targets.json` → re-run `assemble-targets.sh`.
-* Missing `experiments/<id>/{implementation,abort}.md` → re-run `run-optimizers.sh`.
-* Missing `experiments/<id>/run-N/bench-run.json` → re-run `bench-experiments.sh`.
+* Missing `candidates.json` or `triage-final-message.md` → re-run `run-triage.sh`.
+* Missing `analyses/<family-id>/analysis.json` for one or more families → re-run `run-analyzers.sh` (it will re-render prompts and re-invoke Codex for every family; if you want to skip already-completed analyses, hand-delete the missing dirs and re-run, or invoke Codex by hand for just the missing one).
+* Missing `optimization-targets.json` or `merge-final-message.md` → re-run `merge-analyses.sh`.
+* Missing `experiments/<target-id>/{implementation,abort}.md` → re-run `run-optimizers.sh`.
+* Missing `experiments/<target-id>/run-N/bench-run.json` → re-run `bench-experiments.sh`.
 * Missing `summary.json` → re-run `finalize-session.sh`.
 
-Each agent's `*-conversation-id` is captured in the session dir for later inspection (e.g. `triage-conversation-id`, `analyses/<id>/analyzer-conversation-id`, `experiments/<id>/subagent-conversation-id`), but resume-by-id requires CLI flags that vary across Codex versions; the re-run-the-phase approach above is the supported path.
+Each agent's `*-conversation-id` is captured in the session dir for later inspection (e.g. `triage-conversation-id`, `analyses/<family-id>/analyzer-conversation-id`, `merge-conversation-id`, `experiments/<target-id>/subagent-conversation-id`), but resume-by-id requires CLI flags that vary across Codex versions; the re-run-the-phase approach above is the supported path.
 
 ## No targets remaining: recovery flow
 
 If `optimization-targets.json` ends up with an empty `targets[]` array, the cause is one of:
 
-1. **Triage emitted zero candidates.** Every span fell below the noise floor or matched `non-targets.md`. See `triage-final-message.md` for the agent's reasoning.
-2. **Every analyzer rejected its candidate.** See each `analyses/<id>/analysis.json` for the `reason`. Common: hotspot is real but inherent / already cached / overlapping with a non-target under a different name.
+1. **Triage emitted zero candidates.** Every workload-entry pattern fell below the noise floor, was outlier-driven, or every alternative family was investigated and rejected via the counter-search step. See `triage-final-message.md` (especially the "Rejected alternative families" section) for the agent's reasoning.
+2. **Every analyzer rejected its family.** See each `analyses/<family-id>/analysis.json` for the `reason`. Common: hotspot is real but inherent / already cached / target_span overlaps with a non-target.
+3. **Merge phase rejected all surviving analyses.** See `merge-final-message.md` and the `rejected_by_merge` array in `optimization-targets.json`.
 
 Recover by one of:
 

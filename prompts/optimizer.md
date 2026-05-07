@@ -25,7 +25,7 @@ ${TARGET_JSON}
   - `nextest.log` + `nextest.stderr.log` — captured test output (command below).
   - `side-observations.md` — only if you noticed anything material outside this target's scope; skip otherwise.
 - `${TEST_LOCK}` — file lock serializing test runs across parallel subagents. Wrap every `cargo nextest run` invocation (including retries) with `flock ${TEST_LOCK} ...`.
-- `${NON_TARGETS_PATH}` — read-only list of profiler spans known to be dead-end targets. If your target overlaps with this list, abort.
+- `${NON_TARGETS_PATH}` — read-only list of profiler spans known to be dead-end targets. If your target's span name matches an entry in this list (or is an obvious alias for one), abort. The list is span-level: a target whose representative span just happens to live under a non-target wrapper is NOT excluded.
 
 # Rules
 
@@ -40,7 +40,7 @@ ${TARGET_JSON}
 
 # When to abort
 
-If you cannot land a viable change — tests fail repeatedly with no fix path, no plausible approach materializes, the target overlaps with `non-targets.md`, or the only fix would violate the rules above — write `${OUTPUT_DIR}/abort.md` explaining why and exit cleanly. Do not also write `implementation.md`. The coordinator will record the experiment as failed without benchmarking; failed experiments are useful signal.
+If you cannot land a viable change — tests fail repeatedly with no fix path, no plausible approach materializes, the target's span name matches a `non-targets.md` entry, or the only fix would violate the rules above — write `${OUTPUT_DIR}/abort.md` explaining why and exit cleanly. Do not also write `implementation.md`. The coordinator will record the experiment as failed without benchmarking; failed experiments are useful signal.
 
 # Tasks
 

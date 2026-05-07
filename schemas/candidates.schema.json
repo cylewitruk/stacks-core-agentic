@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stacks-bench.local/schemas/candidates.schema.json",
-  "title": "Triage candidates",
-  "description": "Output of the triage agent: spans worth investigating in depth, before any codebase exploration.",
+  "title": "Triage candidates (family-shaped)",
+  "description": "Output of the triage agent: workload-entry families worth investigating in depth. Triage selects WHAT to investigate (representative txs / blocks / contract calls); analyzer determines WHERE the actual optimization handle lives. Span identity is intentionally not committed at this layer.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,41 +14,130 @@
     "candidates"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "session_id": { "type": "string" },
     "baseline_run_id": { "type": "integer" },
     "baseline_rerun_id": { "type": "integer" },
     "noise_floor_pct": {
       "type": "number",
-      "description": "Per-host noise floor computed from baseline vs baseline-rerun timing."
+      "description": "Per-host noise floor computed from baseline vs baseline-rerun timing, or the precomputed fallback for single-run imports."
     },
     "candidates": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "span", "self_wall_us", "calls", "location", "rationale"],
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9-]*$",
-            "description": "Stable kebab-case identifier; used as a path segment downstream."
-          },
-          "span": {
-            "type": "string",
-            "description": "Full span name as it appears in the profiler output."
-          },
-          "self_wall_us": { "type": "integer" },
-          "total_wall_us": { "type": "integer" },
-          "calls": { "type": "integer" },
-          "location": {
-            "type": "string",
-            "description": "file:line as reported by the profiler, when available."
-          },
-          "rationale": {
-            "type": "string",
-            "description": "One-liner explaining why this span is worth investigating in depth."
+      "items": { "$ref": "#/$defs/candidate" }
+    }
+  },
+
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "representative_ids", "rationale"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Stable kebab-case identifier; used as a path segment by downstream phases (analyses/<id>/...)."
+        },
+        "kind": {
+          "enum": ["tx_family", "block_family", "contract_family"],
+          "description": "Family kind. Single source of truth for the family's shape; representative_ids is constrained by this value via the candidate-level allOf below."
+        },
+        "representative_ids": {
+          "type": "object",
+          "description": "1–3 representative workload entry points the analyzer should inspect. Shape is constrained by the top-level `kind` field (see allOf below)."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "One-liner explaining why this family is worth investigating. Detail belongs in supporting evidence, not here."
+        },
+        "suspected_spans": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional, non-binding hints: spans triage suspected may be the cost center within this family. The analyzer is free to confirm, refine, or replace these with a different target_span based on its own trace + code investigation."
+        },
+        "global_materiality": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Aggregate signal the analyzer should use when judging whether a target found within this family generalizes beyond the family.",
+          "properties": {
+            "pct_blocks": {
+              "type": "number",
+              "description": "Maximum pct_blocks across suspected_spans (or family span set) from span_recurrence."
+            },
+            "self_wall_ms": {
+              "type": "number",
+              "description": "Sum of self_wall_ms across suspected_spans (or family span set) from span_recurrence."
+            },
+            "notes": { "type": "string" }
           }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "tx_family" } }, "required": ["kind"] },
+          "then": { "properties": { "representative_ids": { "$ref": "#/$defs/tx_family_ids" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "block_family" } }, "required": ["kind"] },
+          "then": { "properties": { "representative_ids": { "$ref": "#/$defs/block_family_ids" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "contract_family" } }, "required": ["kind"] },
+          "then": { "properties": { "representative_ids": { "$ref": "#/$defs/contract_family_ids" } } }
+        }
+      ]
+    },
+
+    "tx_family_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stacks_tx_ids"],
+      "properties": {
+        "stacks_tx_ids": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      }
+    },
+
+    "block_family_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synthetic_block_ids"],
+      "properties": {
+        "synthetic_block_ids": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      }
+    },
+
+    "contract_family_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_function", "stacks_tx_ids"],
+      "properties": {
+        "contract_function": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuer", "contract", "function"],
+          "properties": {
+            "issuer": { "type": "string" },
+            "contract": { "type": "string" },
+            "function": { "type": "string" }
+          }
+        },
+        "stacks_tx_ids": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Heaviest representative transactions exercising this contract.function."
         }
       }
     }

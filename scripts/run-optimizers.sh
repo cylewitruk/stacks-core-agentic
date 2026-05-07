@@ -3,7 +3,7 @@
 # its own git worktree. Implementation only — no benchmarks here.
 #
 # Inputs (in SESSION_DIR):
-#   optimization-targets.json   (built by assemble-targets.sh)
+#   optimization-targets.json   (built by merge-analyses.sh; schema v2)
 #
 # Outputs:
 #   experiments/<target-id>/
@@ -30,7 +30,16 @@ assert_codex_writable
 
 TARGETS="$OPT_SESSION_DIR/optimization-targets.json"
 if [ ! -s "$TARGETS" ]; then
-  echo "run-optimizers: missing optimization-targets.json (run assemble-targets.sh first)" >&2
+  echo "run-optimizers: missing optimization-targets.json (run merge-analyses.sh first)" >&2
+  exit 2
+fi
+
+# Sanity check: targets must be v2. A stale v1 file would have .targets[].id
+# but lack the merge-phase fields the optimizer prompt uses, leading to a
+# silently-mixed pipeline state.
+v=$(jq -r '.schema_version // empty' "$TARGETS")
+if [ "$v" != "2" ]; then
+  echo "run-optimizers: optimization-targets.json schema_version=$v (expected 2; v1 targets are not supported in this pipeline — re-run merge-analyses.sh)" >&2
   exit 2
 fi
 

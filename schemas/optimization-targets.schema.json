@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stacks-bench.local/schemas/optimization-targets.schema.json",
-  "title": "Assembled optimization targets",
-  "description": "Shell-assembled union of accepted analyses, fed to the optimizer fan-out. NOT produced by an agent.",
+  "title": "Merged optimization targets",
+  "description": "Output of the merge phase: deduplicated optimization targets ready for the optimizer fan-out. One target per unique structural change, possibly aggregating evidence from multiple family analyses. Convergence across analyses is high-confidence signal that the target is real.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,51 +11,121 @@
     "baseline_run_id",
     "baseline_rerun_id",
     "noise_floor_pct",
+    "merge_method",
+    "merge_model",
     "targets"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "session_id": { "type": "string" },
     "baseline_run_id": { "type": "integer" },
     "baseline_rerun_id": { "type": "integer" },
     "noise_floor_pct": { "type": "number" },
+    "merge_method": {
+      "const": "llm",
+      "description": "Identifier of which merge implementation produced this output. Reserved for future expansion if alternative merge implementations are added; currently only `llm` exists."
+    },
+    "merge_model": {
+      "type": "string",
+      "description": "The exact model identifier used for the merge call (e.g. 'gpt-5.3-codex-spark', 'gpt-5.3-codex'). Empty string only for the no-op empty-input case."
+    },
     "targets": {
       "type": "array",
+      "items": { "$ref": "#/$defs/target" }
+    },
+    "rejected_by_merge": {
+      "type": "array",
+      "description": "Accepted analyses the merger affirmatively dropped (rare; e.g., recognized as already-shipped, scope-out reasons). Every accepted family_id from this session must appear in EXACTLY ONE of: a target's `merged_from`, OR this list.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "rank",
-          "hotspot",
-          "files",
-          "evidence",
-          "proposed_change",
-          "expected_improvement_pct",
-          "risk",
-          "verification_plan"
-        ],
+        "required": ["family_id", "reason"],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-          "rank": { "type": "integer", "minimum": 1 },
-          "hotspot": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["span", "self_wall_us", "calls", "location"],
-            "properties": {
-              "span": { "type": "string" },
-              "self_wall_us": { "type": "integer" },
-              "total_wall_us": { "type": "integer" },
-              "calls": { "type": "integer" },
-              "location": { "type": "string" }
-            }
-          },
-          "files": { "type": "array", "items": { "type": "string" } },
-          "evidence": { "type": "string" },
-          "proposed_change": { "type": "string" },
-          "expected_improvement_pct": { "type": "number" },
-          "risk": { "enum": ["low", "medium", "high"] },
-          "verification_plan": { "type": "string" }
+          "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "merged_from",
+        "convergence_count",
+        "target_span",
+        "hotspot",
+        "files",
+        "evidence",
+        "proposed_change",
+        "expected_improvement_pct",
+        "risk",
+        "verification_plan"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Canonical kebab-case identifier; equal to the canonical fix_signature of this target group. Used as a path segment (experiments/<id>/) by Phase 2 onward."
+        },
+        "merged_from": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "minItems": 1,
+          "description": "family_ids of the accepted analyses that contributed to this target."
+        },
+        "convergence_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Length of `merged_from`. Higher = independent analyses agreed on this fix = higher confidence."
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional priority ordering hint for the optimizer fan-out."
+        },
+        "target_span": { "type": "string" },
+        "hotspot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["span", "self_wall_us", "total_wall_us", "calls", "location"],
+          "properties": {
+            "span": { "type": "string" },
+            "self_wall_us": { "type": "integer" },
+            "total_wall_us": {
+              "type": "integer",
+              "description": "Inclusive wall time of the target span. Required for parity with analysis.schema.json's hotspot requirement; the merge phase carries this through from the contributing analyses."
+            },
+            "calls": { "type": "integer" },
+            "location": { "type": "string" }
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Canonical synthesis. When merging multiple analyses, the merger should preserve the strongest evidence from each contributor."
+        },
+        "proposed_change": {
+          "type": "string",
+          "description": "Canonical version of the change. When contributors phrased the change differently, the merger picks the most concrete and actionable wording."
+        },
+        "expected_improvement_pct": { "type": "number" },
+        "risk": { "enum": ["low", "medium", "high"] },
+        "verification_plan": { "type": "string" },
+        "merge_notes": {
+          "type": "string",
+          "description": "Optional reviewer-facing note from the merger: why these analyses were collapsed, what was preserved, what was canonicalized."
+        },
+        "contributor_differences": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional: short bullets describing where contributors disagreed (different files cited, slightly different fix wording, divergent expected_improvement_pct). Useful for reviewers spot-checking the merge quality."
         }
       }
     }

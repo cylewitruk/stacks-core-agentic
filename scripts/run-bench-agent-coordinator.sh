@@ -6,19 +6,23 @@
 # this script just chains them.
 #
 # Phase 0a: run-baseline.sh        (or import-baseline.sh — see env vars below)
-# Phase 1:  run-triage.sh          → candidates.json
-# Phase 1.5: run-analyzers.sh      → analyses/<id>/analysis.json
-# Phase 1.6: assemble-targets.sh   → optimization-targets.json
-# Phase 2:  run-optimizers.sh      → experiments/<id>/{implementation,abort}.md
-# Phase 3:  bench-experiments.sh   → experiments/<id>/run-N/bench-run.json
+# Phase 1:  run-triage.sh          → candidates.json (family-shaped, schema v2)
+# Phase 1.5: run-analyzers.sh      → analyses/<family-id>/analysis.json
+# Phase 1.7: merge-analyses.sh     → optimization-targets.json (LLM consolidation)
+# Phase 2:  run-optimizers.sh      → experiments/<target-id>/{implementation,abort}.md
+# Phase 3:  bench-experiments.sh   → experiments/<target-id>/run-N/bench-run.json
 # Phase 4:  finalize-session.sh    → summary.{json,md}
+# Phase 5:  generate-pr-artifacts.sh + publish-accepted.sh (optional)
 #
 # Env vars:
 #   IMPORT_BASELINE_RUN_ID    if set, import this existing run id instead of
 #                             running a fresh baseline benchmark.
 #   IMPORT_BASELINE_RERUN_ID  optional; passed to import-baseline.sh.
 #   STACKS_BENCH_PARALLEL_ANALYZERS, STACKS_BENCH_PARALLEL_AGENTS  (see phase scripts)
+#   CODEX_MERGE_MODEL         model id for the Phase 1.7 merge call
+#                             (see scripts/merge-analyses.sh; default: gpt-5.3-codex-spark)
 #   SKIP_CARGO_CLEAN          (see bench-experiments.sh)
+#   PUBLISH_ACCEPTED_PRS      (see Phase 5)
 set -euo pipefail
 # Resolve our own directory (symlink-safe) so we can find _lib.sh and the
 # sibling phase scripts even when invoked via a symlink in $PATH.
@@ -47,11 +51,12 @@ else
   "$S/run-baseline.sh" "$OPT_SESSION_DIR"
 fi
 
-# Phase 1 → 1.5 → 1.6
+# Phase 1 → 1.5 → 1.7
+# (assemble-targets.sh from v1 has been removed; the LLM merge in Phase 1.7
+# replaces it. The merge script writes optimization-targets.json directly.)
 "$S/run-triage.sh"        "$OPT_SESSION_DIR"
 "$S/run-analyzers.sh"     "$OPT_SESSION_DIR"
-"$S/assemble-targets.sh"  "$OPT_SESSION_DIR" \
-  > "$OPT_SESSION_DIR/optimization-targets.json"
+"$S/merge-analyses.sh"    "$OPT_SESSION_DIR"
 
 # Phase 2 → 3 → 4
 "$S/run-optimizers.sh"    "$OPT_SESSION_DIR"
