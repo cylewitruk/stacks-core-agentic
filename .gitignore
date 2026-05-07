@@ -3,6 +3,7 @@
 
 # Keep repo metadata/config
 !.gitignore
+!.gitmodules
 
 # Include specific top-level files
 !README.md
