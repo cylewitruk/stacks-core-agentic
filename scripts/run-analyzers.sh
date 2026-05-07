@@ -109,7 +109,7 @@ export ANALYSES_DIR OPT_SESSION_DIR BASE STACKS_BENCH_DATA_DIR QUERIES_DIR BASEL
 
 # xargs -P fans out, preserving streaming logs per subagent.
 printf '%s\n' "${FAMILY_IDS[@]}" \
-  | xargs -n1 -P "$PARALLEL" -I{} bash -c 'run_analyzer "$@"' _ {}
+  | xargs -P "$PARALLEL" -I{} bash -c 'run_analyzer "$@"' _ {}
 
 # Tally accepted / rejected. Field name is family_id in v2.
 ACCEPTED=$(find "$ANALYSES_DIR" -name analysis.json \

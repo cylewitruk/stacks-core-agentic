@@ -140,7 +140,7 @@ export WORKTREES OPT_SESSION_DIR BASE TEST_LOCK
 
 # xargs -P fans out, preserving streaming logs per subagent.
 printf '%s\n' "${TARGET_IDS[@]}" \
-  | xargs -n1 -P "$PARALLEL" -I{} bash -c 'run_optimizer "$@"' _ {}
+  | xargs -P "$PARALLEL" -I{} bash -c 'run_optimizer "$@"' _ {}
 
 # Tally landed / aborted.
 LANDED=0; ABORTED=0
