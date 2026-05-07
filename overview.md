@@ -6,6 +6,11 @@ This runbook defines a demo-ready autonomous Codex workflow for benchmark-driven
 
 The first version runs benchmarks inside the agent VM. Later, the benchmark execution step can move into a resource-limited benchmark VM without changing the overall coordinator/subagent workflow.
 
+Runtime paths are now derived from `FRAMEWORK_ROOT`, which means the
+repository can be checked out anywhere. This document still uses `/work` in
+many examples because it remains the recommended deployment path for the demo
+VM, but the scripts no longer require it.
+
 ## Terminology
 
 Use these terms consistently:
@@ -30,45 +35,14 @@ Persistent benchmark data
 
 ## Source layout (this repo)
 
-The prompts, schemas, and scripts referenced throughout this playbook are checked in alongside this document, so the demo is reproducible from a fresh clone:
+This repository is intended to be checked out directly at `/work` on the agent
+VM. The framework files live in this repo; the target codebase lives in the
+`repos/stacks-core` git submodule. See [README.md](README.md) for the clone +
+submodule initialization flow.
 
-```text
-stacks-bench/agentic/
-  overview.md                 # this playbook
-  prompts/
-    triage.md                 # → /work/prompts/triage.md
-    analyzer.md               # → /work/prompts/analyzer.md
-    optimizer.md              # → /work/prompts/optimizer.md
-    non-targets.md            # → /work/prompts/non-targets.md
-  schemas/
-    candidates.schema.json            # → /work/schemas/candidates.schema.json
-    analysis.schema.json              # → /work/schemas/analysis.schema.json
-    optimization-targets.schema.json  # → /work/schemas/optimization-targets.schema.json
-    summary.schema.json               # → /work/schemas/summary.schema.json
-  scripts/
-    env.example                      # → copy to /work/.env on the agent VM
-    sccache.service                  # → systemd user unit (one-time install)
-    _lib.sh                          # shared helpers (sourced; not executed)
-
-    # Phase scripts — each takes SESSION_DIR as its only positional arg.
-    # Run any of them individually for a controlled walkthrough, or chain
-    # via run-bench-agent-coordinator.sh.
-    run-baseline.sh                  # Phase 0a: fresh baseline + rerun
-    import-baseline.sh               # Phase 0b: import an existing run id
-    run-triage.sh                    # Phase 1
-    run-analyzers.sh                 # Phase 1.5
-    assemble-targets.sh              # Phase 1.6
-    run-optimizers.sh                # Phase 2
-    bench-experiments.sh             # Phase 3
-    finalize-session.sh              # Phase 4
-
-    # Orchestrator + observers.
-    run-bench-agent-coordinator.sh   # chains phases 0-4
-    tail-session.sh                  # multiplexed JSONL/stderr tail
-    validate-session.sh              # required-files check
-```
-
-Bootstrap should `rsync` (or `cp`) these into `/work/{prompts,schemas,scripts}` rather than editing them in place on the VM. Treat the in-repo copies as the source of truth.
+The prompts, schemas, and scripts referenced throughout this playbook are
+checked in alongside this document, so the demo is reproducible from a fresh
+clone.
 
 ## Three-tier agent architecture
 
@@ -122,47 +96,47 @@ Shell owns: baseline + noise-check benchmarks (Phase 0), target assembly (Phase 
 ## Canonical paths
 
 ```text
-/work/repos/stacks-core
+<FRAMEWORK_ROOT>/repos/stacks-core
   Stable control checkout on feat/stacks-bench.
 
-/work/sessions/<OPT_SESSION_ID>/worktrees/<target-id>
+<FRAMEWORK_ROOT>/sessions/<OPT_SESSION_ID>/worktrees/<target-id>
   One experiment worktree per optimization target, scoped to this optimization session.
 
-/work/sessions/<OPT_SESSION_ID>/results
+<FRAMEWORK_ROOT>/sessions/<OPT_SESSION_ID>/results
   Artifacts for one full optimization session.
 
-/work/prompts/triage.md
+<FRAMEWORK_ROOT>/prompts/triage.md
   Prompt for the triage agent. Reads profiler JSON, emits candidates.json.
 
-/work/prompts/analyzer.md
+<FRAMEWORK_ROOT>/prompts/analyzer.md
   Prompt for analyzer subagents. One instance per candidate; deep codebase reads.
 
-/work/prompts/optimizer.md
+<FRAMEWORK_ROOT>/prompts/optimizer.md
   Prompt for optimizer subagents. One instance per accepted target, each in its own worktree.
 
-/work/prompts/non-targets.md
+<FRAMEWORK_ROOT>/prompts/non-targets.md
   Read-only reference of profiler spans the agents must NOT pursue.
 
-/work/schemas/
+<FRAMEWORK_ROOT>/schemas/
   JSON schemas for each agent's output (candidates, analysis, optimization-targets, summary).
 
-/work/data/stacks-bench
+<FRAMEWORK_ROOT>/data/stacks-bench
   Persistent stacks-bench app-data directory. The SQLite DB normally lives below appdata/stacks-bench.db.
 
 /mnt/chainstate/mainnet
   Example mounted chainstate source. Must be the Stacks node data directory containing chainstate/.
 ```
 
-### Single source of truth: `/work/.env`
+### Single source of truth: `FRAMEWORK_ROOT/.env`
 
-All environment variables live in a single `/work/.env` file that every script and prompt-render step sources. This avoids drift between the playbook prose, shell scripts, prompt templates, and the resume path.
+All environment variables live in a single `.env` file at the framework root by default. The shared `_lib.sh` helper derives `FRAMEWORK_ROOT` at runtime, then sources `${AGENTIC_ENV_FILE:-$FRAMEWORK_ROOT/.env}`. This avoids drift between the playbook prose, shell scripts, prompt templates, and the resume path.
 
-The template is checked in at [scripts/env.example](scripts/env.example) — copy it to `/work/.env` on the agent VM and edit if needed. The shape (canonical Nakamoto-era ranges, lock paths, etc.) is documented in that file.
+The template is checked in at [scripts/env.example](scripts/env.example) — copy it to `<FRAMEWORK_ROOT>/.env` and edit if needed. The shape (canonical Nakamoto-era ranges, lock paths, etc.) is documented in that file.
 
 Source pattern in every script and prompt-render step:
 
 ```bash
-set -a; source /work/.env; set +a
+set -a; source "$FRAMEWORK_ROOT/.env"; set +a
 ```
 
 Prefer `--count` for bounded demo runs. Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is intentional, because it can add significant chainstate copy time.
@@ -176,24 +150,24 @@ Goal: prepare the agent VM so an optimization session can run without interactiv
 One-time setup:
 
 1. Configure Codex user settings in `~/.codex/config.toml`.
-2. Create the expected layout and write `/work/.env`.
-3. Clone `cylewitruk/stacks-core` and switch to `feat/stacks-bench`.
-4. Add `stacks-network/stacks-core` as `upstream`, with push disabled.
+2. Create the expected layout and write `<FRAMEWORK_ROOT>/.env`.
+3. Clone this repository and initialize `repos/stacks-core` as a submodule.
+4. Configure the `repos/stacks-core` checkout for the benchmark branch you want to use.
 5. Mount or otherwise expose the chainstate so `SOURCE_DIR` points at a directory containing `chainstate/`, for example `/mnt/chainstate/mainnet`.
 6. Apply benchmark-host tuning: CPU governor, ASLR, SMT (see "Benchmark host tuning").
 7. Pre-build the release `stacks-bench` binary in `BASE` so MCP and the first benchmark don't pay first-build cost.
-8. Create the prompt files and helper scripts under `/work/prompts` and `/work/scripts`.
+8. Verify the framework files are present directly under `<FRAMEWORK_ROOT>/{prompts,schemas,scripts}`.
 
 Expected state after bootstrap:
 
 ```text
-/work/repos/stacks-core
+<FRAMEWORK_ROOT>/repos/stacks-core
   branch: feat/stacks-bench
 
-/work/data/stacks-bench
+<FRAMEWORK_ROOT>/data/stacks-bench
   persistent stacks-bench app-data directory
 
-/work/sessions
+<FRAMEWORK_ROOT>/sessions
   empty or containing previous optimization sessions
 
 SOURCE_DIR
@@ -338,7 +312,7 @@ Create `~/.codex/config.toml` inside the agent VM:
 
 ```toml
 # Codex config for isolated agent VM demo.
-# Autonomous under /work, with network enabled.
+# Replace /absolute/path/to/stacks-core-agentic with your actual checkout root.
 
 model = "gpt-5.5"
 
@@ -348,23 +322,23 @@ web_search = "cached"
 
 [sandbox_workspace_write]
 network_access = true
-writable_roots = ["/work"]
+writable_roots = ["/absolute/path/to/stacks-core-agentic"]
 
-[projects."/work/repos/stacks-core"]
+[projects."/absolute/path/to/stacks-core-agentic/repos/stacks-core"]
 trust_level = "trusted"
 
-[projects."/work/sessions"]
+[projects."/absolute/path/to/stacks-core-agentic/sessions"]
 trust_level = "trusted"
 ```
 
 Trust the worktree root once at bootstrap so newly created session-scoped worktrees inherit trust without per-experiment config edits:
 
 ```toml
-[projects."/work/sessions"]
+[projects."/absolute/path/to/stacks-core-agentic/sessions"]
 trust_level = "trusted"
 ```
 
-That entry is recursive in practice (Codex matches the longest path prefix), but if a future Codex version tightens that, render a per-session entry into `~/.codex/config.toml.d/` from the session bootstrap step.
+That entry is recursive in practice (Codex matches the longest path prefix), but if a future Codex version tightens that, render a per-session entry into `~/.codex/config.toml.d/` from the session bootstrap step. Do not leave these pinned to `/work` if the repository is checked out elsewhere.
 
 Set permissions:
 
@@ -409,9 +383,10 @@ echo 'export RUST_BACKTRACE=1' >> ~/.bashrc
 ## Clone and configure repository
 
 ```bash
-cd /work/repos
+git clone git@github.com:cylewitruk/stacks-core-agentic.git /work
+cd /work
+git submodule update --init --recursive
 
-git clone git@github.com:cylewitruk/stacks-core.git
 cd /work/repos/stacks-core
 
 git remote add upstream git@github.com:stacks-network/stacks-core.git
@@ -821,11 +796,11 @@ Things deliberately NOT carried over from `experiments/run.sh`:
 
 ## Pipeline phase scripts
 
-Each phase is a standalone script that takes `SESSION_DIR` as its only positional arg, sources `/work/.env` and shared helpers via `_lib.sh`, reads its inputs from files in the session dir, and writes outputs back. You can run any of them directly for a controlled walkthrough; the orchestrator just chains them in order.
+Each phase is a standalone script that takes `SESSION_DIR` as its only positional arg, sources shared helpers via `_lib.sh`, and then reads `${AGENTIC_ENV_FILE:-$FRAMEWORK_ROOT/.env}` plus its file-based inputs from the session dir. Each script writes outputs back into the session dir. You can run any of them directly for a controlled walkthrough; the orchestrator just chains them in order.
 
 | Phase | Script | Reads | Writes (in `SESSION_DIR`) |
 | --- | --- | --- | --- |
-| 0a | `run-baseline.sh` | `/work/.env` (range vars) | `baseline-bench-run.json`, `baseline-rerun.json`, `baseline-{run,rerun}-id`, `bench-list.json`, `baseline-profiler-hotspots.json` |
+| 0a | `run-baseline.sh` | `FRAMEWORK_ROOT/.env` (range vars) | `baseline-bench-run.json`, `baseline-rerun.json`, `baseline-{run,rerun}-id`, `bench-list.json`, `baseline-profiler-hotspots.json` |
 | 0b | `import-baseline.sh` | existing run id(s) in stacks-bench DB | same as 0a (alternative — skip the live benchmark) |
 | 1 | `run-triage.sh` | baseline-* artifacts | `candidates.json`, `triage-*` |
 | 1.5 | `run-analyzers.sh` | `candidates.json` | `analyses/<id>/analysis.json`, `analyses/<id>/analyzer-*` |
@@ -837,16 +812,17 @@ Each phase is a standalone script that takes `SESSION_DIR` as its only positiona
 Walk-through example (with an existing baseline run id of 42):
 
 ```bash
-SESSION=/work/sessions/demo-001/results
+FRAMEWORK_ROOT=/path/to/stacks-core-agentic
+SESSION="$FRAMEWORK_ROOT/sessions/demo-001/results"
 mkdir -p "$SESSION"
 
-/work/scripts/import-baseline.sh "$SESSION" 42
-/work/scripts/run-triage.sh           "$SESSION"; jq . "$SESSION/candidates.json"
-/work/scripts/run-analyzers.sh        "$SESSION"; ls "$SESSION/analyses"
-/work/scripts/assemble-targets.sh     "$SESSION" > "$SESSION/optimization-targets.json"
-/work/scripts/run-optimizers.sh       "$SESSION"
-/work/scripts/bench-experiments.sh    "$SESSION"
-/work/scripts/finalize-session.sh     "$SESSION" > "$SESSION/summary.json"
+"$FRAMEWORK_ROOT/scripts/import-baseline.sh" "$SESSION" 42
+"$FRAMEWORK_ROOT/scripts/run-triage.sh"           "$SESSION"; jq . "$SESSION/candidates.json"
+"$FRAMEWORK_ROOT/scripts/run-analyzers.sh"        "$SESSION"; ls "$SESSION/analyses"
+"$FRAMEWORK_ROOT/scripts/assemble-targets.sh"     "$SESSION" > "$SESSION/optimization-targets.json"
+"$FRAMEWORK_ROOT/scripts/run-optimizers.sh"       "$SESSION"
+"$FRAMEWORK_ROOT/scripts/bench-experiments.sh"    "$SESSION"
+"$FRAMEWORK_ROOT/scripts/finalize-session.sh"     "$SESSION" > "$SESSION/summary.json"
 cat "$SESSION/summary.md"
 ```
 

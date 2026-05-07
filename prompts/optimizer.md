@@ -8,7 +8,7 @@ Make a minimally-scoped change that measurably reduces the cost of the hotspot d
 
 # Target
 
-An upstream analyzer agent already investigated this hotspot in depth and produced the target object below — it includes the hotspot details, suspected files, proposed approach, expected improvement, risk, and verification plan. The target conforms to `/work/schemas/optimization-targets.schema.json` (one entry of `.targets[]`):
+An upstream analyzer agent already investigated this hotspot in depth and produced the target object below — it includes the hotspot details, suspected files, proposed approach, expected improvement, risk, and verification plan. The target conforms to `${OPTIMIZATION_TARGETS_SCHEMA_PATH}` (one entry of `.targets[]`):
 
 ```json
 ${TARGET_JSON}
@@ -25,7 +25,7 @@ ${TARGET_JSON}
   - `nextest.log` + `nextest.stderr.log` — captured test output (command below).
   - `side-observations.md` — only if you noticed anything material outside this target's scope; skip otherwise.
 - `${TEST_LOCK}` — file lock serializing test runs across parallel subagents. Wrap every `cargo nextest run` invocation (including retries) with `flock ${TEST_LOCK} ...`.
-- `/work/prompts/non-targets.md` — read-only list of profiler spans known to be dead-end targets. If your target overlaps with this list, abort.
+- `${NON_TARGETS_PATH}` — read-only list of profiler spans known to be dead-end targets. If your target overlaps with this list, abort.
 
 # Rules
 

@@ -14,8 +14,8 @@ You should NOT explore the codebase. Treat your inputs as just the profiler data
 - Baseline rerun id (for noise-floor computation): `${BASELINE_RERUN_ID}`
 - Persistent stacks-bench DB: `${STACKS_BENCH_DATA_DIR}/appdata/stacks-bench.db` (SQLite; read-only for triage)
 - DB schema definitions: `${BASE}/stacks-bench/migrations/` (read these to understand the table layout before querying)
-- Non-targets reference: `/work/prompts/non-targets.md` (read-only; do not retry these)
-- Output schema: `/work/schemas/candidates.schema.json`
+- Non-targets reference: `${NON_TARGETS_PATH}` (read-only; do not retry these)
+- Output schema: `${CANDIDATES_SCHEMA_PATH}`
 
 # Optional: deeper analysis via the SQLite DB
 
@@ -38,7 +38,16 @@ Do NOT modify the DB. Read-only queries via `sqlite3 "${STACKS_BENCH_DATA_DIR}/a
 
 # Output
 
-Write `${OPT_SESSION_DIR}/candidates.json` matching `/work/schemas/candidates.schema.json`.
+Write `${OPT_SESSION_DIR}/candidates.json` matching `${CANDIDATES_SCHEMA_PATH}`.
+
+The JSON MUST include these top-level fields even when `candidates` is empty:
+
+- `schema_version: 1`
+- `session_id: "${OPT_SESSION_ID}"`
+- `baseline_run_id: ${BASELINE_RUN_ID}`
+- `baseline_rerun_id: ${BASELINE_RERUN_ID}`
+- `noise_floor_pct: <computed numeric percentage>`
+- `candidates: [...]`
 
 Also write a human-readable `${OPT_SESSION_DIR}/candidates.md` derived from the JSON (the JSON is the source of truth).
 

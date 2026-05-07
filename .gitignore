@@ -10,15 +10,15 @@
 !overview.md
 
 # Include only repo-owned directories
-!prompts/
+!data
+!prompts
 !prompts/**
-
-!schemas/
+!schemas
 !schemas/**
-
-!scripts/
+!scripts
 !scripts/**
+!sessions
 
-!repos/
+# Special handling for repos directory and the stacks-core submodule
+!repos
 !repos/stacks-core
-!repos/stacks-core/

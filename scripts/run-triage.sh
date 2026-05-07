@@ -18,6 +18,8 @@ set -euo pipefail
 # shellcheck source=./_lib.sh disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 init_session "$@"
+assert_required_tools
+assert_codex_compatible
 assert_codex_writable
 
 BASELINE_RUN_ID="$(cat "$OPT_SESSION_DIR/baseline-run-id")"
@@ -27,20 +29,26 @@ export BASELINE_RUN_ID BASELINE_RERUN_ID
 # envsubst's SHELL-FORMAT arg is a literal list of $VAR tokens; single quotes
 # are required so the shell doesn't expand them before envsubst sees them.
 # shellcheck disable=SC2016
-envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELINE_RUN_ID $BASELINE_RERUN_ID' \
-  < /work/prompts/triage.md \
+envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELINE_RUN_ID $BASELINE_RERUN_ID $NON_TARGETS_PATH $CANDIDATES_SCHEMA_PATH' \
+  < "$PROMPTS_DIR/triage.md" \
   > "$OPT_SESSION_DIR/triage-prompt.md"
 
 # codex CLI 0.128.0: --ask-for-approval and -m are TOP-LEVEL flags (before
 # `exec`). --skip-git-repo-check is needed because the cwd here is a session
 # results dir, not a git repo. --search dropped: triage doesn't need web
 # search and removing it cuts a network dependency / source of nondeterminism.
-codex \
+# Add the framework root plus any env-overridden data/code roots explicitly so
+# the prompt can still read them even if the operator moves them elsewhere.
+run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
+  codex \
   -m "${CODEX_MODEL:-gpt-5.5}" \
   --ask-for-approval never \
   exec \
     --skip-git-repo-check \
-    --cd "$OPT_SESSION_DIR" --add-dir /work \
+    --cd "$OPT_SESSION_DIR" \
+    --add-dir "$FRAMEWORK_ROOT" \
+    --add-dir "$STACKS_BENCH_DATA_DIR" \
+    --add-dir "$BASE" \
     --sandbox workspace-write --json \
     --output-last-message "$OPT_SESSION_DIR/triage-final-message.md" \
     "$(cat "$OPT_SESSION_DIR/triage-prompt.md")" \

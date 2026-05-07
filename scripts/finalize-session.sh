@@ -16,15 +16,10 @@
 #   - JSON to stdout (the caller redirects to summary.json)
 #   - summary.md alongside, as a derived human view
 set -euo pipefail
-SESSION_DIR="${1:-${OPT_SESSION_DIR:?need SESSION_DIR or OPT_SESSION_DIR}}"
-
-# /work/.env exposes STACKS_BENCH_DATA_DIR and BASE.
-# /work/.env lives on the deploy VM, not in the repo, so shellcheck can't
-# follow it statically.
-# shellcheck disable=SC1091
-if [ -f /work/.env ]; then
-  set -a; source /work/.env; set +a
-fi
+# shellcheck source=./_lib.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
+init_session "$@"
+SESSION_DIR="$OPT_SESSION_DIR"
 
 TARGETS="$SESSION_DIR/optimization-targets.json"
 [ -s "$TARGETS" ] || { echo "missing $TARGETS" >&2; exit 1; }

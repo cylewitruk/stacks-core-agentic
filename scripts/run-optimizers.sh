@@ -24,6 +24,8 @@ set -euo pipefail
 # shellcheck source=./_lib.sh disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 init_session "$@"
+assert_required_tools
+assert_codex_compatible
 assert_codex_writable
 
 TARGETS="$OPT_SESSION_DIR/optimization-targets.json"
@@ -93,18 +95,24 @@ run_optimizer() {
   # envsubst's SHELL-FORMAT arg requires literal $VAR tokens; single quotes
   # prevent the shell from expanding them before envsubst sees them.
   # shellcheck disable=SC2016
-  envsubst '$TARGET_ID $WORKTREE_DIR $OUTPUT_DIR $TEST_LOCK $TARGET_JSON' \
-    < /work/prompts/optimizer.md \
+  envsubst '$TARGET_ID $WORKTREE_DIR $OUTPUT_DIR $TEST_LOCK $TARGET_JSON $NON_TARGETS_PATH $OPTIMIZATION_TARGETS_SCHEMA_PATH' \
+    < "$PROMPTS_DIR/optimizer.md" \
     > "$OUTPUT_DIR/optimizer-prompt.md"
 
   # codex CLI 0.128.0: --ask-for-approval and -m are TOP-LEVEL flags (before
   # `exec`). No --skip-git-repo-check needed here: cwd is a real git worktree.
   # --search dropped: optimizer reads + edits source, web search isn't useful.
-  codex \
+  # Add the framework root plus the per-target output dir and test-lock dir so
+  # the flow still works if sessions/data are moved outside the checkout root.
+  run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
+    codex \
     -m "${CODEX_MODEL:-gpt-5.5}" \
     --ask-for-approval never \
     exec \
-      --cd "$WT" --add-dir /work \
+      --cd "$WT" \
+      --add-dir "$FRAMEWORK_ROOT" \
+      --add-dir "$OUTPUT_DIR" \
+      --add-dir "$(dirname "$TEST_LOCK")" \
       --sandbox workspace-write --json \
       --output-last-message "$OUTPUT_DIR/subagent-final-message.md" \
       "$(cat "$OUTPUT_DIR/optimizer-prompt.md")" \
@@ -114,7 +122,7 @@ run_optimizer() {
   capture_codex_conversation_id "$OUTPUT_DIR/subagent-events.jsonl" \
     > "$OUTPUT_DIR/subagent-conversation-id"
 }
-export -f run_optimizer capture_codex_conversation_id
+export -f run_optimizer capture_codex_conversation_id run_with_timeout
 export WORKTREES OPT_SESSION_DIR BASE TEST_LOCK
 
 # xargs -P fans out, preserving streaming logs per subagent.

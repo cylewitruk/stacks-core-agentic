@@ -16,8 +16,8 @@ ${CANDIDATE_JSON}
 
 - Stable read-only checkout to inspect: `${BASE}` (do NOT modify any file under this path)
 - Output directory for this candidate: `${OUTPUT_DIR}`
-- Non-targets reference: `/work/prompts/non-targets.md`
-- Output schema: `/work/schemas/analysis.schema.json`
+- Non-targets reference: `${NON_TARGETS_PATH}`
+- Output schema: `${ANALYSIS_SCHEMA_PATH}`
 
 # Rules
 
@@ -29,7 +29,7 @@ ${CANDIDATE_JSON}
 
 # Output
 
-Write `${OUTPUT_DIR}/analysis.json` matching `/work/schemas/analysis.schema.json`.
+Write `${OUTPUT_DIR}/analysis.json` matching `${ANALYSIS_SCHEMA_PATH}`.
 
 Set `status` to either `"accepted"` or `"rejected"`:
 

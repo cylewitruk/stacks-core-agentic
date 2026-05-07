@@ -2,7 +2,7 @@
 # Phase 0a: run a fresh baseline benchmark + bench rerun (for noise floor),
 # then capture bench-list and profiler-hotspots JSON.
 #
-# Inputs (from /work/.env):
+# Inputs (from the framework env file, usually <FRAMEWORK_ROOT>/.env):
 #   SOURCE_DIR, STACKS_BENCH_NETWORK, STACKS_BENCH_START_AT, STACKS_BENCH_COUNT,
 #   STACKS_BENCH_DATA_DIR, BENCH_LOCK, BASE
 #

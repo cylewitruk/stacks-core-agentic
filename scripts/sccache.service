@@ -2,7 +2,7 @@
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user
-#   cp /work/scripts/sccache.service ~/.config/systemd/user/sccache.service
+#   cp "$FRAMEWORK_ROOT/scripts/sccache.service" ~/.config/systemd/user/sccache.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now sccache
 #
@@ -26,7 +26,7 @@ Type=simple
 # supervise the actual server process (instead of the short-lived parent
 # that --start-server normally forks from).
 Environment=SCCACHE_NO_DAEMON=1
-Environment=SCCACHE_DIR=/work/sccache
+Environment=SCCACHE_DIR=%h/.cache/stacks-core-agentic/sccache
 Environment=SCCACHE_CACHE_SIZE=50G
 # Idle timeout 0 = never shut down on idle; systemd manages lifecycle.
 Environment=SCCACHE_IDLE_TIMEOUT=0
