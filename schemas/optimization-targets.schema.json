@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stacks-bench.local/schemas/optimization-targets.schema.json",
+  "title": "Assembled optimization targets",
+  "description": "Shell-assembled union of accepted analyses, fed to the optimizer fan-out. NOT produced by an agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "targets"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": { "type": "string" },
+    "baseline_run_id": { "type": "integer" },
+    "baseline_rerun_id": { "type": "integer" },
+    "noise_floor_pct": { "type": "number" },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "rank",
+          "hotspot",
+          "files",
+          "evidence",
+          "proposed_change",
+          "expected_improvement_pct",
+          "risk",
+          "verification_plan"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "rank": { "type": "integer", "minimum": 1 },
+          "hotspot": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["span", "self_wall_us", "calls", "location"],
+            "properties": {
+              "span": { "type": "string" },
+              "self_wall_us": { "type": "integer" },
+              "total_wall_us": { "type": "integer" },
+              "calls": { "type": "integer" },
+              "location": { "type": "string" }
+            }
+          },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "evidence": { "type": "string" },
+          "proposed_change": { "type": "string" },
+          "expected_improvement_pct": { "type": "number" },
+          "risk": { "enum": ["low", "medium", "high"] },
+          "verification_plan": { "type": "string" }
+        }
+      }
+    }
+  }
+}

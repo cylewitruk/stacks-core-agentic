@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stacks-bench.local/schemas/summary.schema.json",
+  "title": "Optimization session summary",
+  "description": "Final per-session machine-readable summary written by finalize-session.sh.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "experiments"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": { "type": "string" },
+    "baseline_run_id": { "type": "integer" },
+    "baseline_rerun_id": { "type": "integer" },
+    "noise_floor_pct": { "type": "number" },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_id", "status"],
+        "properties": {
+          "target_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "status": { "enum": ["accepted", "rejected", "aborted"] },
+          "run_ids": {
+            "type": "array",
+            "items": { "type": "integer" }
+          },
+          "improvement_pct": { "type": "number" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "next_targets_hint": { "type": "string" }
+  }
+}

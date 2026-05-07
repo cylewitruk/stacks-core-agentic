@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stacks-bench.local/schemas/candidates.schema.json",
+  "title": "Triage candidates",
+  "description": "Output of the triage agent: spans worth investigating in depth, before any codebase exploration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": { "type": "string" },
+    "baseline_run_id": { "type": "integer" },
+    "baseline_rerun_id": { "type": "integer" },
+    "noise_floor_pct": {
+      "type": "number",
+      "description": "Per-host noise floor computed from baseline vs baseline-rerun timing."
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "span", "self_wall_us", "calls", "location", "rationale"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "description": "Stable kebab-case identifier; used as a path segment downstream."
+          },
+          "span": {
+            "type": "string",
+            "description": "Full span name as it appears in the profiler output."
+          },
+          "self_wall_us": { "type": "integer" },
+          "total_wall_us": { "type": "integer" },
+          "calls": { "type": "integer" },
+          "location": {
+            "type": "string",
+            "description": "file:line as reported by the profiler, when available."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "One-liner explaining why this span is worth investigating in depth."
+          }
+        }
+      }
+    }
+  }
+}

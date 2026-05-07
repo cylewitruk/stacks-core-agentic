@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stacks-bench.local/schemas/analysis.schema.json",
+  "title": "Per-candidate analysis",
+  "description": "Output of one analyzer agent for one triage candidate. Either an accepted analysis a downstream optimizer can implement against, or a rejection with reason.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "candidate_id",
+        "status",
+        "hotspot",
+        "files",
+        "evidence",
+        "proposed_change",
+        "expected_improvement_pct",
+        "risk",
+        "verification_plan"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "candidate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "status": { "const": "accepted" },
+        "hotspot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["span", "self_wall_us", "calls", "location"],
+          "properties": {
+            "span": { "type": "string" },
+            "self_wall_us": { "type": "integer" },
+            "total_wall_us": { "type": "integer" },
+            "calls": { "type": "integer" },
+            "location": { "type": "string" }
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Repo-relative paths the optimizer should start with. Order of likelihood, most-likely first."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Why this hotspot is real and addressable. Cite specific code (function names, call patterns)."
+        },
+        "proposed_change": {
+          "type": "string",
+          "description": "Concrete approach: cache, allocation elision, batching, redesign, etc."
+        },
+        "expected_improvement_pct": { "type": "number" },
+        "risk": { "enum": ["low", "medium", "high"] },
+        "verification_plan": {
+          "type": "string",
+          "description": "Which tests must pass / what behavior to spot-check after the change."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "candidate_id", "status", "reason"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "candidate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "status": { "const": "rejected" },
+        "reason": {
+          "type": "string",
+          "description": "Why this candidate is not viable: overlaps with non-targets, already optimized, cost is inherent, etc."
+        }
+      }
+    }
+  ]
+}
