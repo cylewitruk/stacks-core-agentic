@@ -9,7 +9,7 @@ assert_required_tools
 assert_codex_compatible
 assert_codex_writable
 
-if [ ! -d "$BASE/.git" ]; then
+if ! git -C "$BASE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "BASE is not a git checkout: $BASE" >&2
   exit 1
 fi
