@@ -20,4 +20,5 @@
 !scripts/**
 
 !repos/
+!repos/stacks-core
 !repos/stacks-core/

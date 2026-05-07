@@ -1,0 +1,4 @@
+[submodule "repos/stacks-core"]
+	path = repos/stacks-core
+	url = https://github.com/cylewitruk/stacks-core.git
+	branch = feat/stacks-bench
