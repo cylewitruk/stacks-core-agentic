@@ -182,7 +182,17 @@ run_with_timeout() {
   fi
 }
 
-codex_sandbox_args() {
+codex_top_level_args() {
+  local model="${1:-${CODEX_MODEL:-gpt-5.5}}"
+  local effort="${2:-${CODEX_REASONING_EFFORT:-}}"
+
+  printf '%s\n' "-m" "$model"
+  printf '%s\n' "-c" "features.fast_mode=false"
+
+  if [ -n "$effort" ]; then
+    printf '%s\n' "-c" "model_reasoning_effort=$effort"
+  fi
+
   if [ "${CODEX_DANGEROUS_BYPASS_SANDBOX:-0}" = "1" ]; then
     printf '%s\n' "--dangerously-bypass-approvals-and-sandbox"
   else

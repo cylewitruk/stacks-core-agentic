@@ -113,14 +113,13 @@ run_optimizer() {
   # --search dropped: optimizer reads + edits source, web search isn't useful.
   # Add the framework root plus the per-target output dir and test-lock dir so
   # the flow still works if sessions/data are moved outside the checkout root.
-  local -a CODEX_SANDBOX_ARGS CODEX_EXEC_ARGS
-  mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+  local -a CODEX_TOP_LEVEL_ARGS CODEX_EXEC_ARGS
+  mapfile -t CODEX_TOP_LEVEL_ARGS < <(codex_top_level_args "${CODEX_MODEL:-gpt-5.5}")
   mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
 
   run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
     codex \
-    -m "${CODEX_MODEL:-gpt-5.5}" \
-    "${CODEX_SANDBOX_ARGS[@]}" \
+    "${CODEX_TOP_LEVEL_ARGS[@]}" \
     exec \
       --cd "$WT" \
       --add-dir "$FRAMEWORK_ROOT" \
@@ -136,7 +135,7 @@ run_optimizer() {
     > "$OUTPUT_DIR/subagent-conversation-id"
 }
 export -f run_optimizer capture_codex_conversation_id run_with_timeout
-export -f codex_sandbox_args codex_exec_args
+export -f codex_top_level_args codex_exec_args
 export WORKTREES OPT_SESSION_DIR BASE TEST_LOCK
 
 # xargs -P fans out, preserving streaming logs per subagent.

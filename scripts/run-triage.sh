@@ -45,13 +45,12 @@ envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $STACKS_BENCH_DATA_DIR $BASE $BASELIN
 # search and removing it cuts a network dependency / source of nondeterminism.
 # Add the framework root plus any env-overridden data/code roots explicitly so
 # the prompt can still read them even if the operator moves them elsewhere.
-mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+mapfile -t CODEX_TOP_LEVEL_ARGS < <(codex_top_level_args "${CODEX_MODEL:-gpt-5.5}")
 mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
 
 run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
   codex \
-    -m "${CODEX_MODEL:-gpt-5.5}" \
-    "${CODEX_SANDBOX_ARGS[@]}" \
+    "${CODEX_TOP_LEVEL_ARGS[@]}" \
   exec \
     --skip-git-repo-check \
     --cd "$OPT_SESSION_DIR" \

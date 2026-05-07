@@ -207,7 +207,7 @@ envsubst '$OPT_SESSION_ID $OPT_SESSION_DIR $BASELINE_RUN_ID $BASELINE_RERUN_ID $
   < "$PROMPTS_DIR/merge-analyses.md" \
   > "$OPT_SESSION_DIR/merge-prompt.md"
 
-mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+mapfile -t CODEX_TOP_LEVEL_ARGS < <(codex_top_level_args "$CODEX_MERGE_MODEL" "${CODEX_MERGE_REASONING_EFFORT:-${CODEX_REASONING_EFFORT:-}}")
 mapfile -t CODEX_EXEC_ARGS    < <(codex_exec_args)
 
 # Clear stale SCRATCH artifacts only. Canonical outputs (TARGETS_OUT, MSG_OUT)
@@ -224,8 +224,7 @@ trap 'rm -f "$FRESHNESS_MARKER"' EXIT
 
 if ! run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
      codex \
-       -m "$CODEX_MERGE_MODEL" \
-       "${CODEX_SANDBOX_ARGS[@]}" \
+       "${CODEX_TOP_LEVEL_ARGS[@]}" \
      exec \
        --skip-git-repo-check \
        --cd "$OPT_SESSION_DIR" \

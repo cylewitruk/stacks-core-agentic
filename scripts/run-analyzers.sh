@@ -81,14 +81,13 @@ run_analyzer() {
   # read source code (the prompt forbids modifying it). $FRAMEWORK_ROOT covers
   # the queries dir + the session dir for span_recurrence.csv reads.
   # $STACKS_BENCH_DATA_DIR is added so the analyzer can run trace queries.
-  local -a CODEX_SANDBOX_ARGS CODEX_EXEC_ARGS
-  mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+  local -a CODEX_TOP_LEVEL_ARGS CODEX_EXEC_ARGS
+  mapfile -t CODEX_TOP_LEVEL_ARGS < <(codex_top_level_args "${CODEX_MODEL:-gpt-5.5}")
   mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
 
   run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
     codex \
-    -m "${CODEX_MODEL:-gpt-5.5}" \
-    "${CODEX_SANDBOX_ARGS[@]}" \
+    "${CODEX_TOP_LEVEL_ARGS[@]}" \
     exec \
       --skip-git-repo-check \
       --cd "$OUT" \
@@ -105,7 +104,7 @@ run_analyzer() {
     > "$OUT/analyzer-conversation-id"
 }
 export -f run_analyzer capture_codex_conversation_id run_with_timeout
-export -f codex_sandbox_args codex_exec_args
+export -f codex_top_level_args codex_exec_args
 export ANALYSES_DIR OPT_SESSION_DIR BASE STACKS_BENCH_DATA_DIR QUERIES_DIR BASELINE_RUN_ID
 
 # xargs -P fans out, preserving streaming logs per subagent.

@@ -61,14 +61,13 @@ run_pr_writer() {
     < "$PROMPTS_DIR/pr-writer.md" \
     > "$OUTPUT_DIR/pr-writer-prompt.md"
 
-  local -a CODEX_SANDBOX_ARGS CODEX_EXEC_ARGS
-  mapfile -t CODEX_SANDBOX_ARGS < <(codex_sandbox_args)
+  local -a CODEX_TOP_LEVEL_ARGS CODEX_EXEC_ARGS
+  mapfile -t CODEX_TOP_LEVEL_ARGS < <(codex_top_level_args "${CODEX_MODEL:-gpt-5.5}")
   mapfile -t CODEX_EXEC_ARGS < <(codex_exec_args)
 
   run_with_timeout "${CODEX_EXEC_TIMEOUT_SEC:-3600}" \
     codex \
-      -m "${CODEX_MODEL:-gpt-5.5}" \
-      "${CODEX_SANDBOX_ARGS[@]}" \
+      "${CODEX_TOP_LEVEL_ARGS[@]}" \
       exec \
       --skip-git-repo-check \
       --cd "$OUTPUT_DIR" \
