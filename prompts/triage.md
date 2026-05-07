@@ -2,13 +2,13 @@ You are a senior Rust performance engineer triaging baseline profiler data from 
 
 # Goal
 
-Read the baseline profiler hotspots and produce a list of CANDIDATE spans worth investigating in depth. You are NOT producing implementation plans — that is the job of downstream analyzer agents, one per candidate. Your job is to be fast and selective: pick the spans where deep investigation has a reasonable chance of yielding a measurable improvement, and reject the rest.
+Produce a list of CANDIDATE bottleneck families worth investigating in depth. You are NOT producing implementation plans — that is the job of downstream analyzer agents, one per candidate. Your job is to be fast and selective: identify repeated hot subtrees in representative blocks / txs / contract calls, then choose the single most actionable span to represent each family.
 
 You should NOT explore the codebase. Treat your inputs as just the profiler data + the non-targets list. Codebase exploration is the analyzer's job, on a per-candidate basis.
 
 # Inputs
 
-- Baseline profiler hotspots: `${OPT_SESSION_DIR}/baseline-profiler-hotspots.json`
+- Baseline profiler hotspots: `${OPT_SESSION_DIR}/baseline-profiler-hotspots.json` (supporting evidence only; do NOT treat this top-50 snapshot as the primary source of candidate identity)
 - Baseline `bench list` JSON: `${OPT_SESSION_DIR}/bench-list.json`
 - Baseline run id: `${BASELINE_RUN_ID}`
 - Baseline rerun id (for noise-floor computation): `${BASELINE_RERUN_ID}`
@@ -18,9 +18,9 @@ You should NOT explore the codebase. Treat your inputs as just the profiler data
 - Non-targets reference: `${NON_TARGETS_PATH}` (read-only; do not retry these)
 - Output schema: `${CANDIDATES_SCHEMA_PATH}`
 
-# Optional: deeper analysis via the SQLite DB
+# Primary method: workload-entry analysis via the SQLite DB
 
-The profiler JSON (`baseline-profiler-hotspots.json`) is a top-50 snapshot of one run. The DB contains every run, every span, every per-block stat, and full key-value records. Use it when the JSON alone is insufficient.
+The profiler JSON (`baseline-profiler-hotspots.json`) is a top-50 snapshot of one run. The DB contains every run, every span, every per-block stat, and full key-value records. Use the DB as the PRIMARY source of truth. The JSON is only a quick global ranking signal and a sanity check that the subtree you identified is materially important overall.
 
 A small library of pre-built, schema-correct triage queries lives at `${QUERIES_DIR}` — see `${QUERIES_DIR}/README.md` for the recommended flow and the catalog of queries. Prefer these over hand-written SQL: each has been verified against the live schema and is parameterized with sqlite3 named bindings (`:run_id`, `:span_id`, etc.). Invocation pattern:
 
@@ -31,23 +31,22 @@ sqlite3 -header -csv "${STACKS_BENCH_DATA_DIR}/appdata/stacks-bench.db" \
   ".read ${QUERIES_DIR}/top_spans_by_self_wall.sql"
 ```
 
-The most important queries for triage:
+The most important queries for triage, in order:
 
-- `top_spans_by_self_wall.sql` — ranking deeper than the top-50 JSON, with CPU/wait split.
-- `span_recurrence.sql` — how broadly each span appears across blocks/txs (the strongest single signal for filtering one-off outliers from real hotspots).
-- `span_per_sample_distribution.sql` and `span_per_block_distribution.sql` — distribution shape for one span; use these to validate a candidate before promoting it. Read the per-sample-vs-per-call caveat in `span_per_sample_distribution.sql`'s header before reporting its numbers.
-- `top_spans_by_call_count.sql` — surfaces high-frequency low-cost spans the wall-time ranking misses.
-- `block_timing_breakdown.sql` and `baseline_empty_block_breakdown.sql` — whether the time is in setup / execution / commit, and what the irreducible empty-block floor is.
-- `tx_type_distribution.sql` and `top_contract_calls.sql` — workload context (which contracts dominate, etc.).
+- `run_summary.sql`, `tx_type_distribution.sql`, `block_timing_breakdown.sql`, and `baseline_empty_block_breakdown.sql` — characterize the workload and determine which top-level phases dominate before you pick any spans.
+- `top_contract_calls.sql` and `top_txs_by_duration.sql` — identify representative heavy contract calls / transactions to inspect.
+- `profiler_trace_tx.sql` and `profiler_trace_block.sql` — inspect representative traces as hierarchical trees. These are the key queries for candidate identity.
+- `top_spans_by_self_wall.sql` and `top_spans_by_call_count.sql` — supporting evidence for global materiality and for finding high-frequency paths the top-50 JSON misses.
+- `span_recurrence.sql`, `span_per_block_distribution.sql`, and `span_per_sample_distribution.sql` — validation and prioritization once you already suspect a subtree or representative span.
 - `span_run_drift.sql` — when 2+ runs exist, surfaces spans whose recent baseline is moving.
 
-Drill-down chain when an aggregate is ambiguous (do NOT skip these when a candidate looks suspicious from the rank-or-recurrence views):
+Trace-first drill-down chain:
 
-- From a hot contract.function: `top_contract_calls.sql` → `txs_for_contract.sql` → `profiler_trace_tx.sql` (use `:min_wall_ms` 5–10).
-- From a hot span concentrated in few blocks: `span_recurrence.sql` / `span_per_block_distribution.sql` → `top_blocks_for_span.sql` → `profiler_trace_block.sql` (use `:min_wall_ms` 10–25).
-- From raw cost without a contract pre-filter: `top_txs_by_duration.sql` → `profiler_trace_tx.sql`.
+- From a dominant contract.function: `top_contract_calls.sql` → `txs_for_contract.sql` → `profiler_trace_tx.sql` (use `:min_wall_ms` 5–10).
+- From a dominant transaction shape without a contract pre-filter: `top_txs_by_duration.sql` → `profiler_trace_tx.sql`.
+- From a dominant block phase or concentrated span: `block_timing_breakdown.sql` / `span_recurrence.sql` / `span_per_block_distribution.sql` → `top_blocks_for_span.sql` → `profiler_trace_block.sql` (use `:min_wall_ms` 10–25).
 
-The trace queries return indented hierarchical span trees with file:line and tag context — this is what lets the analyzer (next phase) start from a precise call site rather than re-deriving where in the codebase a span lives.
+IMPORTANT: the trace queries return indented hierarchical span trees with file:line and tag context. Treat each trace as a TREE, not as a flat list of spans. Your job is to identify repeated hot subtrees and choose the best optimization handle within those subtrees, not to mechanically promote every recurrent span that appears in a ranking table.
 
 If the catalog does not cover what you need, hand-written SQL against the schema in `${BASE}/stacks-bench/migrations/` is acceptable; read the migrations first. Notable schema gotchas: `profiler_record` has `synthetic_block_id` (not `stacks_block_id`) and uses `parent_id` for the call hierarchy; `stacks_block_stats` joins to `stacks_block` via `synthetic_block`; and the pre-aggregated `profiler_span_summary` / `profiler_span_block_summary` tables already expose sampling-expanded estimates as virtual columns (`est_self_wall_us`, etc.).
 
@@ -82,6 +81,7 @@ Apply the same pattern when you need the full content of a large trace (e.g. `:m
 # Rules
 
 - Do NOT cap the number of candidates. Emit as many or as few as the data supports.
+- Do NOT choose candidates directly from `baseline-profiler-hotspots.json` or any span ranking query alone. Those are supporting signals only.
 - Compute the per-host noise floor from the baseline run vs the baseline rerun, unless a precomputed fallback noise floor is provided below.
 - Precomputed fallback noise floor for single-run imports: `${PRECOMPUTED_NOISE_FLOOR_PCT}`
 - If `${PRECOMPUTED_NOISE_FLOOR_PCT}` is non-empty, use that exact value for `noise_floor_pct` instead of reporting `0`.
@@ -89,12 +89,52 @@ Apply the same pattern when you need the full content of a large trace (e.g. `:m
 - Reject any span that overlaps with `non-targets.md`.
 - Each candidate's `id` must be a stable kebab-case string derivable from the span name; it is used as a path segment by downstream phases.
 - Keep `rationale` to one line. Detail belongs in the analyzer's later analysis.
+- Prefer one candidate per repeated bottleneck family by default. Do NOT emit multiple names for the same hot subtree unless you can clearly explain why they are independently actionable.
 
-## Required validation procedure for every candidate
+## Required discovery procedure before candidate selection
+
+Start from workload entry points, not from flat hotspot spans.
+
+Before selecting final candidates you MUST:
+
+1. Orient on workload shape with `run_summary.sql`, `tx_type_distribution.sql`, `block_timing_breakdown.sql`, and `baseline_empty_block_breakdown.sql`.
+   - Determine whether the run is dominated by setup, execution, commit, or a small number of transaction / contract-call patterns.
+
+2. Choose representative heavy examples to inspect.
+   - Use `top_contract_calls.sql` and `top_txs_by_duration.sql` for tx / contract-call dominated work.
+   - Use block-phase context plus `top_blocks_for_span.sql` when a block-level path or concentrated span looks important.
+   - Pick enough examples to tell whether a pattern is repeated, not just one-off.
+   - In practice, inspect about 3–5 representative traces per suspected bottleneck family unless the pattern is already clearly established sooner.
+
+3. Inspect representative traces with `profiler_trace_tx.sql` and/or `profiler_trace_block.sql`.
+   - Treat the trace as a hierarchical call TREE.
+   - Walk it top-down and identify the subtree that appears to dominate cost.
+   - Use a simple dominance heuristic while descending: if one child accounts for roughly >= 50% of its parent's `wall_ms`, follow that child as the dominant path. Keep descending while a child clearly dominates. Stop when no child dominates; that level is usually the best candidate handle.
+   - Distinguish between:
+     - top-level phase wrappers,
+     - internal coordinators,
+     - true actionable leaves,
+     - repeated sibling/parent/child spans from the same hot path.
+
+4. Correlate traces across examples and build bottleneck families.
+   - If multiple candidate spans repeatedly occur in the same hot subtree, treat them as one family.
+   - Keep only the most actionable representative span for that family unless there is strong evidence that two spans are independently optimizable.
+   - Prefer the representative that is:
+     - closest to the real cost center,
+     - most directly actionable,
+     - most likely to produce a measurable benchmark delta on its own,
+     - least likely to just be a generic wrapper or symptom span.
+
+5. Use hotspot/ranking queries only to confirm that the subtree you identified is globally material.
+   - `baseline-profiler-hotspots.json`, `top_spans_by_self_wall.sql`, and `top_spans_by_call_count.sql` are supporting evidence for importance, not the primary source of candidate identity.
+
+Your final candidate list should contain distinct optimization handles for repeated hot subtrees, not a flat list of correlated spans from the same phase.
+
+## Required validation procedure for every candidate family representative
 
 Each benchmark run is a slice of the chain (typically 100k–300k blocks out of an 8M+ history), so a span that affects only a fraction of blocks IN THIS SLICE may still be a real, addressable hotspot — e.g. a regression triggered by a specific tx pattern, contract, or epoch range that happens to be sparse here but common in production. Treat low recurrence as a *priority* signal, not a rejection signal. The only spans that should be rejected on distribution grounds are those whose total cost is driven by a tiny number of outlier blocks rather than a consistent per-occurrence pattern.
 
-Before promoting any span to `candidates.json` you MUST:
+Before promoting any family representative span to `candidates.json` you MUST:
 
 1. Run `span_recurrence.sql` ONCE for the run (it returns all spans, so a single call covers every candidate the agent considers, including those surfaced by `top_spans_by_call_count.sql` rather than by self-wall ranking). Look up each candidate's row. Use `pct_blocks` to set priority, NOT to reject:
    - `pct_blocks` ≥ 70% → broad workload signal; standard priority.
@@ -110,7 +150,7 @@ Before promoting any span to `candidates.json` you MUST:
 
 4. Reject any candidate whose plausible improvement (`self_wall_ms` × a generous best-case shave fraction, e.g. 50%, scaled by the workload coverage from step 1) is smaller than the noise floor in absolute wall-clock terms relative to the run total. Surfacing a real but unmeasurable hotspot just burns optimizer time.
 
-These rules apply to EVERY candidate, including the obvious ones. Note in `rationale` when a candidate is workload-conditional (low `pct_blocks` but consistent per-block cost) so analyzers and humans can weigh it correctly against broader candidates.
+These rules apply to EVERY candidate, including the obvious ones. Note in `rationale` when a candidate is workload-conditional (low `pct_blocks` but consistent per-block cost) so analyzers and humans can weigh it correctly against broader candidates. Also note when the span is serving as the representative handle for a broader subtree / bottleneck family.
 
 # Output
 
