@@ -13,6 +13,8 @@
 !data
 !prompts
 !prompts/**
+!queries
+!queries/**
 !schemas
 !schemas/**
 !scripts

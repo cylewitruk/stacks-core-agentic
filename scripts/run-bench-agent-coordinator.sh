@@ -59,6 +59,17 @@ fi
 "$S/finalize-session.sh"  "$OPT_SESSION_DIR" \
   > "$OPT_SESSION_DIR/summary.json"
 
+# Optional Phase 5: generate and publish draft PRs for accepted improvements.
+# `sudo -H` resets HOME to the publisher's home directory so $HOME-relative
+# paths in publish-accepted.sh resolve to the publisher's filesystem rather
+# than the invoking agent user's. Sudoers must allow the agent user to run
+# this script as the publisher with NOPASSWD — see scripts/setup-publisher.sh.
+if [ "${PUBLISH_ACCEPTED_PRS:-0}" = "1" ]; then
+  "$S/generate-pr-artifacts.sh" "$OPT_SESSION_DIR"
+  sudo -H -u "${PUBLISH_SUDO_USER:-publisher}" \
+    "$S/publish-accepted.sh" "$OPT_SESSION_DIR"
+fi
+
 echo
 echo "session: $OPT_SESSION_DIR"
 echo "summary: $OPT_SESSION_DIR/summary.md"

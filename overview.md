@@ -861,6 +861,67 @@ Phase 2 fan-out parallelism is capped by `STACKS_BENCH_PARALLEL_AGENTS`; analyze
 }
 ```
 
+## Phase 5: Autonomous PR publishing (optional)
+
+After `summary.json` is written, the coordinator can optionally generate
+draft GitHub PRs for every accepted target. The flow is split across two
+scripts on purpose, so the GitHub token never sits in a process the
+optimizer/triage agents can read:
+
+| Script | User | What it does |
+| ------ | ---- | ---- |
+| `scripts/generate-pr-artifacts.sh` | agent | Runs the `pr-writer.md` Codex prompt once per accepted target. Writes `pr-title.txt` and `pr-body.md` into `experiments/<id>/`. Validates that the body has the four required sections (`## Summary`, `## What changed`, `## Benchmark result`, `## Validation`). |
+| `scripts/publish-accepted.sh` | publisher (via `sudo -H`) | Reads the title/body files, switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u` — not `-A`), commits, pushes to the configured remote, and creates a draft PR with `gh pr create`. Skips entirely if a PR for that head:base pair already exists. |
+
+The token never leaves the publisher's filesystem, and the agent user has no
+read access to it. The agent user's only privilege over the publisher is to
+invoke the single `publish-accepted.sh` script via `sudo`.
+
+### One-time setup
+
+```bash
+sudo /work/scripts/setup-publisher.sh
+```
+
+That script:
+
+* creates the `publisher` system user (no login shell);
+* creates `/var/lib/stacks-core-agentic/` with mode `0700`, owned by `publisher`;
+* installs a sudoers stanza at `/etc/sudoers.d/stacks-core-agentic-publisher` that
+  allows the agent user to run `publish-accepted.sh` as `publisher` with
+  NOPASSWD, and ONLY that script (validated via `visudo -cf` before install);
+* prints the final manual step: drop the GitHub PAT into the token file with
+  the right ownership/mode.
+
+The agent user, `publisher` user, the framework checkout, and the token path
+are all overridable via env (`AGENT_USER`, `PUBLISH_SUDO_USER`,
+`FRAMEWORK_ROOT`, `PUBLISH_TOKEN_FILE`). Re-running the script is safe.
+
+### Enabling Phase 5
+
+In `<FRAMEWORK_ROOT>/.env`:
+
+```bash
+PUBLISH_ACCEPTED_PRS=1
+PUBLISH_DRAFT_PRS=1                    # 0 to publish ready-for-review PRs
+PUBLISH_BASE_REPO=cylewitruk/stacks-core   # default — your fork, low blast radius
+PUBLISH_BASE_BRANCH=feat/stacks-bench
+PUBLISH_REMOTE=origin                  # the remote the worktree pushes to
+PUBLISH_PR_LABELS=                     # optional: comma-separated, each emitted as --label
+```
+
+The default `PUBLISH_BASE_REPO` targets your fork, not `stacks-network/stacks-core`,
+so a runaway autonomous flow lands PRs in your own UI rather than upstream.
+Override only when you've reviewed a session and want to escalate.
+
+### Re-running Phase 5
+
+`publish-accepted.sh` checks for an existing PR (head + base) before any git
+mutations and skips the target entirely if one is found. Re-running the
+coordinator with the same session id is therefore idempotent for any target
+whose PR already exists. New accepted targets in subsequent sessions get
+their own branches via the `agentic/<session>/<target>` naming.
+
 ## Benchmark serialization
 
 No two benchmark runs should execute simultaneously. This matters because local-agent-VM benchmarking shares CPU, memory, disk, and the persistent SQLite benchmark DB.
