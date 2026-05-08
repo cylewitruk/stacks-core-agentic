@@ -72,7 +72,7 @@ run_analyzer() {
   # envsubst's SHELL-FORMAT arg requires literal $VAR tokens; single quotes
   # prevent the shell from expanding them before envsubst sees them.
   # shellcheck disable=SC2016
-  envsubst '$FAMILY_ID $OUTPUT_DIR $OPT_SESSION_DIR $BASE $FAMILY_JSON $STACKS_BENCH_DATA_DIR $QUERIES_DIR $BASELINE_RUN_ID $NON_TARGETS_PATH $ANALYSIS_SCHEMA_PATH' \
+  envsubst '$FAMILY_ID $OUTPUT_DIR $OPT_SESSION_DIR $BASE $FAMILY_JSON $STACKS_BENCH_DATA_DIR $QUERIES_DIR $BASELINE_RUN_ID $NON_TARGETS_PATH $BUCKET_ANCHORS_PATH $ANALYSIS_SCHEMA_PATH' \
     < "$PROMPTS_DIR/analyzer.md" \
     > "$OUT/analyzer-prompt.md"
 

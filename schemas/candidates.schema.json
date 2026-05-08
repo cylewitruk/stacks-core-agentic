@@ -32,7 +32,7 @@
     "candidate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "representative_ids", "rationale"],
+      "required": ["id", "kind", "selection_lens", "representative_ids", "rationale"],
       "properties": {
         "id": {
           "type": "string",
@@ -43,6 +43,10 @@
           "enum": ["tx_family", "block_family", "contract_family"],
           "description": "Family kind. Single source of truth for the family's shape; representative_ids is constrained by this value via the candidate-level allOf below."
         },
+        "selection_lens": {
+          "enum": ["tx_latency", "tenure_throughput", "commit_time"],
+          "description": "The value-axis lens that triage promoted this family on. `tx_latency` = wall-time savings under execution-bucket spans; `tenure_throughput` = Clarity-budget headroom freed (the deterministic Clarity cost units, NOT time); `commit_time` = wall-time savings under commit-bucket spans. Triage allocates candidate slots across the three lenses according to operator weights (see STACKS_BENCH_AXIS_WEIGHTS). The analyzer must dispose of this lens explicitly via lens_disposition on its analysis output."
+        },
         "representative_ids": {
           "type": "object",
           "description": "1–3 representative workload entry points the analyzer should inspect. Shape is constrained by the top-level `kind` field (see allOf below)."
@@ -50,6 +54,10 @@
         "rationale": {
           "type": "string",
           "description": "One-liner explaining why this family is worth investigating. Detail belongs in supporting evidence, not here."
+        },
+        "bucket": {
+          "enum": ["block_processing", "block_commit"],
+          "description": "Optional, non-binding hint: which work bucket triage believes the family's optimization handle lives under (see prompts/bucket-anchors.md). The analyzer commits the authoritative bucket on each emitted target; this field exists so reviewers and the analyzer can see triage's read."
         },
         "suspected_spans": {
           "type": "array",

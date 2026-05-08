@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stacks-bench.local/schemas/summary.schema.json",
   "title": "Optimization session summary",
-  "description": "Final per-session machine-readable summary written by finalize-session.sh.",
+  "description": "Final per-session machine-readable summary written by finalize-session.sh. Bumped to schema_version 2 to add per-experiment delivery_mode and the consensus-routing statuses introduced in Phase 9.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,32 +11,147 @@
     "baseline_run_id",
     "baseline_rerun_id",
     "noise_floor_pct",
-    "experiments"
+    "experiments",
+    "outcome_counts",
+    "lens_dispositions"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "session_id": { "type": "string" },
     "baseline_run_id": { "type": "integer" },
     "baseline_rerun_id": { "type": "integer" },
     "noise_floor_pct": { "type": "number" },
     "experiments": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["target_id", "status"],
-        "properties": {
-          "target_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-          "status": { "enum": ["accepted", "rejected", "aborted"] },
-          "run_ids": {
-            "type": "array",
-            "items": { "type": "integer" }
-          },
-          "improvement_pct": { "type": "number" },
-          "reason": { "type": "string" }
+      "items": { "$ref": "#/$defs/experiment" }
+    },
+    "outcome_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Demo-friendly aggregate: how many targets fell into each (delivery_mode, status) combination. Used by summary.md to produce the headline outcome tally without re-grouping experiments[]. The structure matches the valid combinations enforced by the experiment-level allOf below.",
+      "required": ["normal_pr", "consensus_poc_pr", "consensus_issue"],
+      "properties": {
+        "normal_pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accepted", "rejected", "aborted"],
+          "properties": {
+            "accepted": { "type": "integer", "minimum": 0 },
+            "rejected": { "type": "integer", "minimum": 0 },
+            "aborted":  { "type": "integer", "minimum": 0 }
+          }
+        },
+        "consensus_poc_pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["poc_landed", "aborted"],
+          "properties": {
+            "poc_landed": { "type": "integer", "minimum": 0 },
+            "aborted":    { "type": "integer", "minimum": 0 }
+          }
+        },
+        "consensus_issue": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["routed_to_issue", "aborted"],
+          "properties": {
+            "routed_to_issue": { "type": "integer", "minimum": 0 },
+            "aborted":         { "type": "integer", "minimum": 0 }
+          }
         }
       }
     },
+    "lens_dispositions": {
+      "type": "array",
+      "description": "Carried verbatim from optimization-targets.json. The summary phase propagates this so 'real hotspot, no fix found' cases (lens_disposition.status == not_actionable) are visible in summary.md without operators needing to crack open the merge artifacts.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family_id", "lens", "status"],
+        "properties": {
+          "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "lens": { "enum": ["tx_latency", "tenure_throughput", "commit_time"] },
+          "status": { "enum": ["addressed", "not_actionable"] },
+          "reason": { "type": "string" }
+        },
+        "allOf": [
+          {
+            "description": "Mirror of the optimization-targets.json constraint: when status == not_actionable, the operator-facing explanation MUST be preserved. The whole value of propagating lens_dispositions into summary is keeping this reason visible.",
+            "if": {
+              "properties": { "status": { "const": "not_actionable" } },
+              "required": ["status"]
+            },
+            "then": { "required": ["reason"] }
+          }
+        ]
+      }
+    },
     "next_targets_hint": { "type": "string" }
+  },
+
+  "$defs": {
+    "experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_id", "delivery_mode", "status"],
+      "properties": {
+        "target_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "delivery_mode": {
+          "enum": ["normal_pr", "consensus_poc_pr", "consensus_issue"],
+          "description": "Carried from optimization-targets.json. Determines which `status` values are valid for this experiment row — see allOf below."
+        },
+        "status": {
+          "enum": ["accepted", "rejected", "aborted", "poc_landed", "routed_to_issue"],
+          "description": "Outcome of this target. accepted/rejected = bench measured a real improvement (or didn't), normal_pr only. poc_landed = consensus_poc_pr's scoped tests passed and an implementation.md exists (no benchmark runs by design). routed_to_issue = consensus_issue's analyzer skipped the optimizer and the consensus-issue.md routing marker is present. aborted = pipeline did not produce a usable artifact: optimizer wrote abort.md or produced no output (normal_pr / consensus_poc_pr); routing marker missing (consensus_issue)."
+        },
+        "run_ids": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "improvement_pct": { "type": "number" },
+        "breakage_class": {
+          "enum": [
+            "clarity_cost_weight",
+            "clarity_vm_behavior",
+            "mining_flow",
+            "block_validation",
+            "marf_layout",
+            "on_chain_format"
+          ],
+          "description": "Surfaced for consensus_poc_pr / consensus_issue rows so summary.md can show the consensus-rule kind without joining back to optimization-targets.json. Carried verbatim from the merged target."
+        },
+        "reason": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "description": "Status value must be valid for this delivery_mode. Seven legal combinations: (normal_pr, accepted|rejected|aborted), (consensus_poc_pr, poc_landed|aborted), (consensus_issue, routed_to_issue|aborted). Each `aborted` row represents a pipeline failure to produce a usable artifact for that delivery_mode (optimizer abort/no-output, or — for consensus_issue — missing routing marker).",
+          "if": {
+            "properties": { "delivery_mode": { "const": "normal_pr" } },
+            "required": ["delivery_mode"]
+          },
+          "then": {
+            "properties": { "status": { "enum": ["accepted", "rejected", "aborted"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "delivery_mode": { "const": "consensus_poc_pr" } },
+            "required": ["delivery_mode"]
+          },
+          "then": {
+            "properties": { "status": { "enum": ["poc_landed", "aborted"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "delivery_mode": { "const": "consensus_issue" } },
+            "required": ["delivery_mode"]
+          },
+          "then": {
+            "properties": { "status": { "enum": ["routed_to_issue", "aborted"] } }
+          }
+        }
+      ]
+    }
   }
 }

@@ -46,8 +46,28 @@ for TARGET_ID in "${TARGET_IDS[@]}"; do
   WT="$WORKTREES/$TARGET_ID"
   OUTPUT_DIR="$OPT_SESSION_DIR/experiments/$TARGET_ID"
 
+  # Consensus-breaking targets are skipped — the bench harness encodes
+  # current-epoch consensus and would either crash or produce meaningless
+  # numbers under a consensus change. Read bench_eligible directly from the
+  # merged target so the skip is auditable and routed in one place.
+  BENCH_ELIGIBLE=$(jq -r --arg id "$TARGET_ID" \
+    '.targets[] | select(.id==$id) | .bench_eligible' "$TARGETS")
+  DELIVERY_MODE=$(jq -r --arg id "$TARGET_ID" \
+    '.targets[] | select(.id==$id) | .delivery_mode' "$TARGETS")
+  if [ "$BENCH_ELIGIBLE" != "true" ]; then
+    echo "skip $TARGET_ID: not bench_eligible (delivery_mode=$DELIVERY_MODE)"
+    continue
+  fi
+
   if [ -f "$OUTPUT_DIR/abort.md" ]; then
     echo "skip $TARGET_ID: aborted"
+    continue
+  fi
+  if [ -f "$OUTPUT_DIR/consensus-issue.md" ]; then
+    # Belt-and-suspenders: a consensus_issue target should already be filtered
+    # by bench_eligible above, but if both markers ever coexist (e.g. mid-
+    # migration), the consensus-issue marker takes precedence.
+    echo "skip $TARGET_ID: consensus-issue (no optimizer ran)"
     continue
   fi
 
@@ -69,7 +89,11 @@ done
 # Run benchmarks serialized under BENCH_LOCK (one experiment at a time on the host).
 for TARGET_ID in "${TARGET_IDS[@]}"; do
   OUTPUT_DIR="$OPT_SESSION_DIR/experiments/$TARGET_ID"
+  BENCH_ELIGIBLE=$(jq -r --arg id "$TARGET_ID" \
+    '.targets[] | select(.id==$id) | .bench_eligible' "$TARGETS")
+  [ "$BENCH_ELIGIBLE" = "true" ] || continue
   [ -f "$OUTPUT_DIR/abort.md" ] && continue
+  [ -f "$OUTPUT_DIR/consensus-issue.md" ] && continue
   [ -x "$OUTPUT_DIR/bin/stacks-bench" ] || { echo "no binary for $TARGET_ID, skipping" >&2; continue; }
 
   # Idempotency: truncate run-ids before re-populating. The bench-run.json

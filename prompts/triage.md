@@ -16,6 +16,8 @@ You should NOT explore the codebase. Treat your inputs as just the profiler data
 - DB schema definitions: `${BASE}/stacks-bench/migrations/` (read these to understand the table layout before querying)
 - Pre-built triage SQL queries: `${QUERIES_DIR}/` (see `${QUERIES_DIR}/README.md` for the catalog)
 - Non-targets reference: `${NON_TARGETS_PATH}` (read-only; do not retry these)
+- Bucket anchors reference: `${BUCKET_ANCHORS_PATH}` (read-only; classifies every target into `block_processing` vs `block_commit` by its nearest `Segment: ...` ancestor)
+- Operator selection-lens weights: `${STACKS_BENCH_AXIS_WEIGHTS}` (comma-separated `tx_latency,tenure_throughput,commit_time` weights; controls per-lens slate allocation — see "Per-lens slate allocation" below)
 - Output schema: `${CANDIDATES_SCHEMA_PATH}`
 
 # Primary method: workload-entry analysis via the SQLite DB
@@ -31,7 +33,9 @@ sqlite3 -header -csv "${STACKS_BENCH_DATA_DIR}/appdata/stacks-bench.db" \
   ".read ${QUERIES_DIR}/top_spans_by_self_wall.sql"
 ```
 
-The most important queries for triage, in order:
+The most important queries for triage, organized by **selection lens** (see "Per-lens slate allocation" below):
+
+**Latency-lens queries** (`tx_latency`, `commit_time`):
 
 - `run_summary.sql`, `tx_type_distribution.sql`, `block_timing_breakdown.sql`, and `baseline_empty_block_breakdown.sql` — characterize the workload and determine which top-level phases dominate before you pick any spans.
 - `top_contract_calls.sql` and `top_txs_by_duration.sql` — identify representative heavy contract calls / transactions to inspect.
@@ -39,6 +43,12 @@ The most important queries for triage, in order:
 - `top_spans_by_self_wall.sql` and `top_spans_by_call_count.sql` — supporting evidence for global materiality and for finding high-frequency paths the top-50 JSON misses.
 - `span_recurrence.sql`, `span_per_block_distribution.sql`, and `span_per_sample_distribution.sql` — validation and prioritization once you already suspect a subtree or representative span.
 - `span_run_drift.sql` — when 2+ runs exist, surfaces spans whose recent baseline is moving.
+
+**Throughput-lens queries** (`tenure_throughput`):
+
+- `top_clarity_consumers_by_contract.sql` — the entry point for the throughput lens. Aggregates the five deterministic Clarity cost columns per (issuer, contract, function), surfaces both run-total share and per-block max consumption per axis. A contract dominating any axis (`runtime`, `read_count`, `read_length`, `write_count`, `write_length`) is a candidate even when its wall-time ranking is unremarkable, because Clarity-cost consumption directly gates per-tenure tx capacity.
+- `txs_for_contract.sql` and `top_txs_by_duration.sql` — surface representative txs for a candidate contract; both expose the Clarity cost columns alongside duration so you can confirm consumption is consistent across representatives, not driven by one outlier.
+- See `${QUERIES_DIR}/README.md` ("Clarity cost columns") for the EXACT semantics: these are deterministic budget units, NOT timings, NOT bytes-on-disk, NOT raw MARF/SQLite operation counts.
 
 Trace-first drill-down chain:
 
@@ -80,7 +90,7 @@ Apply the same pattern when you need the full content of a large trace (e.g. `:m
 
 # Rules
 
-- Do NOT cap the number of candidates. Emit as many or as few as the data supports.
+- Identify viable families first; THEN use the operator weights to apportion coverage across lenses (see "Per-lens slate allocation"). Do not cap candidates artificially, and do not manufacture candidates to satisfy weights — emit as many or as few as the data supports. The slate-size sketch in step 1 of "Per-lens slate allocation" is a target for balanced lens coverage, not a fill quota.
 - Do NOT choose candidates directly from `baseline-profiler-hotspots.json` or any span ranking query alone. Those are supporting signals only.
 - Compute the per-host noise floor from the baseline run vs the baseline rerun, unless a precomputed fallback noise floor is provided below.
 - Precomputed fallback noise floor for single-run imports: `${PRECOMPUTED_NOISE_FLOOR_PCT}`
@@ -90,6 +100,28 @@ Apply the same pattern when you need the full content of a large trace (e.g. `:m
 - Each candidate's `id` must be a stable kebab-case string describing the family's CHARACTER (e.g. `dlmm-router-contract-family`, `commit-heavy-block-family`, `marf-read-pattern`), not a single span name. Used as a path segment by downstream phases.
 - Keep `rationale` to one line. Detail belongs in the analyzer's later analysis.
 - Prefer one candidate per repeated bottleneck family. Do NOT emit two candidates for the same workload pattern. The merge phase between analyzer and optimizer collapses analyses that converge on the same fix, but it cannot un-fragment a family that was over-split at triage.
+- Set `bucket` (optional but strongly recommended) on each candidate to your best-guess classification — `block_processing` if the family's hot subtree lives under `Segment: Tx Execution` / `Transaction`, `block_commit` if it lives under `Segment: Finalize (merkle+seal)`, `Segment: Clarity State Commit`, `Segment: Advance Chain Tip`, or `Segment: Index Commit`. See `${BUCKET_ANCHORS_PATH}`. This is a hint; the analyzer commits the authoritative bucket. If the family's hot subtree spans both buckets (rare — usually means deferred-write coupling), pick the one where the optimization handle most plausibly lives and note the cross-bucket effect in `rationale`.
+- Set `selection_lens` (REQUIRED) on each candidate to the value-axis lens you promoted it on — `tx_latency`, `tenure_throughput`, or `commit_time`. See "Per-lens slate allocation" below. This is rationale, NOT a constraint on the analyzer: the analyzer is required to dispose of the lens you flagged (either find a fix on it, or explicitly explain that no structural fix exists), but it may also commit additional opportunistic targets on other axes its drill-down surfaces.
+
+## Per-lens slate allocation
+
+The candidate slate must reflect the operator's value function across three independent value-axis lenses, not a single global ranking. Operator weights are passed in `${STACKS_BENCH_AXIS_WEIGHTS}` as a comma-separated triple `tx_latency,tenure_throughput,commit_time` (e.g. default `0.4,0.4,0.2`).
+
+The three lenses:
+
+- **`tx_latency`** — wall-time savings under execution-bucket spans (`Segment: Tx Execution`, `Transaction`). Promoted by the latency-lens queries.
+- **`tenure_throughput`** — Clarity-budget headroom freed. The five cost axes (`runtime`, `read_count`, `read_length`, `write_count`, `write_length`) are deterministic budget units gating per-tenure tx capacity; a fix that drops a contract's consumption on a near-binding axis directly increases throughput, even when its wall-time impact is small. Promoted by `top_clarity_consumers_by_contract.sql` and other throughput-lens queries.
+- **`commit_time`** — wall-time savings under commit-bucket spans (`Segment: Finalize (merkle+seal)`, `Segment: Clarity State Commit`, `Segment: Advance Chain Tip`, `Segment: Index Commit`). Promoted by latency-lens queries scoped to commit-bucket ancestors.
+
+How to allocate the slate:
+
+1. Identify viable families across all three lenses first — run the per-lens queries, build a candidate list per lens that passes the validation procedure (workload coverage, outlier check, improvement viability, sampling-rate sanity, cross-epoch caveat). Don't cap or manufacture; emit only what the data supports.
+2. THEN use operator weights to **prioritize coverage** across lenses, not to set a hard slate size. With weights `0.4,0.4,0.2` you should aim to surface roughly balanced coverage of latency and throughput with somewhat less commit-side coverage — but if a lens has zero viable families above the noise floor, that's the honest answer and you simply contribute zero from that lens. NEVER promote a weak candidate just to satisfy the weight ratio.
+3. **Within each lens, rank by that lens's metric**, not by aggregate wall-time. The throughput lens ranks by share of Clarity-budget consumption (especially on near-binding axes); the latency lenses rank by wall-time share within their bucket.
+4. The total slate is the union of viable promoted candidates across lenses. There is no target slate size N to "fill"; the slate is exactly as long as the viable findings.
+5. Each promoted candidate carries `selection_lens` (REQUIRED) and `bucket` (recommended hint). Two candidates promoted on different lenses can legitimately share the same `bucket` (a `block_processing`-bucket family can be promoted on either `tx_latency` OR `tenure_throughput`).
+
+**Coverage reporting in `triage-final-message.md`.** Add a per-lens summary section listing how many candidates each lens contributed and any redistribution decisions you made. Reviewers use this to confirm the slate searched all three axes rather than the loud quadrant. If a lens contributed zero candidates, state explicitly why (no signal above noise, or all signals dominated by outliers, etc.) — same coverage discipline as the existing "Rejected alternative families" section.
 
 ## Required discovery procedure before candidate selection
 
@@ -150,6 +182,8 @@ Before promoting any family to `candidates.json` you MUST:
 
 4. **Sampling-rate sanity (optional).** For families whose suspected span has `sampling_rate < 0.5` in `top_spans_by_self_wall.sql`, additionally consult `span_per_sample_distribution.sql`. p99/p50 > ~20 with no structural explanation is a strong signal that the cost is long-tail driven rather than uniform — worth flagging in `rationale` so the analyzer doesn't optimize for an outlier.
 
+5. **Clarity-cost / cross-epoch caveat (when applicable).** If your evidence for a family rests on aggregates over Clarity cost columns (`clarity_runtime`, `clarity_read_count`, `clarity_read_length`, `clarity_write_count`, `clarity_write_length`) across many blocks, be aware that the bench data may span Stacks epoch boundaries that change cost weights — the run-wide aggregate may be a recalibration artifact rather than a structural signal. Prefer per-block or few-block evidence when promoting a Clarity-cost-driven family. The analyzer will validate this in detail; your job is to avoid promoting families whose throughput signal is purely cross-epoch noise. See `${QUERIES_DIR}/README.md` ("Clarity cost columns") for the exact column semantics.
+
 These rules apply to EVERY family, including the obvious ones. Note in `rationale` when a family is workload-conditional, when it's dominated by a few representatives rather than uniform, and any sampling caveats. Reviewers downstream rely on these notes to weigh candidates against each other.
 
 ## Required counter-search before finalizing candidates
@@ -190,6 +224,7 @@ Each candidate object MUST include:
 
 - `id` — kebab-case family identifier (e.g. `dlmm-router-contract-family`).
 - `kind` — one of `tx_family`, `block_family`, `contract_family`.
+- `selection_lens` — `tx_latency`, `tenure_throughput`, or `commit_time`; the value-axis lens you promoted this family on.
 - `representative_ids` — shape determined by `kind`:
   - `tx_family`: `{"stacks_tx_ids": [...]}` (1–5 ids).
   - `block_family`: `{"synthetic_block_ids": [...]}` (1–5 ids).
@@ -200,9 +235,13 @@ Each candidate SHOULD also include (strongly recommended; the analyzer relies on
 
 - `suspected_spans` — array of span names you suspect carry the family's cost, as **non-binding hints** the analyzer can confirm, refine, or replace.
 - `global_materiality` — `{"pct_blocks": ..., "self_wall_ms": ..., "notes": "..."}` aggregate cost signal across the whole run, populated from `span_recurrence.sql` (see step 1 of the validation procedure).
+- `bucket` — `block_processing` or `block_commit`, your best-guess classification per `${BUCKET_ANCHORS_PATH}`. Non-binding hint; analyzer commits the authoritative value per target.
 
 Also write a human-readable `${OPT_SESSION_DIR}/candidates.md` derived from the JSON (the JSON is the source of truth).
 
-`${OPT_SESSION_DIR}/triage-final-message.md` MUST include a "Rejected alternative families" section listing any major bottleneck families you explicitly checked but did not promote — for example: serialization / deserialization, Clarity VM execution, allocations, hashing / encoding, contract-call wrappers — with one line per family explaining why it was rejected (e.g. "below noise-floor in absolute terms," "dominated by 1–2 outlier representatives," "already addressed by an existing cache"). This section is the visible artifact of the counter-search step and lets reviewers see what was investigated rather than guess. If no candidates qualify, this same final message should also list every family considered.
+`${OPT_SESSION_DIR}/triage-final-message.md` MUST include:
+
+- A "Rejected alternative families" section listing any major bottleneck families you explicitly checked but did not promote — for example: serialization / deserialization, Clarity VM execution, allocations, hashing / encoding, contract-call wrappers — with one line per family explaining why it was rejected (e.g. "below noise-floor in absolute terms," "dominated by 1–2 outlier representatives," "already addressed by an existing cache"). This section is the visible artifact of the counter-search step and lets reviewers see what was investigated rather than guess. If no candidates qualify, this same final message should also list every family considered.
+- A "Per-lens slate coverage" section reporting how many candidates each lens contributed (`tx_latency`, `tenure_throughput`, `commit_time`), the operator weights you applied (`${STACKS_BENCH_AXIS_WEIGHTS}`), and any redistribution decisions you made (e.g. "throughput lens contributed 0 candidates because the run had no contracts above 5% of any Clarity-budget axis; redistributed slot to latency lens").
 
 Do not edit source code. Do not run benchmarks. Only write artifacts under `${OPT_SESSION_DIR}`.

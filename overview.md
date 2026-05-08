@@ -874,35 +874,57 @@ IMPORT_BASELINE_RUN_ID=42 IMPORT_BASELINE_RERUN_ID=43 \
 
 Phase 2 fan-out parallelism is capped by `STACKS_BENCH_PARALLEL_AGENTS`; analyzer fan-out by `STACKS_BENCH_PARALLEL_ANALYZERS`. Phase 3 benchmarks are always serialized under `BENCH_LOCK`.
 
-`finalize-session.sh` produces `summary.json` of the form:
+`finalize-session.sh` produces `summary.json` (schema v2) of the form:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "session_id": "20260507-104400",
   "baseline_run_id": 123,
   "baseline_rerun_id": 124,
   "noise_floor_pct": 0.8,
   "experiments": [
-    { "target_id": "a", "status": "accepted", "run_ids": [125, 126], "improvement_pct": 4.7 },
-    { "target_id": "b", "status": "rejected", "run_ids": [127, 128], "reason": "within noise" },
-    { "target_id": "c", "status": "aborted",  "reason": "tests failed" }
+    { "target_id": "a", "delivery_mode": "normal_pr",       "status": "accepted",        "run_ids": [125, 126], "improvement_pct": 4.7 },
+    { "target_id": "b", "delivery_mode": "normal_pr",       "status": "rejected",        "run_ids": [127, 128], "reason": "within noise" },
+    { "target_id": "c", "delivery_mode": "normal_pr",       "status": "aborted",         "reason": "tests failed" },
+    { "target_id": "d", "delivery_mode": "consensus_poc_pr","status": "poc_landed",      "breakage_class": "clarity_cost_weight" },
+    { "target_id": "e", "delivery_mode": "consensus_issue", "status": "routed_to_issue", "breakage_class": "block_validation"   }
   ],
-  "next_targets_hint": "regenerate from --profiler-hot 100 or shift block range to 6.5M-6.8M"
+  "outcome_counts": {
+    "normal_pr":        { "accepted": 1, "rejected": 1, "aborted": 1 },
+    "consensus_poc_pr": { "poc_landed": 1, "aborted": 0 },
+    "consensus_issue":  { "routed_to_issue": 1, "aborted": 0 }
+  },
+  "lens_dispositions": [
+    { "family_id": "fam-a", "lens": "tx_latency",        "status": "addressed" },
+    { "family_id": "fam-x", "lens": "tenure_throughput", "status": "not_actionable", "reason": "runtime is consumed by `pow` / `keccak` Clarity primitives whose cost weights are fixed by consensus; no structural change short of a HIP can move this" }
+  ],
+  "next_targets_hint": "1 PR + 1 PoC PR + 1 issue of 5 targets; review and re-run rejected/aborted with refined analyses"
 }
 ```
 
-## Phase 5: Autonomous PR publishing (optional)
+The `delivery_mode` field on every experiment row is propagated from `optimization-targets.json` (set by the merge phase as a derived field from `consensus_breaking` + `poc_implementable`):
 
-After `summary.json` is written, the coordinator can optionally generate
-draft GitHub PRs for every accepted target. The flow is split across two
-scripts on purpose, so the GitHub token never sits in a process the
-optimizer/triage agents can read:
+* **`normal_pr`** — performance fix; `status ∈ {accepted, rejected, aborted}` driven by bench measurement.
+* **`consensus_poc_pr`** — deliberate consensus-breaking change shipped as a PoC; `status ∈ {poc_landed, aborted}`. `poc_landed` means scoped tests passed; no benchmark ran by design.
+* **`consensus_issue`** — consensus-breaking change too large or too coverage-blocked for PoC mode; `status ∈ {routed_to_issue, aborted}`. The optimizer was skipped entirely; the analyzer's `consensus_writeup` is the shipping artifact.
+
+`lens_dispositions[]` is propagated verbatim from `optimization-targets.json` so "real hotspot, no fix found" cases (entries with `status: not_actionable`) survive into the operator-facing summary.
+
+## Phase 5: Autonomous publishing — PRs and issues (optional)
+
+After `summary.json` is written, the coordinator can optionally publish autonomous-run artifacts to GitHub. The router branches per target's `delivery_mode`:
+
+* `normal_pr` → draft PR (or non-draft per `PUBLISH_DRAFT_PRS`) with operator-configured labels.
+* `consensus_poc_pr` → draft PR ALWAYS, with operator labels plus the hardcoded safety set `consensus-change,needs-HIP,do-not-merge`.
+* `consensus_issue` → GitHub issue with `consensus-change,needs-HIP` labels. The optimizer never produced an implementation; the issue body comes from the analyzer's `consensus_writeup`.
+
+The flow is split across two scripts on purpose, so the GitHub token never sits in a process the optimizer/triage agents can read:
 
 | Script | User | What it does |
 | ------ | ---- | ---- |
-| `scripts/generate-pr-artifacts.sh` | agent | Runs the `pr-writer.md` Codex prompt once per accepted target. Writes `pr-title.txt` and `pr-body.md` into `experiments/<id>/`. Validates that the body has the four required sections (`## Summary`, `## What changed`, `## Benchmark result`, `## Validation`). |
-| `scripts/publish-accepted.sh` | publisher (via `sudo -H`) | Reads the title/body files, switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u` — not `-A`), commits, pushes to the configured remote, and creates a draft PR with `gh pr create`. Skips entirely if a PR for that head:base pair already exists. |
+| `scripts/generate-pr-artifacts.sh` | agent | Iterates `optimization-targets.json` and dispatches per `delivery_mode`. For PR modes (`normal_pr`, `consensus_poc_pr`), runs `pr-writer.md` and writes `pr-title.txt` + `pr-body.md`; the prompt branches on `${DELIVERY_MODE}` so consensus PoC PRs frame benchmark-skipped/scoped-tests/HIP-coordination explicitly. For `consensus_issue`, runs `issue-writer.md` and writes `issue-title.txt` + `issue-body.md` from the analyzer's `consensus_writeup`. Section validators enforce the required body shape per mode. Stale publish artifacts are cleared on skip and on cross-mode delivery_mode changes. |
+| `scripts/publish-accepted.sh` | publisher (via `sudo -H`) | Iterates `optimization-targets.json` and dispatches per `delivery_mode`. PR modes: switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u`), commits, pushes, and creates a draft PR with `gh pr create` — `consensus_poc_pr` is forced draft and gets the safety label set. `consensus_issue`: no branch / no commit / no push; uses `gh issue create` with a hidden trace tag (`<!-- agentic-<session>-<target> -->`) for idempotent re-runs. Skips on existing PR/issue. |
 
 The token never leaves the publisher's filesystem, and the agent user has no
 read access to it. The agent user's only privilege over the publisher is to

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://stacks-bench.local/schemas/optimization-targets.schema.json",
   "title": "Merged optimization targets",
-  "description": "Output of the merge phase: deduplicated optimization targets ready for the optimizer fan-out. One target per unique structural change, possibly aggregating evidence from multiple family analyses. Convergence across analyses is high-confidence signal that the target is real.",
+  "description": "Output of the merge phase: deduplicated optimization targets ready for the optimizer fan-out, plus per-family lens dispositions for the summary phase. Each accepted analysis may emit multiple targets; merge dedups across the flat union of all analyzer-emitted targets. Convergence across analyses (multiple distinct families landing on the same structural change) is high-confidence signal that the target is real.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,8 @@
     "noise_floor_pct",
     "merge_method",
     "merge_model",
-    "targets"
+    "targets",
+    "lens_dispositions"
   ],
   "properties": {
     "schema_version": { "const": 2 },
@@ -35,15 +36,45 @@
     },
     "rejected_by_merge": {
       "type": "array",
-      "description": "Accepted analyses the merger affirmatively dropped (rare; e.g., recognized as already-shipped, scope-out reasons). Every accepted family_id from this session must appear in EXACTLY ONE of: a target's `merged_from`, OR this list.",
+      "description": "Analyzer-emitted targets the merger affirmatively dropped (rare; e.g., recognized as already-shipped, scope-out reasons). Coverage invariant: every analyzer-emitted target (identified by `{family_id, target_index}`) must appear in EXACTLY ONE of: a merged target's `merged_from`, OR this list.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["family_id", "reason"],
+        "required": ["family_id", "target_index", "reason"],
         "properties": {
           "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "target_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based index into the source analysis's `targets[]` array."
+          },
           "reason": { "type": "string" }
         }
+      }
+    },
+    "lens_dispositions": {
+      "type": "array",
+      "description": "Per-family lens dispositions, propagated from each accepted analysis's `lens_disposition` field. Independent of `targets[]`: a family with `status == \"not_actionable\"` and zero opportunistic targets contributes 0 entries to `targets` and 0 to `rejected_by_merge` but still appears here. Used by the summary phase to surface 'real hotspot, no fix found' cases. Coverage invariant: every accepted family_id appears here exactly once.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family_id", "lens", "status"],
+        "properties": {
+          "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "lens": { "enum": ["tx_latency", "tenure_throughput", "commit_time"] },
+          "status": { "enum": ["addressed", "not_actionable"] },
+          "reason": { "type": "string" }
+        },
+        "allOf": [
+          {
+            "description": "When status == 'not_actionable', the operator-facing explanation MUST be preserved. The whole point of this branch is to record why a real hotspot has no fix; dropping the reason would defeat the purpose.",
+            "if": {
+              "properties": { "status": { "const": "not_actionable" } },
+              "required": ["status"]
+            },
+            "then": { "required": ["reason"] }
+          }
+        ]
       }
     }
   },
@@ -57,13 +88,17 @@
         "merged_from",
         "convergence_count",
         "target_span",
+        "bucket",
         "hotspot",
         "files",
         "evidence",
         "proposed_change",
-        "expected_improvement_pct",
+        "expected_improvement",
         "risk",
-        "verification_plan"
+        "verification_plan",
+        "consensus_breaking",
+        "delivery_mode",
+        "bench_eligible"
       ],
       "properties": {
         "id": {
@@ -73,14 +108,26 @@
         },
         "merged_from": {
           "type": "array",
-          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
           "minItems": 1,
-          "description": "family_ids of the accepted analyses that contributed to this target."
+          "description": "References to the analyzer-emitted targets that contributed to this merged target. Each entry identifies a specific target within a specific analysis by `(family_id, target_index)`. A given `(family_id, target_index)` pair must NEVER appear in two different merged targets, and two targets within the same analysis cannot collapse into one merged target (intra-analysis merge is forbidden — those are distinct findings the analyzer chose to keep separate).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["family_id", "target_index"],
+            "properties": {
+              "family_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "target_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Zero-based index into the source analysis's `targets[]` array."
+              }
+            }
+          }
         },
         "convergence_count": {
           "type": "integer",
           "minimum": 1,
-          "description": "Length of `merged_from`. Higher = independent analyses agreed on this fix = higher confidence."
+          "description": "Length of `merged_from`. Higher = more analyzer-emitted targets agreed on this fix = higher confidence. With multi-target analyses, convergence across DISTINCT family_ids is the stronger signal — note in `merge_notes` if convergence comes from different targets within fewer families."
         },
         "rank": {
           "type": "integer",
@@ -88,6 +135,10 @@
           "description": "Optional priority ordering hint for the optimizer fan-out."
         },
         "target_span": { "type": "string" },
+        "bucket": {
+          "enum": ["block_processing", "block_commit"],
+          "description": "Carried through from the contributing analyzer-emitted targets. All entries in `merged_from` must reference targets with the same bucket — the merge prompt forbids cross-bucket merges."
+        },
         "hotspot": {
           "type": "object",
           "additionalProperties": false,
@@ -97,7 +148,7 @@
             "self_wall_us": { "type": "integer" },
             "total_wall_us": {
               "type": "integer",
-              "description": "Inclusive wall time of the target span. Required for parity with analysis.schema.json's hotspot requirement; the merge phase carries this through from the contributing analyses."
+              "description": "Inclusive wall time of the target span. Required for parity with analysis.schema.json's hotspot requirement; the merge phase carries this through from the contributing targets."
             },
             "calls": { "type": "integer" },
             "location": { "type": "string" }
@@ -109,25 +160,178 @@
         },
         "evidence": {
           "type": "string",
-          "description": "Canonical synthesis. When merging multiple analyses, the merger should preserve the strongest evidence from each contributor."
+          "description": "Canonical synthesis. When merging multiple targets, the merger should preserve the strongest evidence from each contributor."
         },
         "proposed_change": {
           "type": "string",
           "description": "Canonical version of the change. When contributors phrased the change differently, the merger picks the most concrete and actionable wording."
         },
-        "expected_improvement_pct": { "type": "number" },
+        "expected_improvement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tx_latency", "tenure_throughput", "commit_time"],
+          "description": "Per-axis percent-reduction estimates merged from contributors. Per-axis median when N >= 2 contributors (see merge prompt's canonicalization rules). Same shape as analysis.schema.json's analyzer_target.expected_improvement.",
+          "properties": {
+            "tx_latency": { "type": "number" },
+            "tenure_throughput": { "type": "number" },
+            "commit_time": { "type": "number" }
+          }
+        },
         "risk": { "enum": ["low", "medium", "high"] },
         "verification_plan": { "type": "string" },
         "merge_notes": {
           "type": "string",
-          "description": "Optional reviewer-facing note from the merger: why these analyses were collapsed, what was preserved, what was canonicalized."
+          "description": "Optional reviewer-facing note from the merger: why these targets were collapsed, what was preserved, what was canonicalized."
         },
         "contributor_differences": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Optional: short bullets describing where contributors disagreed (different files cited, slightly different fix wording, divergent expected_improvement_pct). Useful for reviewers spot-checking the merge quality."
+          "description": "Optional: short bullets describing where contributors disagreed (different files cited, slightly different fix wording, > 50% spread on any axis of expected_improvement). Useful for reviewers spot-checking the merge quality."
+        },
+        "consensus_breaking": {
+          "type": "boolean",
+          "description": "Carried through from the contributing analyzer-emitted targets. All entries in `merged_from` must reference targets with the same `consensus_breaking` value — the merge prompt forbids cross-class merges. See analysis.schema.json analyzer_target.consensus_breaking for full semantics."
+        },
+        "breakage_class": {
+          "enum": [
+            "clarity_cost_weight",
+            "clarity_vm_behavior",
+            "mining_flow",
+            "block_validation",
+            "marf_layout",
+            "on_chain_format"
+          ],
+          "description": "Required when `consensus_breaking == true`. Carried from contributors; all contributors to a consensus-breaking merged target must share the same breakage_class."
+        },
+        "poc_implementable": {
+          "type": "boolean",
+          "description": "Required when `consensus_breaking == true`. Canonicalized via the conservative rule: if any contributor has `false`, the merged target gets `false` (the safer routing)."
+        },
+        "poc_test_scope": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required when `poc_implementable == true`. Canonicalized as the union of all contributors' scopes, deduplicated."
+        },
+        "consensus_writeup": {
+          "type": "string",
+          "description": "Required when `consensus_breaking == true`. Canonicalized to the most detailed contributor's writeup; differences flagged in contributor_differences."
+        },
+        "delivery_mode": {
+          "enum": ["normal_pr", "consensus_poc_pr", "consensus_issue"],
+          "description": "Derived field set by the merge phase from `consensus_breaking` + `poc_implementable`. Routes the target through the rest of the pipeline: `normal_pr` follows the existing optimizer + benchmark + PR flow; `consensus_poc_pr` runs a scoped optimizer (no benchmark) and produces a draft PR labeled to prevent merging; `consensus_issue` skips the optimizer entirely and the publisher creates a GitHub issue from `consensus_writeup`. Derivation: false→`normal_pr`; true+true→`consensus_poc_pr`; true+false→`consensus_issue`."
+        },
+        "bench_eligible": {
+          "type": "boolean",
+          "description": "Derived field set by the merge phase: true iff `delivery_mode == \"normal_pr\"`. bench-experiments.sh filters on this; consensus-breaking targets are skipped (the bench harness encodes current-epoch consensus and would either crash or produce meaningless numbers under a consensus change)."
         }
-      }
+      },
+      "allOf": [
+        {
+          "description": "When consensus_breaking == true, breakage_class + poc_implementable + consensus_writeup are required at the merged-target level too.",
+          "if": {
+            "properties": { "consensus_breaking": { "const": true } },
+            "required": ["consensus_breaking"]
+          },
+          "then": { "required": ["breakage_class", "poc_implementable", "consensus_writeup"] }
+        },
+        {
+          "description": "When poc_implementable == true, poc_test_scope is required and non-empty.",
+          "if": {
+            "properties": { "poc_implementable": { "const": true } },
+            "required": ["poc_implementable"]
+          },
+          "then": {
+            "required": ["poc_test_scope"],
+            "properties": { "poc_test_scope": { "minItems": 1 } }
+          }
+        },
+        {
+          "description": "block_validation is NOT exercised by stacks-bench's mining harness — PoC mode cannot prove correctness via the bench regardless of test scope. Mirrored from analysis.schema.json so the constraint survives the merge phase even when contributors disagree.",
+          "if": {
+            "properties": { "breakage_class": { "const": "block_validation" } },
+            "required": ["breakage_class"]
+          },
+          "then": {
+            "properties": { "poc_implementable": { "const": false } }
+          }
+        },
+        {
+          "description": "poc_test_scope is allowed ONLY when poc_implementable == true.",
+          "if": {
+            "not": {
+              "properties": { "poc_implementable": { "const": true } },
+              "required": ["poc_implementable"]
+            }
+          },
+          "then": { "not": { "required": ["poc_test_scope"] } }
+        },
+        {
+          "description": "Non-consensus merged targets must not carry consensus-only fields. Mirrored from analysis.schema.json so the constraint survives the merge phase.",
+          "if": {
+            "not": {
+              "properties": { "consensus_breaking": { "const": true } },
+              "required": ["consensus_breaking"]
+            }
+          },
+          "then": {
+            "allOf": [
+              { "not": { "required": ["breakage_class"] } },
+              { "not": { "required": ["poc_implementable"] } },
+              { "not": { "required": ["poc_test_scope"] } },
+              { "not": { "required": ["consensus_writeup"] } }
+            ]
+          }
+        },
+        {
+          "description": "delivery_mode derivation: consensus_breaking == false ↔ delivery_mode == \"normal_pr\".",
+          "if": {
+            "properties": { "consensus_breaking": { "const": false } },
+            "required": ["consensus_breaking"]
+          },
+          "then": {
+            "properties": { "delivery_mode": { "const": "normal_pr" } }
+          }
+        },
+        {
+          "description": "delivery_mode derivation: consensus_breaking == true && poc_implementable == true → delivery_mode == \"consensus_poc_pr\".",
+          "if": {
+            "properties": {
+              "consensus_breaking": { "const": true },
+              "poc_implementable": { "const": true }
+            },
+            "required": ["consensus_breaking", "poc_implementable"]
+          },
+          "then": {
+            "properties": { "delivery_mode": { "const": "consensus_poc_pr" } }
+          }
+        },
+        {
+          "description": "delivery_mode derivation: consensus_breaking == true && poc_implementable == false → delivery_mode == \"consensus_issue\".",
+          "if": {
+            "properties": {
+              "consensus_breaking": { "const": true },
+              "poc_implementable": { "const": false }
+            },
+            "required": ["consensus_breaking", "poc_implementable"]
+          },
+          "then": {
+            "properties": { "delivery_mode": { "const": "consensus_issue" } }
+          }
+        },
+        {
+          "description": "bench_eligible derivation: true iff delivery_mode == normal_pr.",
+          "if": {
+            "properties": { "delivery_mode": { "const": "normal_pr" } },
+            "required": ["delivery_mode"]
+          },
+          "then": {
+            "properties": { "bench_eligible": { "const": true } }
+          },
+          "else": {
+            "properties": { "bench_eligible": { "const": false } }
+          }
+        }
+      ]
     }
   }
 }

@@ -14,8 +14,9 @@
 --   in `span_per_block_distribution.sql` / `top_blocks_for_span.sql`, not here.
 --
 --   - `pct_blocks` ≥ 70% → broad workload signal; standard priority.
---   - `pct_blocks` 30–70% → workload-conditional; lower `expected_improvement_pct`
---     proportionally and note the coverage caveat in rationale.
+--   - `pct_blocks` 30–70% → workload-conditional; scale each axis of
+--     `expected_improvement` proportionally and note the coverage caveat in
+--     rationale.
 --   - `pct_blocks` < 30% → narrow but possibly real. Validate via the
 --     per-block distribution before promoting; if the cost is consistent
 --     across the blocks it does touch, accept at lower priority.

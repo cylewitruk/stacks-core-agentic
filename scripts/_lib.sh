@@ -42,15 +42,25 @@ PROMPTS_DIR="${PROMPTS_DIR:-$FRAMEWORK_ROOT/prompts}"
 SCHEMAS_DIR="${SCHEMAS_DIR:-$FRAMEWORK_ROOT/schemas}"
 QUERIES_DIR="${QUERIES_DIR:-$FRAMEWORK_ROOT/queries}"
 NON_TARGETS_PATH="${NON_TARGETS_PATH:-$PROMPTS_DIR/non-targets.md}"
+BUCKET_ANCHORS_PATH="${BUCKET_ANCHORS_PATH:-$PROMPTS_DIR/bucket-anchors.md}"
 CANDIDATES_SCHEMA_PATH="${CANDIDATES_SCHEMA_PATH:-$SCHEMAS_DIR/candidates.schema.json}"
 ANALYSIS_SCHEMA_PATH="${ANALYSIS_SCHEMA_PATH:-$SCHEMAS_DIR/analysis.schema.json}"
 OPTIMIZATION_TARGETS_SCHEMA_PATH="${OPTIMIZATION_TARGETS_SCHEMA_PATH:-$SCHEMAS_DIR/optimization-targets.schema.json}"
 SUMMARY_SCHEMA_PATH="${SUMMARY_SCHEMA_PATH:-$SCHEMAS_DIR/summary.schema.json}"
 
+# Operator weights for the three triage selection lenses, comma-separated:
+#   tx_latency,tenure_throughput,commit_time
+# Triage allocates candidate slate slots in proportion to these weights.
+# Default biases toward execution-side optimizations (latency + throughput
+# tied) over commit-side, which is appropriate for contract-heavy demos but
+# can be overridden per-run by the operator.
+STACKS_BENCH_AXIS_WEIGHTS="${STACKS_BENCH_AXIS_WEIGHTS:-0.4,0.4,0.2}"
+
 export FRAMEWORK_ROOT SCRIPTS_DIR AGENTIC_ENV_FILE
-export PROMPTS_DIR SCHEMAS_DIR QUERIES_DIR NON_TARGETS_PATH
+export PROMPTS_DIR SCHEMAS_DIR QUERIES_DIR NON_TARGETS_PATH BUCKET_ANCHORS_PATH
 export CANDIDATES_SCHEMA_PATH ANALYSIS_SCHEMA_PATH
 export OPTIMIZATION_TARGETS_SCHEMA_PATH SUMMARY_SCHEMA_PATH
+export STACKS_BENCH_AXIS_WEIGHTS
 
 init_session() {
   SESSION_DIR="${1:-${OPT_SESSION_DIR:-}}"

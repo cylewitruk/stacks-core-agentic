@@ -14,12 +14,13 @@ example, is that its self-time IS the Clarity VM execution it wraps; the
 actual optimization handles live below it (`lookup_variable`, MARF reads,
 serialization, etc.) and should be considered on their own merits.
 
-| Span                  | Reason                                                       |
-| --------------------- | ------------------------------------------------------------ |
-| `with_abort_callback` | Represents Clarity VM execution time, not callback overhead. |
-| `Segment`             | Benchmark harness, not node code.                            |
-| `fetch_metadata`      | Already has a read-through cache in `RollbackWrapper`.       |
-| `get_contract`        | Already cached with `Rc` in `ClarityDatabase`.               |
-| `canonicalize_types`  | Already addressed by contract caching.                       |
+| Span                  | Reason                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `with_abort_callback` | Represents Clarity VM execution time, not callback overhead.                        |
+| `Segment`             | Benchmark harness wrapper, not node code.                                           |
+| `Segment: Setup`      | Benchmark harness setup; runs before chain processing and is not on the hot path.   |
+| `fetch_metadata`      | Already has a read-through cache in `RollbackWrapper`.                              |
+| `get_contract`        | Already cached with `Rc` in `ClarityDatabase`.                                      |
+| `canonicalize_types`  | Already addressed by contract caching.                                              |
 
 Append to this file as additional dead-end spans are discovered. Do not duplicate this list inside the prompt templates.

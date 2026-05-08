@@ -16,6 +16,24 @@ ${TARGET_JSON}
 
 `proposed_change` and `verification_plan` are the analyzer's recommendations. Start with them, but exercise your own judgment if your investigation while implementing contradicts the analysis. If you do diverge, record the deviation in `implementation.md`.
 
+# Delivery mode
+
+Your delivery mode for this target is `${DELIVERY_MODE}`. The coordinator routes downstream artifacts based on this value, so behave accordingly:
+
+- **`normal_pr`** (default, non-consensus performance fix). Standard flow: implement the change, run the FULL nextest suite, all tests must pass. The coordinator will then run benchmarks, and if the improvement clears the noise floor, ship as a regular draft PR.
+
+- **`consensus_poc_pr`** (PoC of a deliberate consensus-breaking change). The target's `consensus_breaking == true` and `poc_implementable == true`. The change DOES alter consensus rules, so the full nextest suite WILL fail by definition — that is intentional and expected. Run nextest with the analyzer's `poc_test_scope` filter ONLY:
+  ```bash
+  flock "${TEST_LOCK}" cargo nextest run --no-fail-fast \
+    -E "${POC_TEST_SCOPE_EXPR}" \
+    > "${OUTPUT_DIR}/nextest.log" 2> "${OUTPUT_DIR}/nextest.stderr.log"
+  ```
+  These scoped tests must pass; the rest of the suite is not your problem. You MAY expand the scope if you find tests that exercise the changed code path but were missed by the analyzer's proposal — note any expansion in `implementation.md`. You MUST NOT contract the scope.
+
+  The coordinator will skip benchmarking (the harness encodes current-epoch consensus and would crash or produce meaningless numbers under the change). The published PR will be tagged `consensus-change`, `needs-HIP`, `do-not-merge` to prevent accidental merging. In `implementation.md`, call out the consensus-breaking nature and reference the analyzer's `consensus_writeup` so the human reviewer can pick up the HIP discussion from the analysis.
+
+- **`consensus_issue`** is impossible at this point — the coordinator skips the optimizer entirely for those targets. If you somehow see this value, abort: write `${OUTPUT_DIR}/abort.md` explaining the unexpected routing.
+
 # Where things live
 
 - `${WORKTREE_DIR}` — your working directory. Modify only files inside this dir.
@@ -34,7 +52,7 @@ ${TARGET_JSON}
 - Do not modify `stacks-bench/`, `testnet/`, `.github/`, or `experiments/` unless the target explicitly requires it.
 - Do not add `unsafe` blocks.
 - Do not remove, disable, or weaken existing tests.
-- Do not change consensus-critical behavior (serialization, hashing, validation, block/tx acceptance semantics).
+- Do not change consensus-critical behavior (serialization, hashing, validation, block/tx acceptance semantics) UNLESS your delivery mode is `consensus_poc_pr` — in that case, the change IS deliberately consensus-breaking, and the rules above ("don't change consensus-critical behavior") are replaced by the scoped-tests rule in the Delivery mode section.
 - Never read or print secrets from `~/.codex`, `~/.ssh`, `~/.config/agent-secrets`, `~/.copilot`, or `~/.claude`.
 - You MAY upgrade dependencies in `Cargo.toml` if a newer version plausibly addresses the hotspot (full LTO release builds benefit from newer compilers/codecs). Note any dep change explicitly in `implementation.md`.
 
@@ -47,12 +65,22 @@ If you cannot land a viable change — tests fail repeatedly with no fix path, n
 1. Read the suspected files listed in the target. If your investigation shows the hotspot is rooted in a different file, follow it — but justify the scope expansion in `implementation.md`.
 2. Implement the optimization. Refactor or redesign if needed; just keep the scope focused on this hotspot.
 3. Run `cargo fmt`.
-4. Run the test suite under the lock:
+4. Run the test suite under the lock. Behavior depends on `${DELIVERY_MODE}`:
+
+   For `normal_pr` (full suite must pass):
    ```bash
    flock "${TEST_LOCK}" cargo nextest run --no-fail-fast \
      > "${OUTPUT_DIR}/nextest.log" 2> "${OUTPUT_DIR}/nextest.stderr.log"
    ```
-   Acceptance requires zero failures. Fix or revert until tests pass. Every retry must also be wrapped in `flock`.
+
+   For `consensus_poc_pr` (scoped tests only — full suite is expected to fail):
+   ```bash
+   flock "${TEST_LOCK}" cargo nextest run --no-fail-fast \
+     -E "${POC_TEST_SCOPE_EXPR}" \
+     > "${OUTPUT_DIR}/nextest.log" 2> "${OUTPUT_DIR}/nextest.stderr.log"
+   ```
+
+   Acceptance requires zero failures within the run scope (full suite for `normal_pr`, filtered scope for `consensus_poc_pr`). Fix or revert until those tests pass. Every retry must also be wrapped in `flock`.
 5. Build the release `stacks-bench` binary for the coordinator to copy out:
    ```bash
    ( cd "${WORKTREE_DIR}" && cargo build --release -p stacks-bench )

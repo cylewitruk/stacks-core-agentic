@@ -54,7 +54,11 @@ Each query's header comment lists its parameters and a runnable example.
 5. **Enrich Clarity-VM spans.** [`top_contract_calls.sql`](top_contract_calls.sql) —
    identifies which contracts/functions the Clarity-VM hot spans are running
    for, in case a per-contract optimization is more targeted than a
-   generic VM-path fix.
+   generic VM-path fix. For the **throughput lens** specifically — finding
+   contracts that consume disproportionate Clarity budget regardless of wall
+   time — use [`top_clarity_consumers_by_contract.sql`](top_clarity_consumers_by_contract.sql)
+   instead; it ranks by Clarity-cost units and surfaces near-binding axes
+   per contract.
 6. **Drill down when aggregates are insufficient.** Two paths:
    - **By contract/function:** [`txs_for_contract.sql`](txs_for_contract.sql)
      lists the actual transactions calling a hot contract.function pair; pick
@@ -75,24 +79,68 @@ Each query's header comment lists its parameters and a runnable example.
 
 ## Query catalog
 
-| File                                  | Purpose                                                                                  | Params                                                                     |
-| ------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `run_summary.sql`                     | Run provenance + workload counts.                                                        | `:run_id`                                                                  |
-| `top_spans_by_self_wall.sql`          | Primary hotspot ranking; CPU vs wait split; per-call avg.                                | `:run_id`, `:limit`                                                        |
-| `span_recurrence.sql`                 | % of blocks / txs in which each span appears (returns all spans, no limit).              | `:run_id`                                                                  |
-| `top_spans_by_call_count.sql`         | High-frequency spans (cache / dedup candidates).                                         | `:run_id`, `:limit`                                                        |
-| `block_timing_breakdown.sql`          | Avg setup / execution / commit per block; commit-overhead baseline.                      | `:run_id`                                                                  |
-| `baseline_empty_block_breakdown.sql`  | Avg per-stage cost of processing an empty block (irreducible floor).                     | `:run_id`                                                                  |
-| `tx_type_distribution.sql`            | Cheap workload context: tx-type counts and total time.                                   | `:run_id`                                                                  |
-| `top_contract_calls.sql`              | Top Clarity contract-functions by total wall time.                                       | `:run_id`, `:limit`                                                        |
-| `span_per_sample_distribution.sql`    | Sample-weighted per-call wall-time shape (min/max/avg/p50/p95/p99) for ONE span.         | `:run_id`, `:span_id`                                                      |
-| `span_per_block_distribution.sql`     | Per-block exclusive-wall percentiles + `top1/top3_share_pct` for ONE span.               | `:run_id`, `:span_id`                                                      |
-| `txs_for_contract.sql`                | List the transactions calling a specific contract.function pair in one run.              | `:run_id`, `:issuer_address`, `:contract_name`, `:function_name`, `:limit` |
-| `top_txs_by_duration.sql`             | Heaviest transactions in one run, with their contract/block context.                     | `:run_id`, `:limit`                                                        |
-| `top_blocks_for_span.sql`             | Synthetic blocks where a span is most expensive (drill from hot span → blocks).          | `:run_id`, `:span_id`, `:limit`                                            |
-| `profiler_trace_tx.sql`               | Recursive span tree for ONE transaction, indented; `:min_wall_ms` prunes noise.          | `:run_id`, `:stacks_tx_id`, `:min_wall_ms`, `:max_rows`                    |
-| `profiler_trace_block.sql`            | Recursive span tree for ONE synthetic block (txs + block plumbing).                      | `:run_id`, `:synthetic_block_id`, `:min_wall_ms`, `:max_rows`              |
-| `span_run_drift.sql`                  | Cross-run spread for top spans across the most-recent N runs.                            | `:recent_runs`, `:limit`                                                   |
+| File                                    | Purpose                                                                                  | Params                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `run_summary.sql`                       | Run provenance + workload counts.                                                        | `:run_id`                                                                  |
+| `top_spans_by_self_wall.sql`            | Primary hotspot ranking; CPU vs wait split; per-call avg.                                | `:run_id`, `:limit`                                                        |
+| `span_recurrence.sql`                   | % of blocks / txs in which each span appears (returns all spans, no limit).              | `:run_id`                                                                  |
+| `top_spans_by_call_count.sql`           | High-frequency spans (cache / dedup candidates).                                         | `:run_id`, `:limit`                                                        |
+| `block_timing_breakdown.sql`            | Avg setup / execution / commit per block; commit-overhead baseline.                      | `:run_id`                                                                  |
+| `baseline_empty_block_breakdown.sql`    | Avg per-stage cost of processing an empty block (irreducible floor).                     | `:run_id`                                                                  |
+| `tx_type_distribution.sql`              | Cheap workload context: tx-type counts and total time.                                   | `:run_id`                                                                  |
+| `top_contract_calls.sql`                | Top Clarity contract-functions by total wall time.                                       | `:run_id`, `:limit`                                                        |
+| `top_clarity_consumers_by_contract.sql` | Top Clarity-budget consumers per contract.function (5-axis breakdown + per-block max).   | `:run_id`, `:limit`                                                        |
+| `span_per_sample_distribution.sql`      | Sample-weighted per-call wall-time shape (min/max/avg/p50/p95/p99) for ONE span.         | `:run_id`, `:span_id`                                                      |
+| `span_per_block_distribution.sql`       | Per-block exclusive-wall percentiles + `top1/top3_share_pct` for ONE span.               | `:run_id`, `:span_id`                                                      |
+| `txs_for_contract.sql`                  | List the transactions calling a specific contract.function pair in one run.              | `:run_id`, `:issuer_address`, `:contract_name`, `:function_name`, `:limit` |
+| `top_txs_by_duration.sql`               | Heaviest transactions in one run, with their contract/block context.                     | `:run_id`, `:limit`                                                        |
+| `top_blocks_for_span.sql`               | Synthetic blocks where a span is most expensive (drill from hot span → blocks).          | `:run_id`, `:span_id`, `:limit`                                            |
+| `profiler_trace_tx.sql`                 | Recursive span tree for ONE transaction, indented; `:min_wall_ms` prunes noise.          | `:run_id`, `:stacks_tx_id`, `:min_wall_ms`, `:max_rows`                    |
+| `profiler_trace_block.sql`              | Recursive span tree for ONE synthetic block (txs + block plumbing).                      | `:run_id`, `:synthetic_block_id`, `:min_wall_ms`, `:max_rows`              |
+| `span_run_drift.sql`                    | Cross-run spread for top spans across the most-recent N runs.                            | `:recent_runs`, `:limit`                                                   |
+
+## Clarity cost columns
+
+A few queries surface Clarity cost columns from `stacks_tx_stats`
+(`clarity_runtime`, `clarity_read_count`, `clarity_read_length`,
+`clarity_write_count`, `clarity_write_length`). LLMs consistently misread
+these — they are not timings, not bytes-on-disk, and not raw operation counts.
+The exact semantics:
+
+- **`clarity_runtime`** — *deterministic CPU + memory cost units*, derived from
+  Clarity's per-function benchmark calibration. NOT wall-clock time, NOT µs,
+  NOT a profiler measurement. Comparable across runs by construction;
+  consumed against the tenure's `runtime` budget.
+- **`clarity_read_count` / `clarity_write_count`** — number of *Clarity-level*
+  read / write operations the VM observed. NOT the number of underlying MARF
+  or SQLite operations (which can be amplified by tries, indexes, etc.).
+- **`clarity_read_length` / `clarity_write_length`** — number of bytes
+  *from the Clarity perspective* — i.e. the size of the values passed to
+  `var-set`, `map-set`, etc. NOT bytes-on-disk, NOT serialized representation
+  size with overhead.
+
+These five values are consensus-critical, deterministic budget units. They
+gate per-tenure tx capacity: a tenure ends when the first of the five budgets
+hits its block cap. So "this contract consumes 30% of runtime budget across
+the worst block" is a meaningful throughput finding even when the wall-time
+spent on it is small, because it caps how many more txs the tenure could fit.
+
+### Deferred-write coupling
+
+MARF writes and some SQLite writes are buffered through `RollbackWrapper`
+during tx execution and only materialized at block commit. So `write_count`
+and `write_length` recorded against tx execution describe work whose actual
+wall-time cost is paid in `Segment: Clarity State Commit` (and the index
+commit phases). A fix that reduces Clarity write volume during execution
+amortizes through to commit-time savings.
+
+Aggregates over `clarity_runtime`, `clarity_read_count`, `clarity_read_length`,
+`clarity_write_count`, `clarity_write_length` across multiple blocks may span
+Stacks epoch boundaries, and cost weights change between epochs. Cross-epoch
+aggregates can be artifacts of recalibration rather than structural cost.
+Per-block epoch metadata is not currently available in the bench data; until
+it is, treat run-wide aggregates with the caveat that they may mix
+incompatible cost regimes.
 
 ## Schema reference
 
