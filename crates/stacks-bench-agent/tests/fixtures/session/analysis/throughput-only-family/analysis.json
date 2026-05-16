@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "family_id": "throughput-only-family",
+  "status": "accepted",
+  "selection_lens": "tenure_throughput",
+  "lens_disposition": {
+    "lens": "tenure_throughput",
+    "status": "addressed"
+  },
+  "targets": [
+    {
+      "target_span": "clarity::eval::pow",
+      "bucket": "block_processing",
+      "fix_signature": "clarity-cost-recalibration",
+      "hotspot": {
+        "span": "clarity::eval::pow",
+        "self_wall_us": 240000,
+        "total_wall_us": 260000,
+        "calls": 400,
+        "location": "clarity/src/vm/functions/arithmetic.rs:312"
+      },
+      "files": ["clarity/src/vm/functions/arithmetic.rs", "clarity/src/vm/costs.rs"],
+      "evidence": "Throughput is gated on `runtime` axis; pow consumes ~30% of the binding budget per tx.",
+      "proposed_change": "Recalibrate the runtime cost weight for `pow` based on measured wall time.",
+      "expected_improvement": {
+        "tx_latency": 0.5,
+        "tenure_throughput": 12.0,
+        "commit_time": 0.0
+      },
+      "risk": "medium",
+      "verification_plan": "cargo nextest run -p clarity costs::pow_recalibration",
+      "consensus_breaking": true,
+      "breakage_class": "clarity_cost_weight",
+      "poc_implementable": true,
+      "poc_test_scope": ["package(clarity)::functions::arithmetic::pow"],
+      "consensus_writeup": "Reduces the Clarity runtime cost weight assigned to pow. Affects tenure budget accounting; consensus participants must coordinate the new weights via a HIP."
+    }
+  ]
+}

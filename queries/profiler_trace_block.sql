@@ -22,14 +22,19 @@
 --
 -- Parameters
 --   :run_id              benchmark_run.id
---   :synthetic_block_id  synthetic_block.id
+--   :stacks_block_hash   stacks_block.block_hash_hex (0x-prefixed 64-hex-char
+--                        index block hash). Resolved to
+--                        `synthetic_block.id` for the current run via a
+--                        one-row dim lookup so the fact-table scan
+--                        filters on the indexed FK
+--                        `profiler_record.synthetic_block_id`.
 --   :min_wall_ms         threshold (0 disables the filter)
 --   :max_rows            LIMIT
 --
 -- Invocation
 --   sqlite3 -header -csv "$DB" \
 --     ".parameter set :run_id 1" \
---     ".parameter set :synthetic_block_id 1" \
+--     ".parameter set :stacks_block_hash '0xabcdef...'" \
 --     ".parameter set :min_wall_ms 10" \
 --     ".parameter set :max_rows 300" \
 --     ".read $QUERIES_DIR/profiler_trace_block.sql"
@@ -46,7 +51,13 @@ scoped AS (
     pr.est_wall_us,  pr.est_self_wall_us
   FROM profiler_record pr
   WHERE pr.benchmark_run_id    = :run_id
-    AND pr.synthetic_block_id  = :synthetic_block_id
+    AND pr.synthetic_block_id  = (
+      SELECT synth.id
+        FROM synthetic_block synth
+        JOIN stacks_block    sb ON sb.id = synth.stacks_block_id
+       WHERE synth.benchmark_run_id = :run_id
+         AND sb.block_hash_hex = :stacks_block_hash
+    )
     AND COALESCE(pr.est_wall_us, pr.wall_time_us) >= :min_wall_ms * 1000.0
 ),
 trace_tree AS (

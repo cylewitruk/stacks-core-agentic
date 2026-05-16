@@ -1,0 +1,115 @@
+{
+  "schema_version": 2,
+  "session_id": "20260507-104400",
+  "baseline_run_id": 100,
+  "baseline_rerun_id": 101,
+  "noise_floor_pct": 0.8,
+  "merge_method": "llm",
+  "merge_model": "gpt-5.3-codex-spark",
+  "targets": [
+    {
+      "id": "marf-read-cache-rollback-wrapper",
+      "merged_from": [
+        { "family_id": "dlmm-router-contract-family", "target_index": 0 },
+        { "family_id": "marf-read-pattern", "target_index": 0 }
+      ],
+      "convergence_count": 2,
+      "target_span": "RollbackWrapper::lookup",
+      "bucket": "block_processing",
+      "hotspot": {
+        "span": "RollbackWrapper::lookup",
+        "self_wall_us": 1240000,
+        "total_wall_us": 1280000,
+        "calls": 18000,
+        "location": "stackslib/src/clarity_vm/database/rollback_wrapper.rs:88"
+      },
+      "files": [
+        "stackslib/src/clarity_vm/database/rollback_wrapper.rs",
+        "stackslib/src/chainstate/stacks/index/marf.rs"
+      ],
+      "evidence": "Two distinct families (DLMM router txs and a block-level pattern) converge on the same MARF read path.",
+      "proposed_change": "Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).",
+      "expected_improvement": {
+        "tx_latency": 4.2,
+        "tenure_throughput": 0.0,
+        "commit_time": 4.15
+      },
+      "risk": "low",
+      "verification_plan": "cargo nextest run -p stackslib clarity_vm::database",
+      "merge_notes": "2 contributors converged from 2 distinct families.",
+      "consensus_breaking": false,
+      "delivery_mode": "normal_pr",
+      "bench_eligible": true
+    },
+    {
+      "id": "clarity-cost-recalibration",
+      "merged_from": [
+        { "family_id": "throughput-only-family", "target_index": 0 }
+      ],
+      "convergence_count": 1,
+      "target_span": "clarity::eval::pow",
+      "bucket": "block_processing",
+      "hotspot": {
+        "span": "clarity::eval::pow",
+        "self_wall_us": 240000,
+        "total_wall_us": 260000,
+        "calls": 400,
+        "location": "clarity/src/vm/functions/arithmetic.rs:312"
+      },
+      "files": ["clarity/src/vm/functions/arithmetic.rs", "clarity/src/vm/costs.rs"],
+      "evidence": "Throughput is gated on `runtime` axis; pow consumes ~30% of the binding budget per tx.",
+      "proposed_change": "Recalibrate the runtime cost weight for `pow` based on measured wall time.",
+      "expected_improvement": {
+        "tx_latency": 0.5,
+        "tenure_throughput": 12.0,
+        "commit_time": 0.0
+      },
+      "risk": "medium",
+      "verification_plan": "cargo nextest run -p clarity costs::pow_recalibration",
+      "consensus_breaking": true,
+      "breakage_class": "clarity_cost_weight",
+      "poc_implementable": true,
+      "poc_test_scope": ["package(clarity)::functions::arithmetic::pow"],
+      "consensus_writeup": "Reduces the Clarity runtime cost weight assigned to pow. Affects tenure budget accounting; consensus participants must coordinate the new weights via a HIP.",
+      "delivery_mode": "consensus_poc_pr",
+      "bench_eligible": false
+    },
+    {
+      "id": "marf-layout-redesign",
+      "merged_from": [
+        { "family_id": "marf-read-pattern", "target_index": 1 }
+      ],
+      "convergence_count": 1,
+      "target_span": "marf::index_commit",
+      "bucket": "block_commit",
+      "hotspot": {
+        "span": "marf::index_commit",
+        "self_wall_us": 540000,
+        "total_wall_us": 620000,
+        "calls": 1200,
+        "location": "stackslib/src/chainstate/stacks/index/storage.rs:201"
+      },
+      "files": ["stackslib/src/chainstate/stacks/index/storage.rs"],
+      "evidence": "Index-commit phase concentrates on rewriting the trie root after each block.",
+      "proposed_change": "Restructure the on-disk MARF trie node layout to coalesce small writes.",
+      "expected_improvement": {
+        "tx_latency": 0.0,
+        "tenure_throughput": 0.0,
+        "commit_time": 8.5
+      },
+      "risk": "high",
+      "verification_plan": "Re-derive trie roots over a 50-block sample.",
+      "consensus_breaking": true,
+      "breakage_class": "marf_layout",
+      "poc_implementable": false,
+      "consensus_writeup": "Repacks the on-disk MARF trie nodes to coalesce small writes. This is an on-disk format change; nodes upgraded mid-tenure would diverge from peers, so it must be coordinated via a HIP and shipped at an epoch boundary.",
+      "delivery_mode": "consensus_issue",
+      "bench_eligible": false
+    }
+  ],
+  "lens_dispositions": [
+    { "family_id": "dlmm-router-contract-family", "lens": "tx_latency", "status": "addressed" },
+    { "family_id": "marf-read-pattern", "lens": "commit_time", "status": "addressed" },
+    { "family_id": "throughput-only-family", "lens": "tenure_throughput", "status": "addressed" }
+  ]
+}

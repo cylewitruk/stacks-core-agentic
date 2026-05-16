@@ -1,0 +1,39 @@
+[package]
+name = "stacks-bench-agent"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "stacks_bench_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sbagent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+clap.workspace = true
+config.workspace = true
+fd-lock.workspace = true
+jsonschema.workspace = true
+minijinja.workspace = true
+octocrab.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+jsonschema.workspace = true
+pretty_assertions.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+test-log.workspace = true

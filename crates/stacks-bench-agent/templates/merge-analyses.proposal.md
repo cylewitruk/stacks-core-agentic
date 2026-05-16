@@ -1,0 +1,154 @@
+You are consolidating analyzer outputs into a deduplicated optimization target
+slate. Each analyzer investigated one workload family; independent families may
+converge on the same structural fix, or may touch the same span for different
+reasons. Your job is to collapse only true duplicates, preserve the strongest
+evidence and routing intent from every contributor, and keep uncertain or
+mechanically distinct fixes separate. Do not invent evidence, soften risks,
+change consensus classification, or merge targets just to make convergence look
+stronger.
+
+# Mission
+
+Write:
+
+- `{{ opt_session_dir }}/merge/optimization-targets.json`
+- `{{ opt_session_dir }}/merge/final-message.md`
+
+The JSON must match `{{ optimization_targets_schema_path }}`.
+
+# Inputs
+
+- Session id: `{{ opt_session_id }}`
+- Baseline run id: `{{ baseline_run_id }}`
+- Baseline rerun id: `{{ baseline_rerun_id }}`
+- Noise floor pct: `{{ noise_floor_pct }}`
+- Merge model: `{{ codex_merge_model }}`
+- Bucket anchors: `{{ bucket_anchors_path }}`
+- Accepted analyses:
+
+```json
+{{ accepted_analyses_json }}
+```
+
+# Merge Model
+
+Treat each analyzer target as a contributor:
+
+```text
+(family_id, target_index, target_obj)
+```
+
+Merge contributors only when they describe the same structural change at the
+same code locus:
+
+- overlapping `files`;
+- same mechanism;
+- same or obviously equivalent `target_span`;
+- compatible `fix_signature` and `proposed_change`.
+
+Keep separate when:
+
+- same span but different mechanism;
+- same mechanism in different files/modules;
+- different `bucket`;
+- same `family_id`;
+- different `consensus_breaking`;
+- both consensus-breaking but different `breakage_class`;
+- uncertain.
+
+Singleton merged targets are normal. Bias against false merges; do not invent
+merges to look impressive.
+
+# Canonical Values
+
+For N > 1 contributors:
+
+- `id`: best `fix_signature`.
+- `target_span`: most precise span.
+- `bucket`: shared bucket.
+- `hotspot`: contributor with largest `total_wall_us`.
+- `files`: union, most-mentioned first.
+- `evidence`: shared finding plus strongest citation.
+- `proposed_change`: most concrete wording.
+- `expected_improvement`: median per axis. Compute each axis independently;
+  do not collapse the vector, average the axes, or dot-product it.
+- `risk`: most cautious risk.
+- `verification_plan`: union.
+- `verification_replay`: union txids/blocks, max repetitions, joined rationales.
+  Cap `txids` and `blocks` at 16 entries each; if exceeded, drop the
+  lowest-cost representatives.
+- `merged_from`: all contributors in first-seen order.
+- `convergence_count`: `merged_from.length`.
+- `merge_notes`: one short provenance sentence.
+- `contributor_differences`: only meaningful disagreements.
+
+For N = 1, copy the contributor directly; set `id = fix_signature`,
+`merged_from`, and `convergence_count = 1`.
+
+# Consensus Routing
+
+Carry shared consensus fields. Derive:
+
+- non-consensus -> `delivery_mode = "normal_pr"`, `bench_eligible = true`
+- consensus + PoC -> `delivery_mode = "consensus_poc_pr"`, `bench_eligible = false`
+- consensus + no PoC -> `delivery_mode = "consensus_issue"`, `bench_eligible = false`
+
+For consensus merges:
+
+- `poc_implementable` is false if any contributor says false.
+- `poc_test_scope` is the union when PoC is true.
+- `consensus_writeup` is the most specific contributor writeup.
+
+# Lens Dispositions
+
+Emit one top-level `lens_dispositions[]` entry per accepted analysis, even when
+it emitted zero targets:
+
+```json
+{ "family_id": "...", "lens": "...", "status": "...", "reason": "optional" }
+```
+
+Copy analyzer dispositions; add `family_id`.
+
+# Rejected by Merge
+
+Use `rejected_by_merge` only for a strong target-specific reason: already
+shipped, forbidden scope, or optimizer-rule violation. Otherwise emit a
+singleton target.
+
+# Required Invariants
+
+Before writing JSON, verify:
+
+1. every analyzer target appears exactly once across `merged_from` and
+   `rejected_by_merge`;
+2. every accepted family appears exactly once in `lens_dispositions`;
+3. no cross-bucket, intra-analysis, or cross-consensus-class merges;
+4. derived `delivery_mode` and `bench_eligible` are consistent;
+5. `convergence_count = 1` is accepted when no true equivalent exists;
+6. schema validation against `{{ optimization_targets_schema_path }}` passes.
+
+# Output
+
+Top-level JSON:
+
+```json
+{
+  "schema_version": 2,
+  "session_id": "{{ opt_session_id }}",
+  "baseline_run_id": {{ baseline_run_id }},
+  "baseline_rerun_id": {{ baseline_rerun_id }},
+  "noise_floor_pct": {{ noise_floor_pct }},
+  "merge_method": "llm",
+  "merge_model": "{{ codex_merge_model }}",
+  "targets": [],
+  "rejected_by_merge": [],
+  "lens_dispositions": []
+}
+```
+
+`{{ opt_session_dir }}/merge/final-message.md` should summarize input count, output target count,
+rejections, lens dispositions, delivery modes, consensus findings, and the
+coverage check.
+
+Do not modify inputs, source code, or benchmarks.

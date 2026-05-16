@@ -1,0 +1,157 @@
+# config.toml — single source of truth for the bench-agent workflow.
+#
+# Copy this file to <framework-root>/config.toml. `sbagent` auto-loads
+# `./config.toml` from cwd (or pass `-c <path>` to point elsewhere).
+#
+# Field names mirror the keys exposed by `Settings` in
+# crates/stacks-bench-agent/src/settings.rs. Every field is optional;
+# unset keys fall back to the documented defaults or to per-command
+# required-arg errors when a phase actually needs them.
+
+# --- Framework layout ----------------------------------------------------
+# `framework_root` is OPTIONAL since the bundle migration: prompts,
+# schemas, AND the SQL query bundle are embedded in the binary and
+# seeded to the operator's `.sbagent/{prompts,schemas,queries}/` by
+# `sbagent init` (and `sbagent sync` for upgrades). Set this only if
+# you're a tool developer iterating on the typed-model schema-export
+# drift gate (`sbagent schema export` / `sbagent check` typed-model gate).
+# Operator deployments leave it unset.
+# framework_root = "/absolute/path/to/stacks-bench-agent"
+#
+# `base` is REQUIRED — it's the operator-provided stacks-core checkout
+# that builds `stacks-bench` + sources optimizer worktrees. Typically
+# the operator's submodule at `<operator_root>/repos/stacks-core/`.
+# For local dev against a sibling clone:
+# `base = "/absolute/path/to/stacks-bench-agentic-operator/repos/stacks-core"`.
+# sessions_root  = "/absolute/path/to/operator/sessions"
+# stacks_bench_data_dir = "/absolute/path/to/data/stacks-bench"
+# lock_dir = "/absolute/path/to/data/run"  # holds benchmark.lock + test.lock
+base = "repos/stacks-core"
+
+# Clone URL for the stacks-core submodule. Required by `sbagent init`
+# when bootstrapping a fresh operator dir. Once `base` exists locally
+# this field is unused at runtime. Pilot: point at the bot's fork.
+# Upstream: swap to `https://github.com/stacks-network/stacks-core.git`.
+# base_repo_url = "https://github.com/stacks-bench-bot/stacks-core.git"
+
+# --- Bundles (prompts + JSON Schemas + SQL queries) ----------------------
+# Prompts, schemas, AND the triage/analyzer SQL bundle are all embedded
+# in the `sbagent` binary at compile time. `sbagent init` writes them
+# to `<operator>/.sbagent/{prompts,schemas,queries}/` and `sbagent sync`
+# refreshes them after upgrading the binary:
+#   - `sbagent sync`               → always overwrites schemas + queries,
+#                                    leaves prompts
+#   - `sbagent sync --force-prompts` → also overwrites prompt templates
+# `sbagent check` fails on schemas / queries drift (stale on-disk copies
+# silently break agent validation or input ordering) and warns on prompt
+# drift (operator edits are legitimate tuning, per the autoresearch
+# `program.md` model).
+#
+# `schemas_dir` + `queries_dir` default to siblings of
+# `prompt_overrides_dir`. With `prompt_overrides_dir = ".sbagent/prompts"`,
+# the three sibling dirs land naturally under `.sbagent/` with no extra
+# config.
+prompt_overrides_dir = ".sbagent/prompts"
+# schemas_dir = ".sbagent/schemas"
+# queries_dir = ".sbagent/queries"
+
+# --- Forge-agnostic auth (used by `sbagent init --push` / --seed-from) ---
+# The PAT-via-extraheader auth mechanism builds a Basic credential as
+# `<git_auth_username>:<token>` and attaches it as
+# `http.<git_auth_url_prefix>.extraheader`. Defaults below match
+# GitHub fine-grained PATs; override per forge:
+#   - GitHub (any PAT):           username = "x-access-token"  (default)
+#   - GitLab PATs / project tokens: username = "oauth2"
+#   - Bitbucket Cloud app pwds:   username = "<bitbucket-username>"
+#   - Self-hosted Gitea/Forgejo:  username = "git" or bot account
+# `git_auth_url_prefix` is also the validation gate for --push origin
+# and --seed-from base_repo_url — URLs outside this prefix are rejected
+# up-front. Trailing slash is normalized internally; setting it to an
+# empty string is expert mode (token attached unqualified to any HTTPS
+# remote git contacts — only safe when you've audited every remote).
+# git_auth_username = "x-access-token"
+# git_auth_url_prefix = "https://github.com/"
+
+# --- Benchmark range -----------------------------------------------------
+# `start_at` + `count` are required by `session baseline run` and
+# `session run` (Phase 0 + Phase 3 share the resolved range). Each of
+# the four range knobs is also exposed as a CLI flag + env var so the
+# closed-loop can sample different windows per invocation without
+# mutating config:
+#
+#   --start-at N      SBAGENT_BENCH_START_AT
+#   --count N         SBAGENT_BENCH_COUNT
+#   --warmup N        SBAGENT_BENCH_WARMUP
+#   --filter EXPR     SBAGENT_BENCH_FILTER
+#
+# Resolution precedence (highest wins): CLI → env → this config →
+# required-error (for start_at/count) or None (for warmup/filter).
+#
+# Canonical Nakamoto-era ranges to pick from:
+#   5_000_000 – 5_200_000
+#   6_500_000 – 6_800_000
+#   7_300_000 – 7_500_000
+source_dir = "/mnt/chainstate/mainnet"
+stacks_bench_network = "mainnet"
+stacks_bench_start_at = 5_000_000
+stacks_bench_count = 200_000
+# stacks_bench_warmup = 5_000           # optional; matches `--warmup`
+# stacks_bench_filter = "contract-call" # optional; matches `--filter`
+
+# --- Triage --------------------------------------------------------------
+# Selection-lens weights (tx_latency,tenure_throughput,commit_time).
+# Default biases toward execution-side optimizations over commit-side,
+# which suits contract-heavy demos.
+stacks_bench_axis_weights = "0.4,0.4,0.2"
+
+# Conservative noise-floor fallback used when a single baseline run is
+# imported (no rerun for noise estimation). Default 1.0%.
+single_run_noise_floor_pct = 1.0
+
+# --- Codex ---------------------------------------------------------------
+# `codex_model` is shared by every phase, including merge. The merge
+# phase falls back to `gpt-5.3-codex-spark` only when `codex_model` is
+# unset; setting it here covers all phases.
+codex_model = "gpt-5.5"
+codex_reasoning_effort = "high"
+# Override only the merge phase's reasoning effort. Inherits
+# codex_reasoning_effort when unset.
+# codex_merge_reasoning_effort = "high"
+# Set to true on demo VMs that cannot support Codex's internal sandboxing.
+codex_dangerously_bypass_sandbox = false
+# Outer timeout for each `codex exec` invocation. 0 disables.
+codex_exec_timeout_sec = 3600
+
+# --- GitHub publishing (optional; intended for fully autonomous flows) ---
+# Phase 5 runs entirely in-process; no sudo, no separate publisher user.
+# Place a GitHub PAT at `publish_token_file`, mode 0600, owned by the
+# agent user.
+#
+# Recommended: a **fine-grained** PAT scoped to the bot's two repos
+# (`<bot>/stacks-core` for optimizer PRs + the bot's operator repo for
+# `sbagent init --push`). Repository permissions:
+#   - Contents: Read & write
+#   - Pull requests: Read & write
+#   - Issues: Read & write
+#   - Metadata: Read-only (auto-included)
+# Add `workflow` permission only if the bot needs to touch `.github/`.
+# Upstream-mode (cross-owner PRs to stacks-network/stacks-core) may
+# require a classic PAT with the `public_repo` scope — diagnose via
+# the manual draft-PR test before flipping `publish_base_repo`.
+#
+# The token MUST live OUTSIDE the framework root. `publish generate`
+# passes the framework root to Codex via `--add-dir`; a token inside
+# that tree is reachable by the LLM. `sbagent` enforces this at preflight.
+#
+# Default (when commented out): ${HOME}/.config/sbagent/gh_token.
+# publish_token_file = "/absolute/path/outside/framework/gh_token"
+publish_remote = "origin"
+# Default targets your fork (least blast radius). Override to
+# stacks-network/stacks-core only when you explicitly want PRs against
+# upstream.
+publish_base_repo = "cylewitruk/stacks-core"
+publish_base_branch = "feat/stacks-bench"
+publish_branch_prefix = "agentic"
+publish_draft_prs = true
+# publish_pr_labels = ["needs-bench-review"]
+# publish_head_owner = "cylewitruk"

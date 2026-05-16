@@ -3,10 +3,12 @@
 -- Purpose
 --   When a span is concentrated in a small number of blocks (low pct_blocks
 --   from `span_recurrence.sql`, or skewed distribution from
---   `span_per_block_distribution.sql`), this lists the specific
---   `synthetic_block_id`s where it dominates. Use the returned ids as
---   `:synthetic_block_id` input to `profiler_trace_block.sql` to see which
---   parents and siblings drive the cost in those blocks.
+--   `span_per_block_distribution.sql`), this lists the specific blocks
+--   where it dominates. The result returns both `synthetic_block_id`
+--   (DB-local) and `stacks_block_hash` (globally stable); pass the
+--   `stacks_block_hash` value as the `:stacks_block_hash` input to
+--   `profiler_trace_block.sql` to see which parents and siblings drive
+--   the cost in those blocks.
 --
 -- Parameters
 --   :run_id   benchmark_run.id

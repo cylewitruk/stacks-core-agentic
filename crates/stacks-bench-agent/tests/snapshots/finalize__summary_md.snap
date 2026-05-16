@@ -1,0 +1,113 @@
+---
+source: crates/stacks-bench-agent/tests/finalize.rs
+expression: summary_md
+---
+# Session 20260507-104400
+
+- Baseline run id: 100
+- Baseline rerun id: 101
+- Noise floor: 0.8%
+- Target catalog: [targets.md](targets.md)
+
+## Improvement vs baseline
+
+```mermaid
+xychart-beta
+    title "Per-target improvement vs baseline (%)"
+    x-axis ["marf-read-cache-rollbac…"]
+    y-axis "% improvement" 0 --> 10
+    bar [5.50]
+```
+
+## TL;DR
+
+Out of **3** merged optimization target(s), 1 normal-PR target(s) measurably improved (avg +5.50%); 1 consensus PoC PR(s) landed for HIP discussion; 1 routed to a tracking issue.
+
+## What was found
+
+Triage promoted **3** family(ies) to per-family analysis. Their dispositions:
+
+| Family | Lens | Disposition |
+| ------ | ---- | ----------- |
+| [dlmm-router-contract-family](../analysis/dlmm-router-contract-family/analysis.json) | Tx latency | → contributed to **[marf-read-cache-rollback-wrapper](#marf-read-cache-rollback-wrapper)** (1 target(s) proposed) |
+| [marf-read-pattern](../analysis/marf-read-pattern/analysis.json) | Commit time | → contributed to **[marf-read-cache-rollback-wrapper](#marf-read-cache-rollback-wrapper)** (2 target(s) proposed) |
+| [throughput-only-family](../analysis/throughput-only-family/analysis.json) | Tenure throughput | → contributed to **[clarity-cost-recalibration](#clarity-cost-recalibration)** (1 target(s) proposed) |
+
+## What was chosen — and how it went
+
+Each merged optimization target below carries the hotspot evidence the analyzer identified, the proposed change, and what the optimizer actually shipped. Excerpts are short — follow the links to the full writeups.
+
+### 🔧 ✅ marf-read-cache-rollback-wrapper — Normal PR · **Accepted** (+5.50%)
+
+`RollbackWrapper::lookup` at `stackslib/src/clarity_vm/database/rollback_wrapper.rs:88` · self_wall 1.24 s · 18k calls · risk: Low · 2 contributor(s)
+
+**Evidence.** Two distinct families (DLMM router txs and a block-level pattern) converge on the same MARF read path.
+
+**Proposed.** Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).
+
+**Outcome.** Implemented per-tenure cache. 12/12 tests passed.
+
+Contributors: [dlmm-router-contract-family](../analysis/dlmm-router-contract-family/analysis.json), [marf-read-pattern](../analysis/marf-read-pattern/analysis.json)
+
+Details: [experiment dir](../optimize/marf-read-cache-rollback-wrapper/) · [target catalog](targets.md#marf-read-cache-rollback-wrapper) · [implementation.md](../optimize/marf-read-cache-rollback-wrapper/implementation.md)
+
+---
+
+### ⚠️ ✅ clarity-cost-recalibration — Consensus PoC PR · **PoC landed**
+
+`clarity::eval::pow` at `clarity/src/vm/functions/arithmetic.rs:312` · self_wall 240.0 ms · 400 calls · risk: Medium · 1 contributor(s)
+
+**Evidence.** Throughput is gated on `runtime` axis; pow consumes ~30% of the binding budget per tx.
+
+**Proposed.** Recalibrate the runtime cost weight for `pow` based on measured wall time.
+
+**Outcome.** Recalibrated runtime weight for pow. Scoped tests passed.
+
+Contributors: [throughput-only-family](../analysis/throughput-only-family/analysis.json)
+
+Details: [experiment dir](../optimize/clarity-cost-recalibration/) · [target catalog](targets.md#clarity-cost-recalibration) · [implementation.md](../optimize/clarity-cost-recalibration/implementation.md)
+
+---
+
+### 📋 ✅ marf-layout-redesign — Consensus issue · **Routed to issue**
+
+`marf::index_commit` at `stackslib/src/chainstate/stacks/index/storage.rs:201` · self_wall 540.0 ms · 1.2k calls · risk: High · 1 contributor(s)
+
+**Evidence.** Index-commit phase concentrates on rewriting the trie root after each block.
+
+**Proposed.** Restructure the on-disk MARF trie node layout to coalesce small writes.
+
+Contributors: [marf-read-pattern](../analysis/marf-read-pattern/analysis.json)
+
+Details: [experiment dir](../optimize/marf-layout-redesign/) · [target catalog](targets.md#marf-layout-redesign)
+
+---
+
+## Outcomes
+
+| Delivery mode    | Counts                                       |
+| ---------------- | -------------------------------------------- |
+| Normal PR        | Accepted 1 · Rejected 0 · Aborted 0 |
+| Consensus PoC PR | PoC landed 1 · Aborted 0 |
+| Consensus issue  | Routed to issue 1 · Aborted 0 |
+
+## Coverage matrix (bucket × selection lens)
+
+|                  | Tx latency | Tenure throughput | Commit time |
+| ---------------- | ---------- | ----------------- | ----------- |
+| Block processing | 1 | 1 | - |
+| Block commit | - | - | 1 |
+
+> Cell counts use each merged target's primary lens (the first contributor's selection lens). Targets with cross-lens convergence are counted once; see the `contributor_differences` field of `optimization-targets.json` for cross-lens cases.
+
+## At a glance
+
+| Target | Delivery mode | Status | Improvement | Run ids | Notes |
+| ------ | ------------- | ------ | ----------- | ------- | ----- |
+| [marf-read-cache-rollback-wrapper](../optimize/marf-read-cache-rollback-wrapper/) | Normal PR | [Accepted](../optimize/marf-read-cache-rollback-wrapper/implementation.md) | 5.50% | [500](../optimize/marf-read-cache-rollback-wrapper/run-1/bench-run.json), [501](../optimize/marf-read-cache-rollback-wrapper/run-2/bench-run.json) |  |
+| [clarity-cost-recalibration](../optimize/clarity-cost-recalibration/) | Consensus PoC PR | [PoC landed](../optimize/clarity-cost-recalibration/implementation.md) | — | — | breakage class: Clarity cost weight |
+| [marf-layout-redesign](../optimize/marf-layout-redesign/) | Consensus issue | [Routed to issue](../optimize/marf-layout-redesign/consensus-issue.md) | — | — | breakage class: MARF layout |
+
+## Next steps
+
+1 PR(s) + 1 PoC PR(s) + 1 issue(s) of 3 target(s); review and re-run rejected/aborted with refined analyses

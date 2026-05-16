@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "session_id": "20260507-104400",
+  "baseline_run_id": 100,
+  "baseline_rerun_id": 101,
+  "noise_floor_pct": 0.8,
+  "candidates": [
+    {
+      "id": "dlmm-router-contract-family",
+      "kind": "contract_family",
+      "selection_lens": "tx_latency",
+      "representative_ids": {
+        "contract_function": {
+          "issuer": "SP000000000000000000002Q6VF78",
+          "contract": "dlmm-router",
+          "function": "swap"
+        },
+        "stacks_tx_hashes": [
+          "0x000000000000000000000000000000000000000000000000000000000000002a",
+          "0x0000000000000000000000000000000000000000000000000000000000000049",
+          "0x0000000000000000000000000000000000000000000000000000000000000063"
+        ]
+      },
+      "rationale": "DLMM router swap dominates contract-call wall time across the run.",
+      "bucket": "block_processing",
+      "suspected_spans": ["with_abort_callback::clarity_eval"],
+      "global_materiality": {
+        "pct_blocks": 62.4,
+        "self_wall_ms": 1284.5,
+        "notes": "broad signal; pattern repeats across most blocks."
+      }
+    },
+    {
+      "id": "marf-read-pattern",
+      "kind": "block_family",
+      "selection_lens": "commit_time",
+      "representative_ids": {
+        "stacks_block_hashes": [
+          "0x0000000000000000000000000000000000000000000000000000000000002ee1",
+          "0x0000000000000000000000000000000000000000000000000000000000002ee2",
+          "0x0000000000000000000000000000000000000000000000000000000000002ee5"
+        ]
+      },
+      "rationale": "Commit-bucket dominated by repeated MARF reads through RollbackWrapper.",
+      "bucket": "block_commit",
+      "suspected_spans": ["marf::read", "RollbackWrapper::lookup"]
+    },
+    {
+      "id": "throughput-only-family",
+      "kind": "tx_family",
+      "selection_lens": "tenure_throughput",
+      "representative_ids": {
+        "stacks_tx_hashes": [
+          "0x00000000000000000000000000000000000000000000000000000000000000c9",
+          "0x00000000000000000000000000000000000000000000000000000000000000ca"
+        ]
+      },
+      "rationale": "High clarity_runtime consumption near binding cap.",
+      "bucket": "block_processing"
+    }
+  ]
+}

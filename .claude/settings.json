@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo nextest *)",
+      "Bash(cargo test *)",
+      "Bash(just test)",
+      "Bash(just lint)",
+      "Bash(just fmt)",
+      "Bash(just build)",
+      "Bash(sqlite3 /Users/cylwit/appdata/stacks-bench.db \"SELECT run_id, run_name, datetime\\(start_time\\) FROM stacks_bench_run ORDER BY run_id DESC LIMIT 5;\")",
+      "Bash(sqlite3 /Users/cylwit/.stacks-bench/appdata/stacks-bench.db \"SELECT run_id, run_name, datetime\\(start_time\\) FROM stacks_bench_run ORDER BY run_id DESC LIMIT 5;\")",
+      "Bash(sqlite3 /Users/cylwit/appdata/stacks-bench.db \".tables\")",
+      "Bash(sqlite3 /Users/cylwit/.stacks-bench/appdata/stacks-bench.db \".tables\")",
+      "Read(//Users/cylwit/appdata/**)",
+      "Bash(sqlite3 /Users/cylwit/appdata/stacks-bench.db \"SELECT run_id, run_name, datetime\\(start_time\\) FROM benchmark_run ORDER BY run_id DESC LIMIT 5;\")",
+      "Bash(sqlite3 /Users/cylwit/.stacks-bench/appdata/stacks-bench.db \"SELECT run_id, run_name, datetime\\(start_time\\) FROM benchmark_run ORDER BY run_id DESC LIMIT 5;\")",
+      "Read(//Users/cylwit/**)",
+      "Bash(sqlite3 /Users/cylwit/appdata/stacks-bench.db \"SELECT id, run_name, datetime\\(start_time\\), git_branch FROM benchmark_run ORDER BY id DESC LIMIT 5;\")",
+      "Bash(cargo --locked nextest run --no-fail-fast -E 'test\\(ensure_data_dir\\)')",
+      "Bash(jq -c '.targets[0] | keys' /Users/cylwit/Code/github.com/stacks-bench-bot/stacks-core-autopilot/sessions/20260514-160342/results/analyses/blocksurvey-submission-write-budget-family/analysis.json)"
+    ]
+  }
+}

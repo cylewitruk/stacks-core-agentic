@@ -3,8 +3,9 @@
 -- Purpose
 --   Drill-down companion to `top_contract_calls.sql`. Once that query has
 --   surfaced a hot contract.function pair, this lists the actual transactions
---   that called it in this run, ordered by duration. Use the returned
---   `stacks_tx_id` values as the `:stacks_tx_id` input to
+--   that called it in this run, ordered by duration. The result returns
+--   both `stacks_tx_id` (DB-local) and `tx_hash` (globally stable); pass
+--   the `tx_hash` value as the `:stacks_tx_hash` input to
 --   `profiler_trace_tx.sql` to inspect a single hot call's full trace.
 --
 --   This query exposes all five Clarity cost columns from `stacks_tx_stats`

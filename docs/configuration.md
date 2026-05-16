@@ -1,0 +1,201 @@
+# Configuration
+
+Where settings live, what each path means, and how Codex needs to be
+configured to run subagents.
+
+## Single source of truth: `config.toml`
+
+All long-lived settings live in a single TOML file. Resolution order
+(first match wins):
+
+1. `-c <path>` / `--config-path <path>` flag.
+2. `./config.toml` in cwd (legacy, kept for back-compat).
+3. `$XDG_CONFIG_HOME/sbagent/config.toml`.
+4. `~/.config/sbagent/config.toml` (the recommended default).
+
+The XDG/HOME path means operators don't have to commit
+machine-specific paths into their operator repo. Per-invocation
+overrides live as explicit clap flags; the only env var that backs a
+flag is `SBAGENT_SESSION_ID` (on `--session-id`). No `.env` file.
+
+The annotated template is checked in at
+[assets/config.toml.example](../assets/config.toml.example) — copy it
+to `~/.config/sbagent/config.toml` and edit. The shape (canonical
+Nakamoto-era block ranges, lock paths, publish targets, bundle dirs,
+forge auth) is documented inline in that file.
+
+Prefer `--count` on `session baseline run` for bounded demo runs.
+Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is
+intentional, because it can add significant chainstate copy time.
+
+## Canonical paths (operator-side)
+
+```text
+<operator>                          # the dir `sbagent init` creates
+  config.toml                       # optional; user-level lives at
+                                    #   ~/.config/sbagent/config.toml
+  .sbagent/
+    prompts/                        # MiniJinja templates + reference
+                                    # docs. Operator-tunable (autoresearch
+                                    # `program.md` model); `sbagent check`
+                                    # warns on drift vs binary bundle.
+    schemas/                        # JSON Schemas — mirror of binary
+                                    # bundle. DO NOT EDIT; `sbagent check`
+                                    # fails on drift, `sbagent sync`
+                                    # restores from binary.
+    queries/                        # Triage/analyzer SQL — same contract
+                                    # as schemas (mirror, do not edit).
+  repos/
+    stacks-core/                    # submodule, tracks publish_base_branch
+  sessions/<session-id>/results/    # per-session artifacts
+  events/                           # append-only event log (operator-side)
+```
+
+```text
+<agent_workspace_root>              # default /private/tmp/sbagent-workspaces
+  optimizers/<session-id>/<target>/ # mutable per-target git clones
+                                    # — NOT inside the operator repo, so
+                                    # `git status` stays clean and Codex
+                                    # has a sandbox-friendly scratch root.
+```
+
+Both bundle dirs (`schemas/`, `queries/`) and the prompt bundle dir
+auto-derive from `prompt_overrides_dir`'s parent when their explicit
+config keys are unset. With `prompt_overrides_dir = ".sbagent/prompts"`
+(the conventional setting), the three sibling dirs land under
+`.sbagent/` with no extra config.
+
+## Bundle lifecycle (`sbagent sync`)
+
+Prompts, JSON schemas, and SQL queries are all embedded in the
+`sbagent` binary via `include_str!`. They get to disk in two ways:
+
+- **`sbagent init`** seeds `.sbagent/{prompts,schemas,queries}/`
+  with don't-replace semantics. Re-runs are no-ops.
+- **`sbagent sync`** (after an `sbagent` upgrade): rewrites schemas +
+  queries unconditionally, leaves prompts alone. `--force-prompts`
+  also clobbers prompt edits (use sparingly — that's where operator
+  tunes live).
+
+`sbagent check` enforces the contract:
+
+- Schemas drift on disk vs bundle → **fail** (operator validates
+  agent output against the wrong contract otherwise).
+- Queries drift on disk vs bundle → **fail** (stale column ordering
+  silently breaks the typed candidates/analysis pipeline).
+- Prompts drift on disk vs bundle → **warn** (operator edits are
+  legitimate tuning; an operator who upgrades the binary sees a
+  one-line stderr notice and decides whether to merge or
+  `sbagent sync --force-prompts`).
+
+## Forge-agnostic auth
+
+`sbagent init --push` / `--seed-from` use an `http.<prefix>.extraheader`
+config override (injected via `GIT_CONFIG_COUNT` env-vars, never
+persisted) to attach a Basic credential to git pushes. Two settings
+control it:
+
+- `git_auth_username` — defaults to `x-access-token` (GitHub
+  fine-grained PATs). Set to `oauth2` for GitLab project tokens,
+  the Bitbucket account username for Bitbucket app passwords,
+  `git` for self-hosted Gitea / Forgejo.
+- `git_auth_url_prefix` — defaults to `https://github.com/`. Set to
+  your forge's HTTPS root for non-GitHub hosts (e.g.
+  `https://gitlab.com/`). Trailing slash is normalized internally
+  so `https://gitlab.com` and `https://gitlab.com/` resolve
+  identically — defeats typosquat hosts like
+  `https://gitlab.com.evil.example/`.
+
+Non-empty prefixes that aren't `https://...` are rejected at config
+load (`http://` would leak the PAT over plaintext; `git@host:` /
+`ssh://` URLs ignore the extraheader entirely). Setting the prefix
+to `""` is **expert / advanced mode**: the auth header is attached
+unqualified and sent to **any** HTTPS remote git contacts during the
+invocation. Use only after auditing every remote.
+
+## Tool-developer mode (optional `framework_root`)
+
+`framework_root` was required pre-bundle. With prompts / schemas /
+queries embedded, operator deployments leave it unset. The remaining
+consumers:
+
+- `sbagent schema export` defaults `--out` to `<framework>/schemas/`
+  so a tool dev regenerating schemas writes back to the source tree.
+- `sbagent check`'s typed-model-vs-committed-schema drift gate runs
+  only when `framework_root` is set (catches "edited a Rust model,
+  forgot to commit the regenerated schema"; irrelevant for operators).
+
+Set `framework_root` to your `stacks-bench-agent` source checkout if
+you're iterating on the tool itself. Otherwise omit it.
+
+## Recommended Codex config
+
+Create `~/.codex/config.toml` inside the agent VM:
+
+```toml
+# Replace the absolute paths below with your actual checkout root.
+
+model = "gpt-5.5"
+
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+
+[sandbox_workspace_write]
+network_access = true
+writable_roots = [
+  "/absolute/path/to/<bot>/<operator>",
+  "/private/tmp/sbagent-workspaces",   # match `agent_workspace_root`
+]
+
+[projects."/absolute/path/to/<bot>/<operator>/repos/stacks-core"]
+trust_level = "trusted"
+
+[projects."/absolute/path/to/<bot>/<operator>/sessions"]
+trust_level = "trusted"
+```
+
+The framework checkout no longer needs `writable_roots` entries —
+operator deployments don't read from it at runtime (prompts /
+schemas / queries are bundled).
+
+Trust the worktree root once at bootstrap so newly created
+session-scoped worktrees inherit trust without per-experiment config
+edits. That entry is recursive in practice (Codex matches the
+longest path prefix), but if a future Codex version tightens that,
+render a per-session entry into `~/.codex/config.toml.d/` from the
+session bootstrap step.
+
+Set permissions:
+
+```bash
+chmod 700 ~/.codex
+chmod 600 ~/.codex/config.toml
+```
+
+## Optional MCP configuration for stacks-bench
+
+Useful after the direct CLI loop works. Point Codex at the
+**pre-built** binary so MCP startup doesn't pay first-build cost
+(`cargo run` would invoke a build check on every startup, which can
+blow past `startup_timeout_sec`).
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.stacks_bench]
+command = "/absolute/path/to/<bot>/<operator>/repos/stacks-core/target/release/stacks-bench"
+args    = ["--db", "/absolute/path/to/data/stacks-bench", "mcp"]
+startup_timeout_sec = 30
+tool_timeout_sec    = 600
+enabled = true
+```
+
+`--db` points at `stacks_bench_data_dir` from your config.toml. The
+bootstrap step that pre-builds `stacks-bench` (see
+[setup.md](setup.md)) is what makes this safe. If you ever wipe
+`target/release/`, re-run `cargo stacks-bench --help >/dev/null` from
+the submodule before launching Codex to repopulate the binary.
+
+For the demo, keep MCP optional. The direct command-line flow is
+easier to debug.

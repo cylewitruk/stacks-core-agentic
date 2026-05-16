@@ -1,0 +1,84 @@
+//! `sbagent session baseline run` — Phase 0 (baseline + rerun) entry
+//! point. The block range `stacks-bench` replays is overridable per
+//! invocation via flags / env vars (see
+//! [`crate::cli::session::bench_range::BenchRangeArgs`]) so the
+//! closed-loop can sample different windows without mutating config.
+
+use anyhow::{Context as _, Result};
+use clap::Args;
+
+use crate::cli::CliContext;
+use crate::cli::session::bench_range::BenchRangeArgs;
+use crate::session::SessionLayout;
+use crate::session::baseline::{self, RunInputs};
+use crate::session::bench::StacksBenchCli;
+use crate::types::SessionId;
+
+/// Args for `sbagent session baseline run`. Long-lived configuration
+/// lives in `config.toml`; the flattened [`BenchRangeArgs`] lets an
+/// operator override the block range per-invocation (CLI > env >
+/// config precedence).
+#[derive(Debug, Args)]
+pub struct BaselineRunArgs {
+    /// Block-range overrides — see [`BenchRangeArgs`] for the four
+    /// flags + matching `SBAGENT_BENCH_*` env vars.
+    #[clap(flatten)]
+    pub range: BenchRangeArgs,
+}
+
+/// Run a fresh baseline benchmark + rerun.
+pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
+    let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
+
+    let source_dir = ctx
+        .settings
+        .source_dir
+        .as_deref()
+        .context("settings.source_dir is required (or env $SOURCE_DIR)")?;
+    let network = ctx
+        .settings
+        .stacks_bench_network
+        .as_deref()
+        .unwrap_or("mainnet");
+    let range = args
+        .range
+        .resolve(&ctx.settings)?;
+
+    let bench = StacksBenchCli {
+        release_bin: Some(
+            ctx.layout
+                .require_base()?
+                .join("target")
+                .join("release")
+                .join("stacks-bench"),
+        ),
+        data_dir: ctx
+            .layout
+            .stacks_bench_data_dir
+            .clone(),
+        cargo_cwd: ctx
+            .layout
+            .require_base()?
+            .to_path_buf(),
+    };
+
+    let outputs = baseline::run(&RunInputs {
+        layout: &layout,
+        bench: &bench,
+        source_dir,
+        network,
+        start_at: range.start_at,
+        count: range.count,
+        warmup: range.warmup,
+        filter: range.filter.as_deref(),
+        shadow_dir_root: ctx
+            .layout
+            .stacks_bench_shadow_dir
+            .as_deref(),
+        bench_lock: &ctx.layout.bench_lock,
+    })?;
+
+    println!("baseline-run-id   : {}", outputs.baseline_run_id);
+    println!("baseline-rerun-id : {}", outputs.baseline_rerun_id);
+    Ok(())
+}

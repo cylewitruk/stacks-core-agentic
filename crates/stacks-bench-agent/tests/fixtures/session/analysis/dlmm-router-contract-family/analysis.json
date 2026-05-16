@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "family_id": "dlmm-router-contract-family",
+  "status": "accepted",
+  "selection_lens": "tx_latency",
+  "lens_disposition": {
+    "lens": "tx_latency",
+    "status": "addressed"
+  },
+  "targets": [
+    {
+      "target_span": "marf::read",
+      "bucket": "block_processing",
+      "fix_signature": "marf-read-cache-rollback-wrapper",
+      "hotspot": {
+        "span": "marf::read",
+        "self_wall_us": 1240000,
+        "total_wall_us": 1280000,
+        "calls": 18000,
+        "location": "stackslib/src/chainstate/stacks/index/marf.rs:412"
+      },
+      "files": [
+        "stackslib/src/chainstate/stacks/index/marf.rs",
+        "stackslib/src/clarity_vm/database/mod.rs"
+      ],
+      "evidence": "All three representative txs trace through RollbackWrapper::lookup → marf::read with the same hot subtree. Self-wall is dominated by repeated reads of the same key set.",
+      "proposed_change": "Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).",
+      "expected_improvement": {
+        "tx_latency": 4.2,
+        "tenure_throughput": 0.0,
+        "commit_time": 1.5
+      },
+      "risk": "low",
+      "verification_plan": "cargo nextest run -p stackslib chainstate::stacks::index::marf",
+      "consensus_breaking": false
+    }
+  ]
+}

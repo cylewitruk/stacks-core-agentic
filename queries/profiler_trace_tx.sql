@@ -26,15 +26,19 @@
 --     output tends to be the largest result the agent reads.
 --
 -- Parameters
---   :run_id        benchmark_run.id
---   :stacks_tx_id  stacks_tx.id
---   :min_wall_ms   threshold (0 disables the filter)
---   :max_rows      LIMIT to keep the result bounded
+--   :run_id           benchmark_run.id
+--   :stacks_tx_hash   stacks_tx.tx_hash_hex (0x-prefixed 64-hex-char hash).
+--                     Resolved to stacks_tx.id via a one-row dim lookup so
+--                     the fact-table scan filters on the indexed FK
+--                     `profiler_record.stacks_tx_id`, not on the
+--                     unindexed hash column.
+--   :min_wall_ms      threshold (0 disables the filter)
+--   :max_rows         LIMIT to keep the result bounded
 --
 -- Invocation
 --   sqlite3 -header -csv "$DB" \
 --     ".parameter set :run_id 1" \
---     ".parameter set :stacks_tx_id 504" \
+--     ".parameter set :stacks_tx_hash '0xabcdef...'" \
 --     ".parameter set :min_wall_ms 5" \
 --     ".parameter set :max_rows 200" \
 --     ".read $QUERIES_DIR/profiler_trace_tx.sql"
@@ -51,7 +55,9 @@ scoped AS (
     pr.est_wall_us,  pr.est_self_wall_us
   FROM profiler_record pr
   WHERE pr.benchmark_run_id = :run_id
-    AND pr.stacks_tx_id     = :stacks_tx_id
+    AND pr.stacks_tx_id     = (
+      SELECT id FROM stacks_tx WHERE tx_hash_hex = :stacks_tx_hash
+    )
     AND COALESCE(pr.est_wall_us, pr.wall_time_us) >= :min_wall_ms * 1000.0
 ),
 trace_tree AS (

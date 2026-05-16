@@ -1,0 +1,69 @@
+---
+source: crates/stacks-bench-agent/tests/finalize.rs
+assertion_line: 78
+expression: summary_json
+---
+{
+  "schema_version": 2,
+  "session_id": "20260507-104400",
+  "baseline_run_id": 100,
+  "baseline_rerun_id": 101,
+  "noise_floor_pct": 0.8,
+  "experiments": [
+    {
+      "target_id": "marf-read-cache-rollback-wrapper",
+      "delivery_mode": "normal_pr",
+      "status": "accepted",
+      "run_ids": [
+        500,
+        501
+      ],
+      "improvement_pct": 5.5
+    },
+    {
+      "target_id": "clarity-cost-recalibration",
+      "delivery_mode": "consensus_poc_pr",
+      "status": "poc_landed",
+      "breakage_class": "clarity_cost_weight"
+    },
+    {
+      "target_id": "marf-layout-redesign",
+      "delivery_mode": "consensus_issue",
+      "status": "routed_to_issue",
+      "breakage_class": "marf_layout"
+    }
+  ],
+  "outcome_counts": {
+    "normal_pr": {
+      "accepted": 1,
+      "rejected": 0,
+      "aborted": 0
+    },
+    "consensus_poc_pr": {
+      "poc_landed": 1,
+      "aborted": 0
+    },
+    "consensus_issue": {
+      "routed_to_issue": 1,
+      "aborted": 0
+    }
+  },
+  "lens_dispositions": [
+    {
+      "family_id": "dlmm-router-contract-family",
+      "lens": "tx_latency",
+      "status": "addressed"
+    },
+    {
+      "family_id": "marf-read-pattern",
+      "lens": "commit_time",
+      "status": "addressed"
+    },
+    {
+      "family_id": "throughput-only-family",
+      "lens": "tenure_throughput",
+      "status": "addressed"
+    }
+  ],
+  "next_targets_hint": "1 PR(s) + 1 PoC PR(s) + 1 issue(s) of 3 target(s); review and re-run rejected/aborted with refined analyses"
+}
