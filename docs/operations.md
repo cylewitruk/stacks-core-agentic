@@ -152,8 +152,8 @@ Recover by one of:
    contain real opportunities once the obvious ones are exhausted.
 2. **Different block range** — pick the next canonical range and
    update `stacks_bench_start_at` / `stacks_bench_count` in
-   `config.toml` (`5_000_000–5_200_000` → `6_500_000–6_800_000` →
-   `7_300_000–7_500_000`). Different transaction mixes light up
+   `config.toml` (`5_000_000–5_025_000` → `6_500_000–6_525_000` →
+   `7_300_000–7_325_000`). Different transaction mixes light up
    different hotspots. Run a fresh baseline against the new range
    and start a new session.
 3. **Update non-targets.md** — if analyzers keep rejecting candidates
@@ -316,9 +316,9 @@ mkdir -p "$SESSION_DIR/baseline" "$STACKS_BENCH_DATA_DIR" "$WORKTREES" \
 The canonical Nakamoto-era ranges to pick from:
 
 ```text
-5_000_000 – 5_200_000
-6_500_000 – 6_800_000
-7_300_000 – 7_500_000
+5_000_000 – 5_025_000
+6_500_000 – 6_525_000
+7_300_000 – 7_325_000
 ```
 
 ```bash

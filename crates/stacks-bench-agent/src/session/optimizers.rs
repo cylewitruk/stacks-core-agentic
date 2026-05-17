@@ -752,6 +752,10 @@ where
     let prompts_dir = state
         .settings
         .require_prompt_overrides_dir()?;
+    let ctx_paths = crate::context::paths_for_phase(
+        &state.framework.context_dir,
+        crate::context::Phase::Optimizer,
+    )?;
     let rendered = prompts::render(
         "optimizer",
         &prompts::OptimizerPrompt {
@@ -762,10 +766,8 @@ where
                 .to_string_lossy()
                 .into_owned(),
             target_json: state.target_json.clone(),
-            non_targets_path: prompts_dir
-                .join("non-targets.md")
-                .to_string_lossy()
-                .into_owned(),
+            non_targets_path: crate::context::ctx_path(&ctx_paths, "non-targets")?,
+            domain_context_path: crate::context::ctx_path(&ctx_paths, "stacks-domain-context")?,
             optimization_targets_schema_path: state
                 .framework
                 .schemas_dir
@@ -862,11 +864,14 @@ where
     // we use clones rather than linked worktrees — see
     // `GitCheckoutManager` docs).
     //
-    //   1. Operator's prompts dir — the agent reads non-targets.md (referenced by
-    //      absolute path in the rendered prompt).
+    //   1. Operator's context dir — the agent reads non-targets.md and
+    //      stacks-domain-context.md (referenced by absolute path in the rendered
+    //      prompt).
     //   2. Operator's schemas dir — the agent reads
     //      optimization-targets.schema.json for output validation.
-    //   3. Experiment dir — `nextest.log`, `implementation.md` / `abort.md`,
+    //   3. Operator's prompts dir — kept for forward-compat with any operator-tuned
+    //      template that references additional files under it.
+    //   4. Experiment dir — `nextest.log`, `implementation.md` / `abort.md`,
     //      `side-observations.md` all land here.
     //
     // **Not added in b.1**: `stacks_bench_shadow_dir` — the optimizer
@@ -877,11 +882,15 @@ where
     // shadow dir isn't mounted. Pass-b.2 surfaces shadow-dir-root
     // coordinator-side only.
     let add_dirs: Vec<PathBuf> = vec![
-        prompts_dir.to_path_buf(),
+        state
+            .framework
+            .context_dir
+            .clone(),
         state
             .framework
             .schemas_dir
             .clone(),
+        prompts_dir.to_path_buf(),
         exp_dir.clone(),
     ];
 

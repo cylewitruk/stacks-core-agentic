@@ -83,14 +83,19 @@ be promoted at all.
 The two buckets are causally coupled, not independent. MARF writes and some
 SQLite writes are buffered through `RollbackWrapper` during `Segment: Tx
 Execution` and only materialized at `Segment: Clarity State Commit` (and the
-later commit segments). So a fix that reduces *write volume* during execution
-will reduce both `block_processing` cost (the staging-buffer push, small) and
-`block_commit` cost (the bulk flush, large).
+later commit segments). So a fix that reduces *write volume* during transaction
+execution will reduce both `block_processing` cost (the staging-buffer push,
+small) and `block_commit` cost (the bulk flush, large).
 
 This means a `block_processing`-bucket target can legitimately reduce
 `block_commit` wall time as a side effect, and a `block_commit`-bucket target
-might be addressable from either side (reduce upstream write volume vs.
-optimize the flush path). These are usually distinct fixes — they should NOT
-be merged just because they share an aggregate timing effect — but the
-analyzer should be aware of the coupling when reasoning about a fix's full
-impact.
+might be addressable from either side (reduce upstream write volume vs. optimize
+the seal/commit/flush path). These are usually distinct fixes — they should NOT
+be merged just because they share an aggregate timing effect — but the analyzer
+should be aware of the coupling when reasoning about a fix's full impact.
+
+Similarly, tx-execution changes that reduce deferred write volume are valid even
+when their measured win appears primarily, or only, as `block_commit`
+improvement. That is expected for write-count / write-length reductions: the
+execution path does less future commit work, while the expensive payoff is
+amortized in the commit phase rather than visible as faster execution timing.

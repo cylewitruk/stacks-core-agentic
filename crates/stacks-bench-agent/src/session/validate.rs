@@ -48,10 +48,13 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     require_non_empty(&layout.baseline_run_id_path(), "baseline/run-id", &mut report);
     require_non_empty(&layout.baseline_rerun_id_path(), "baseline/rerun-id", &mut report);
 
-    // Phase 1: triage.
+    // Phase 1: triage. The audit content (rejection narrative + lens
+    // coverage) lives in typed fields on `candidates.json` now —
+    // `final-message.md` is just the captured codex assistant turn,
+    // useful for debugging but not a semantic artifact, so it's not
+    // in the required-file check.
     require_non_empty(&layout.candidates_json(), "triage/candidates.json", &mut report);
     require_non_empty(&layout.triage_conversation_id(), "triage/conversation-id", &mut report);
-    require_non_empty(&layout.triage_final_message(), "triage/final-message.md", &mut report);
 
     // Phase 1.7: merge.
     require_non_empty(

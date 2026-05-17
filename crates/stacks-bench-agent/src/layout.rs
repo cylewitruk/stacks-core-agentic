@@ -112,6 +112,16 @@ pub struct Layout {
     /// [`crate::session::triage_queries::prerender`] reads `.sql`
     /// files from here for the pre-rendered orientation CSVs.
     pub queries_dir: PathBuf,
+    /// Operator's on-disk mirror of the bundled context / reference
+    /// docs (`.sbagent/context/` by convention). Each entry is a
+    /// markdown file paired with a TOML sidecar declaring which phases
+    /// may surface it. Same resolution rules as [`Layout::schemas_dir`]
+    /// and [`Layout::queries_dir`]: explicit
+    /// `Settings::context_overrides_dir` → sibling of
+    /// `prompt_overrides_dir` → `<framework>/context` →
+    /// conventional `.sbagent/context`. Phase orchestrators consult
+    /// [`crate::context::paths_for_phase`] to resolve which docs apply.
+    pub context_dir: PathBuf,
     /// Sessions root — `<framework>/sessions` by default. Each session lives
     /// at `<sessions_root>/<id>/results`. Equivalent to bash
     /// `$OPT_SESSIONS_ROOT`.
@@ -286,10 +296,20 @@ impl Layout {
                 })
                 .unwrap_or_else(|| PathBuf::from(".sbagent").join("queries")),
         )?;
+        let context_dir = absolutize(
+            crate::settings::default_context_dir(settings)
+                .or_else(|| {
+                    framework
+                        .as_deref()
+                        .map(|fw| fw.join("context"))
+                })
+                .unwrap_or_else(|| PathBuf::from(".sbagent").join("context")),
+        )?;
         Ok(Self {
             framework: framework.map(FrameworkDir::new),
             schemas_dir,
             queries_dir,
+            context_dir,
             sessions_root,
             stacks_bench_data_dir,
             bench_lock,

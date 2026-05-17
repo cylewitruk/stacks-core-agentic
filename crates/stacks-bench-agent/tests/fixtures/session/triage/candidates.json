@@ -58,5 +58,23 @@
       "rationale": "High clarity_runtime consumption near binding cap.",
       "bucket": "block_processing"
     }
-  ]
+  ],
+  "rejected_families": [
+    {
+      "family_id": "serialization-clarity-values",
+      "lens": "tx_latency",
+      "reason": "below noise floor in absolute terms"
+    },
+    {
+      "family_id": "hashing-keccak-do-fold",
+      "lens": "tenure_throughput",
+      "reason": "dominated by 1-2 outlier representatives"
+    }
+  ],
+  "lens_coverage": {
+    "tx_latency": 1,
+    "tenure_throughput": 1,
+    "commit_time": 1,
+    "weights_applied": "0.4,0.4,0.2"
+  }
 }

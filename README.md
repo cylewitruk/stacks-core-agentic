@@ -76,7 +76,7 @@ That split is intentional:
   schemas/                    # bundle sources (generated from typed models)
   queries/                    # bundle sources (triage/analyzer SQL)
   templates/                  # bundle sources (MiniJinja prompt templates)
-  assets/                     # config.toml.example, sccache.service
+  assets/                     # example.config.toml, sccache.service
   crates/stacks-bench-agent/  # the `sbagent` binary
 ```
 
@@ -152,7 +152,7 @@ just install                                # → ~/.cargo/bin/sbagent
 mkdir -p ~/.config/sbagent
 install -m 0600 /tmp/your-pat ~/.config/sbagent/gh_token
 
-# 3. Write the operator config (see assets/config.toml.example for the
+# 3. Write the operator config (see assets/example.config.toml for the
 #    full annotated template).
 cat >~/.config/sbagent/config.toml <<'TOML'
 base                  = "repos/stacks-core"
@@ -174,7 +174,7 @@ agent_workspace_root  = "/private/tmp/sbagent-workspaces"
 # Required by `session baseline run`:
 source_dir            = "/mnt/chainstate/mainnet"
 stacks_bench_start_at = 5_000_000
-stacks_bench_count    = 200_000
+stacks_bench_count    = 25_000
 TOML
 
 # 4. Bootstrap a fresh operator dir end-to-end.
@@ -190,7 +190,7 @@ sbagent session run --publish-accepted-prs
 
 For everything quick start glosses over (Codex config, host tuning,
 build cache, MCP, etc.), see [docs/setup.md](docs/setup.md). For the
-config schema, see [assets/config.toml.example](assets/config.toml.example).
+config schema, see [assets/example.config.toml](assets/example.config.toml).
 
 ## Documentation
 

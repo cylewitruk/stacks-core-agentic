@@ -88,13 +88,13 @@ prompt_overrides_dir = ".sbagent/prompts"
 # required-error (for start_at/count) or None (for warmup/filter).
 #
 # Canonical Nakamoto-era ranges to pick from:
-#   5_000_000 – 5_200_000
-#   6_500_000 – 6_800_000
-#   7_300_000 – 7_500_000
+#   5_000_000 – 5_025_000
+#   6_500_000 – 6_525_000
+#   7_300_000 – 7_325_000
 source_dir = "/mnt/chainstate/mainnet"
 stacks_bench_network = "mainnet"
 stacks_bench_start_at = 5_000_000
-stacks_bench_count = 200_000
+stacks_bench_count = 25_000
 # stacks_bench_warmup = 5_000           # optional; matches `--warmup`
 # stacks_bench_filter = "contract-call" # optional; matches `--filter`
 

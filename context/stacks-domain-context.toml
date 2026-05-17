@@ -1,0 +1,5 @@
+id = "stacks-domain-context"
+title = "Stacks domain context"
+description = "Scale, terminology, performance magnitude, height namespaces, Clarity cost axes, and what stacks-bench does/doesn't exercise. Calibration anchor for every phase that reasons about Stacks-specific magnitudes."
+phases = ["triage", "analyzer", "optimizer"]
+required = true

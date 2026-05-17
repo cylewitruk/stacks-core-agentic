@@ -6,6 +6,7 @@
 //! everything testable lives here.
 
 pub mod cli;
+pub mod context;
 pub mod git;
 pub mod harnesses;
 pub mod layout;

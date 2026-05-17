@@ -1,17 +1,18 @@
 //! `sbagent sync` — refresh the operator's on-disk bundles
-//! (`.sbagent/{schemas,queries}/` always; `.sbagent/prompts/` only
-//! with `--force-prompts`) and optionally commit + push the result.
+//! (`.sbagent/{schemas,queries}/` always; `.sbagent/{prompts,context}/`
+//! only with `--force-tunables`) and optionally commit + push the result.
 //!
 //! The operator's `.sbagent/` tree is a **mirror** of the binary's
 //! embedded bundle. After an `sbagent` upgrade, run `sbagent sync` to
-//! pull the new version's schemas, queries (and optionally prompts)
+//! pull the new version's schemas, queries (and optionally tunables)
 //! onto disk.
 //!
 //! Asymmetric write semantics, by design:
 //! - **Schemas + queries** always overwrite (no flag). They are versioned
 //!   contract, not a tuning surface; the operator's on-disk copy must always
 //!   reflect the running binary.
-//! - **Prompts** only overwrite with `--force-prompts`. Operators may have
+//! - **Prompts + context docs** only overwrite with `--force-tunables` (alias:
+//!   `--force-prompts`, kept for one release for migration). Operators may have
 //!   tuned them (autoresearch's `program.md` model); a silent reset would erase
 //!   legitimate edits.
 //!
@@ -36,17 +37,21 @@ use clap::Args;
 use crate::cli::CliContext;
 use crate::session::optimizers::optimizer_git_env;
 use crate::session::publish;
-use crate::{git, prompts, queries, schemas};
+use crate::{context, git, prompts, queries, schemas};
 
 /// Args for `sbagent sync`.
 #[derive(Debug, Args)]
 pub struct SyncArgs {
-    /// Also overwrite the operator's on-disk prompt templates with the
-    /// binary's bundled defaults. **Destructive** — clobbers operator
-    /// edits. Without this flag, prompts are left alone (only schemas
-    /// + queries are refreshed).
-    #[clap(long)]
-    pub force_prompts: bool,
+    /// Also overwrite the operator's on-disk prompt templates AND
+    /// context docs with the binary's bundled defaults. **Destructive**
+    /// — clobbers operator edits. Without this flag, prompts + context
+    /// docs are left alone (only schemas + queries are refreshed).
+    ///
+    /// Long-form name is `--force-tunables`; `--force-prompts` is kept
+    /// as a deprecated alias for one release for migration. Both flags
+    /// resolve to the same field — passing either covers both bundles.
+    #[clap(long = "force-tunables", alias = "force-prompts")]
+    pub force_tunables: bool,
 
     /// After writing the bundles, stage the changed `.sbagent/` paths
     /// and produce a single commit authored as the bot (identity from
@@ -64,9 +69,14 @@ pub struct SyncArgs {
 }
 
 /// Run `sbagent sync`. Always rewrites schemas + queries; rewrites
-/// prompts only when `--force-prompts` is set; optionally commits + pushes.
+/// prompts + context only when `--force-tunables` is set; optionally
+/// commits + pushes.
 pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
     // ── 1. Refresh bundles on disk ────────────────────────────────
+    // Legacy context-doc migration runs at startup (in
+    // `CliContext::from_args`, before `context::seed_to` would
+    // populate the destination), so by the time sync runs, the
+    // context bundle is already in the right place.
     let schemas_written = schemas::sync(&ctx.layout.schemas_dir).with_context(|| {
         format!(
             "syncing schemas into {}",
@@ -105,25 +115,43 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
         println!("  - {name}");
     }
 
-    if args.force_prompts {
+    if args.force_tunables {
         let prompts_dir = ctx
             .settings
             .require_prompt_overrides_dir()
-            .context("`--force-prompts` requires `prompt_overrides_dir` in config")?;
+            .context("`--force-tunables` requires `prompt_overrides_dir` in config")?;
         let written = prompts::sync_force(prompts_dir)
             .with_context(|| format!("force-syncing prompts into {}", prompts_dir.display()))?;
         println!(
-            "sync: rewrote {} prompt(s) in {} (--force-prompts)",
+            "sync: rewrote {} prompt(s) in {} (--force-tunables)",
             written.len(),
             prompts_dir.display(),
         );
         for name in &written {
             println!("  - {name}");
         }
+        let written = context::sync_force(&ctx.layout.context_dir).with_context(|| {
+            format!(
+                "force-syncing context docs into {}",
+                ctx.layout
+                    .context_dir
+                    .display()
+            )
+        })?;
+        println!(
+            "sync: rewrote {} context file(s) in {} (--force-tunables)",
+            written.len(),
+            ctx.layout
+                .context_dir
+                .display(),
+        );
+        for name in &written {
+            println!("  - {name}");
+        }
     } else {
         println!(
-            "sync: prompts left alone (pass `--force-prompts` to also overwrite operator-edited \
-             templates)",
+            "sync: prompts + context left alone (pass `--force-tunables` to also overwrite \
+             operator-edited templates and reference docs)",
         );
     }
 
@@ -133,7 +161,7 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
     // convention is the operator dir; bundles are absolutized in
     // Layout so paths are valid regardless.
     if args.commit || args.push {
-        commit_bundles(ctx, args.force_prompts).context("`sbagent sync --commit`")?;
+        commit_bundles(ctx, args.force_tunables).context("`sbagent sync --commit`")?;
     }
 
     // ── 3. Optionally push ────────────────────────────────────────
@@ -145,9 +173,9 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
 }
 
 /// Stage the changed `.sbagent/` paths (always schemas + queries; also
-/// prompts when `--force-prompts` was set) and produce one bot-authored
-/// commit. Skipped silently when nothing changed.
-fn commit_bundles(ctx: &CliContext, force_prompts: bool) -> Result<()> {
+/// prompts + context when `--force-tunables` was set) and produce one
+/// bot-authored commit. Skipped silently when nothing changed.
+fn commit_bundles(ctx: &CliContext, force_tunables: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("getting cwd for `sbagent sync --commit`")?;
     if !is_git_repo(&cwd) {
         bail!(
@@ -167,13 +195,15 @@ fn commit_bundles(ctx: &CliContext, force_prompts: bool) -> Result<()> {
     let queries_rel = rel_to(&ctx.layout.queries_dir, &cwd);
     pathspecs.push(schemas_rel);
     pathspecs.push(queries_rel);
-    if force_prompts
-        && let Some(dir) = ctx
+    if force_tunables {
+        if let Some(dir) = ctx
             .settings
             .prompt_overrides_dir
             .as_deref()
-    {
-        pathspecs.push(rel_to(dir, &cwd));
+        {
+            pathspecs.push(rel_to(dir, &cwd));
+        }
+        pathspecs.push(rel_to(&ctx.layout.context_dir, &cwd));
     }
     let pathspec_refs: Vec<&str> = pathspecs
         .iter()

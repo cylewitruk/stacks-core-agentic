@@ -18,6 +18,7 @@ serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.149", default-features = false, features = ["std", "preserve_order"] }
 tempfile = "3.13.0"
 thiserror = { version = "2.0.18", default-features =    false, features = ["std"] }
+toml = { version = "0.8.19", default-features = false, features = ["parse"] }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "signal", "process", "fs", "io-util", "time", "sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }

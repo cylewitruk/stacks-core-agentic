@@ -16,6 +16,7 @@ You should NOT explore the codebase. Treat your inputs as just the profiler data
 - DB schema definitions: `{{ base }}/stacks-bench/migrations/` (read these to understand the table layout before querying)
 - Pre-built triage SQL queries: `{{ queries_dir }}/` (see `{{ queries_dir }}/README.md` for the catalog)
 - Pre-rendered triage query outputs (read these FIRST): `{{ triage_queries_dir }}/*.csv` — the orientation set (`run_summary`, `tx_type_distribution`, `block_timing_breakdown`, `baseline_empty_block_breakdown`, `span_recurrence`) and candidate-ranking set (`top_spans_by_self_wall`, `top_spans_by_call_count`, `top_contract_calls`, `top_clarity_consumers_by_contract`, `top_txs_by_duration`) have already been run for `:run_id = {{ baseline_run_id }}` with `:limit = 50` (top-spans) / `:limit = 25` (top-contracts/txs). Re-run from `{{ queries_dir }}/` only when you need a different cut. Per-span / per-tx / per-block drilldowns aren't pre-rendered; you still drive those yourself.
+- Stacks domain context: `{{ domain_context_path }}` (read-only; read this FIRST for scale + magnitude + terminology calibration — block counts, Clarity cost axes, what stacks-bench does/doesn't exercise, height namespaces)
 - Non-targets reference: `{{ non_targets_path }}` (read-only; do not retry these)
 - Bucket anchors reference: `{{ bucket_anchors_path }}` (read-only; classifies every target into `block_processing` vs `block_commit` by its nearest `Segment: ...` ancestor)
 - Operator selection-lens weights: `{{ stacks_bench_axis_weights }}` (comma-separated `tx_latency,tenure_throughput,commit_time` weights; controls per-lens slate allocation — see "Per-lens slate allocation" below)
@@ -165,7 +166,7 @@ Your final candidate list should contain distinct workload-entry families with a
 
 ## Required validation procedure for every family
 
-Each benchmark run is a slice of the chain (typically 100k–300k blocks out of an 8M+ history), so a family that affects only a fraction of blocks IN THIS SLICE may still be a real, addressable bottleneck — e.g. a regression triggered by a specific tx pattern or contract that happens to be sparse here but common in production. Treat low coverage as a *priority* signal, not a rejection signal. The only families to reject on distribution grounds are those whose cost is driven by a tiny number of outlier representatives rather than a consistent pattern.
+Each benchmark run is a slice of the chain (typically ~25k blocks out of an 8M+ history, well under 1%), so a family that affects only a fraction of blocks IN THIS SLICE may still be a real, addressable bottleneck — e.g. a regression triggered by a specific tx pattern or contract that happens to be sparse here but common in production. Treat low coverage as a *priority* signal, not a rejection signal. The only families to reject on distribution grounds are those whose cost is driven by a tiny number of outlier representatives rather than a consistent pattern.
 
 Before promoting any family to `candidates.json` you MUST:
 
@@ -179,7 +180,7 @@ Before promoting any family to `candidates.json` you MUST:
    - For `block_family`: same check on the representative blocks' `total_duration_us` from `top_blocks_for_span.sql`.
    - When in doubt, also run `span_per_block_distribution.sql` for the family's main suspected span and check `top3_share_pct`. > 50% means the family is concentrated in 1–3 pathological blocks rather than a recurring pattern.
 
-3. **Improvement viability.** Estimate the family's plausible upper bound: `family_self_wall_ms × 0.5 (generous shave) × pct_blocks_coverage_fraction`. If that's smaller than the noise floor expressed as absolute wall-clock for the whole run, reject — the analyzer + optimizer + benchmark cycle won't be able to measure the win.
+3. **Improvement viability.** Estimate the family's plausible upper bound: `family_self_wall_ms × 0.5 (generous shave) × pct_blocks_coverage_fraction`. Use this **only to set priority, not to reject** — even small wins compound across many similar code paths in production, and the bench harness's full-LTO release build often can't attribute a real win to the specific code change that delivered it. Promote any family with a plausible structural-fix hypothesis; the analyzer is the right tier to make the "is there a real fix?" call with code context. The only acceptable rejection grounds at triage time are: (a) the family's signal is dominated by one outlier representative (step 2), (b) the suspected spans match an entry in `{{ non_targets_path }}` exactly, or (c) the family was already analyzed and rejected in a prior session (see the rejection-ledger guidance further down in this prompt, once that's wired in).
 
 4. **Sampling-rate sanity (optional).** For families whose suspected span has `sampling_rate < 0.5` in `top_spans_by_self_wall.sql`, additionally consult `span_per_sample_distribution.sql`. p99/p50 > ~20 with no structural explanation is a strong signal that the cost is long-tail driven rather than uniform — worth flagging in `rationale` so the analyzer doesn't optimize for an outlier.
 
@@ -210,7 +211,7 @@ A `candidates.json` containing only storage-flavored entries is acceptable only 
 
 # Output
 
-Write `{{ opt_session_dir }}/triage/candidates.json` matching `{{ candidates_schema_path }}` (schema v2).
+**Your only contract is `{{ opt_session_dir }}/triage/candidates.json`.** Write it matching `{{ candidates_schema_path }}` (schema v2). The coordinator validates the JSON against the typed model — wrong / missing / inflated fields fail the phase at parse time. Do NOT write `candidates.md` or `final-message.md` to disk; the coordinator generates the human-readable views from your JSON post-hoc. Drilldown CSVs under `{{ opt_session_dir }}/triage/drilldowns/` are the only other writes you should make.
 
 The JSON MUST include these top-level fields even when `candidates` is empty:
 
@@ -219,7 +220,9 @@ The JSON MUST include these top-level fields even when `candidates` is empty:
 - `baseline_run_id: {{ baseline_run_id }}`
 - `baseline_rerun_id: {{ baseline_rerun_id }}`
 - `noise_floor_pct: <computed numeric percentage>`
-- `candidates: [...]`
+- `candidates: [...]` — see per-candidate spec below.
+- `rejected_families: [...]` — counter-search audit, see spec below.
+- `lens_coverage: {...}` — per-lens slate report, see spec below.
 
 Each candidate object MUST include:
 
@@ -238,11 +241,22 @@ Each candidate SHOULD also include (strongly recommended; the analyzer relies on
 - `global_materiality` — `{"pct_blocks": ..., "self_wall_ms": ..., "notes": "..."}` aggregate cost signal across the whole run, populated from `span_recurrence.sql` (see step 1 of the validation procedure).
 - `bucket` — `block_processing` or `block_commit`, your best-guess classification per `{{ bucket_anchors_path }}`. Non-binding hint; analyzer commits the authoritative value per target.
 
-Also write a human-readable `{{ opt_session_dir }}/triage/candidates.md` derived from the JSON (the JSON is the source of truth).
+## `rejected_families` — counter-search audit (REQUIRED)
 
-`{{ opt_session_dir }}/triage/final-message.md` MUST include:
+Array of families you explicitly considered during counter-search but did NOT promote. Each entry:
 
-- A "Rejected alternative families" section listing any major bottleneck families you explicitly checked but did not promote — for example: serialization / deserialization, Clarity VM execution, allocations, hashing / encoding, contract-call wrappers — with one line per family explaining why it was rejected (e.g. "below noise-floor in absolute terms," "dominated by 1–2 outlier representatives," "already addressed by an existing cache"). This section is the visible artifact of the counter-search step and lets reviewers see what was investigated rather than guess. If no candidates qualify, this same final message should also list every family considered.
-- A "Per-lens slate coverage" section reporting how many candidates each lens contributed (`tx_latency`, `tenure_throughput`, `commit_time`), the operator weights you applied (`{{ stacks_bench_axis_weights }}`), and any redistribution decisions you made (e.g. "throughput lens contributed 0 candidates because the run had no contracts above 5% of any Clarity-budget axis; redistributed slot to latency lens").
+- `family_id` — kebab-case identifier describing what was considered (e.g. `serialization-clarity-values`, `hashing-keccak-do-fold`, `allocation-vec-clones-in-contract-call`). Same naming convention as accepted candidates' `id`; these never flow into analyzer dispatch.
+- `lens` — the lens the family would have been promoted on if accepted.
+- `reason` — one-line code-level rejection reason. Concrete only: `"below noise floor in absolute terms"`, `"dominated by 1-2 outlier representatives"`, `"already addressed by an existing cache"`, `"cross-epoch Clarity-cost aggregate only"`, `"under non-target wrapper with no internal handle"`.
 
-Do not edit source code. Do not run benchmarks. Only write artifacts under `{{ opt_session_dir }}`.
+Cover at minimum the obvious alternatives — serialization / deserialization, Clarity VM execution under `with_abort_callback`, allocation-heavy contract-call paths, hashing / encoding paths, repeated CPU-heavy pure-compute subtrees — unless they ended up as accepted candidates. This is the typed-field successor to the prior "Rejected alternative families" narrative; reviewers need to see what was investigated, not guess. May be empty ONLY when the slate was dominated by a single clear winner with no alternatives to consider.
+
+## `lens_coverage` — per-lens slate report (REQUIRED)
+
+Object reporting per-lens coverage of the promoted slate. Fields:
+
+- `tx_latency`, `tenure_throughput`, `commit_time` — integer counts of accepted candidates whose `selection_lens` matches each. **Tallies MUST equal the per-lens distribution of `candidates[]`** — the coordinator cross-validates and fails the phase on mismatch.
+- `weights_applied` — the operator weights you applied, verbatim from `{{ stacks_bench_axis_weights }}` (e.g. `"0.4,0.4,0.2"`).
+- `redistribution_notes` — OPTIONAL one-line summary of any redistribution / honest-omission decisions (e.g. `"throughput contributed 0 because no contracts exceeded 5% of any Clarity-budget axis; redistributed coverage to latency"`).
+
+Do not edit source code. Do not run benchmarks.

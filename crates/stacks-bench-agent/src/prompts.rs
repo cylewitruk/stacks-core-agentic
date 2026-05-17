@@ -206,8 +206,8 @@ pub struct LintFinding {
 /// Validate every renderable template under `dir` by parsing it with
 /// MiniJinja and dry-rendering against a field-complete synthetic context.
 /// Returns one [`LintFinding`] per detected issue; an empty vector means
-/// lint passed. Non-renderable reference docs (e.g. `non-targets.md`) are
-/// checked only for existence + non-empty.
+/// lint passed. Reference docs are not in this bundle — see
+/// [`crate::context::lint_bundle`] for their validation.
 pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
     let mut findings = Vec::new();
     // Renderable templates: parse + dry-render against the matching struct.
@@ -255,39 +255,17 @@ pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
     check!(PrWriterPrompt);
     check!(IssueWriterPrompt);
 
-    // Reference docs: existence + non-empty.
-    for name in REFERENCE_DOCS {
-        let path = dir.join(name);
-        match std::fs::read_to_string(&path) {
-            Ok(s) if s.trim().is_empty() => findings.push(LintFinding {
-                template: name,
-                message: format!("reference doc {} is empty", path.display()),
-            }),
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => findings.push(LintFinding {
-                template: name,
-                message: format!(
-                    "reference doc not on disk at {} — run `sbagent` once to seed",
-                    path.display(),
-                ),
-            }),
-            Err(e) => findings.push(LintFinding {
-                template: name,
-                message: format!("read failed: {e:#}"),
-            }),
-        }
-    }
-
     Ok(findings)
 }
 
-// ---------- Bundled template + reference-doc registry ----------
+// ---------- Bundled template registry ----------
 
-/// `(FILE_NAME, BUNDLED)` table for every prompt template AND reference
-/// doc seeded into the operator's prompts dir. Renderable templates have
-/// matching [`Prompt`] impls below; reference docs (non-targets,
-/// bucket-anchors) are seeded but not rendered by sbagent — the agent
-/// reads them directly via the paths passed in renderable prompts.
+/// `(FILE_NAME, BUNDLED)` table for every renderable prompt template
+/// seeded into the operator's prompts dir. Reference docs
+/// (`non-targets.md`, `bucket-anchors.md`, `stacks-domain-context.md`)
+/// live in a separate bundle — see [`crate::context`] — because they're
+/// human-readable reference material with sidecar metadata, not
+/// substitution-bearing templates.
 const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ("triage.md", TriagePrompt::BUNDLED),
     ("analyzer.md", AnalyzerPrompt::BUNDLED),
@@ -295,13 +273,7 @@ const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ("optimizer.md", OptimizerPrompt::BUNDLED),
     ("pr-writer.md", PrWriterPrompt::BUNDLED),
     ("issue-writer.md", IssueWriterPrompt::BUNDLED),
-    ("non-targets.md", include_str!("../../../prompts/non-targets.md")),
-    ("bucket-anchors.md", include_str!("../../../prompts/bucket-anchors.md")),
 ];
-
-/// Filenames of seeded reference docs that aren't [`Prompt`]-rendered
-/// (the agent reads them via path strings embedded in the rendered prompts).
-const REFERENCE_DOCS: &[&str] = &["non-targets.md", "bucket-anchors.md"];
 
 // ---------- Renderable prompt structs ----------
 
@@ -327,6 +299,9 @@ pub struct TriagePrompt {
     pub non_targets_path: String,
     /// Absolute path to bucket-anchors.md reference doc.
     pub bucket_anchors_path: String,
+    /// Absolute path to stacks-domain-context.md reference doc. Calibration
+    /// anchor for scale + magnitude + terminology decisions.
+    pub domain_context_path: String,
     /// Absolute path to candidates.schema.json.
     pub candidates_schema_path: String,
     /// Framework's queries dir (SQL templates).
@@ -366,6 +341,9 @@ pub struct AnalyzerPrompt {
     pub bucket_anchors_path: String,
     /// Absolute path to non-targets.md.
     pub non_targets_path: String,
+    /// Absolute path to stacks-domain-context.md reference doc. Calibration
+    /// anchor for scale + magnitude + terminology decisions.
+    pub domain_context_path: String,
     /// Absolute path to analysis.schema.json.
     pub analysis_schema_path: String,
 }
@@ -420,6 +398,9 @@ pub struct OptimizerPrompt {
     pub poc_test_scope_expr: String,
     /// Absolute path to non-targets.md.
     pub non_targets_path: String,
+    /// Absolute path to stacks-domain-context.md reference doc. Calibration
+    /// anchor for scale + magnitude + terminology decisions.
+    pub domain_context_path: String,
     /// Absolute path to optimization-targets.schema.json.
     pub optimization_targets_schema_path: String,
     /// Persistent stacks-bench data dir — the agent passes this to
@@ -526,6 +507,7 @@ impl TriagePrompt {
             precomputed_noise_floor_pct: "0".into(),
             non_targets_path: "/tmp/lint/non-targets.md".into(),
             bucket_anchors_path: "/tmp/lint/bucket-anchors.md".into(),
+            domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             candidates_schema_path: "/tmp/lint/candidates.schema.json".into(),
             queries_dir: "/tmp/lint/queries".into(),
             triage_queries_dir: "/tmp/lint/triage/queries".into(),
@@ -547,6 +529,7 @@ impl AnalyzerPrompt {
             baseline_run_id: "0".into(),
             bucket_anchors_path: "/tmp/lint/bucket-anchors.md".into(),
             non_targets_path: "/tmp/lint/non-targets.md".into(),
+            domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             analysis_schema_path: "/tmp/lint/analysis.schema.json".into(),
         }
     }
@@ -577,6 +560,7 @@ impl OptimizerPrompt {
             delivery_mode: "normal_pr".into(),
             poc_test_scope_expr: String::new(),
             non_targets_path: "/tmp/lint/non-targets.md".into(),
+            domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             optimization_targets_schema_path: "/tmp/lint/optimization-targets.schema.json".into(),
             stacks_bench_data_dir: "/tmp/lint/data".into(),
             bench_source_dir: "/tmp/lint/chainstate".into(),

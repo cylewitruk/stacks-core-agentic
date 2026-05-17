@@ -84,6 +84,8 @@ pub async fn run(args: CheckArgs, ctx: &CliContext) -> Result<()> {
         check_bundle_schema_drift(ctx, &mut findings);
         check_bundle_query_drift(ctx, &mut findings);
         check_bundle_prompt_drift(ctx);
+        check_bundle_context_drift(ctx);
+        check_context_bundle_consistency(&mut findings);
         if ctx.layout.framework.is_some() {
             check_typed_model_schema_drift(ctx, &mut findings);
         }
@@ -305,7 +307,7 @@ fn check_bundle_query_drift(ctx: &CliContext, findings: &mut Vec<String>) {
 /// autoresearch `program.md` model). The warning surfaces on stderr
 /// so an operator who picked up a new sbagent version sees that their
 /// prompt tunes may now lag the new bundled defaults; they decide
-/// whether to merge or `sbagent sync --force-prompts`.
+/// whether to merge or `sbagent sync --force-tunables`.
 fn check_bundle_prompt_drift(ctx: &CliContext) {
     let dir = match ctx
         .settings
@@ -327,7 +329,7 @@ fn check_bundle_prompt_drift(ctx: &CliContext) {
     }
     eprintln!(
         "note: {} prompt template(s) under {} differ from the binary's bundled defaults (operator \
-         edits are legitimate; run `sbagent sync --force-prompts` to reset):",
+         edits are legitimate; run `sbagent sync --force-tunables` to reset):",
         drifts.len(),
         dir.display(),
     );
@@ -340,5 +342,51 @@ fn check_bundle_prompt_drift(ctx: &CliContext) {
                 crate::prompts::DriftEntry::Differs { .. } => "differs from bundle",
             }
         );
+    }
+}
+
+/// Compare operator's on-disk context docs against the embedded bundle.
+/// Same warn-only contract as [`check_bundle_prompt_drift`]: context
+/// docs are operator-tunable (the bot's "brainstem"), so drift is
+/// informational — operator who upgrades sbagent sees that their tunes
+/// may lag the new defaults and decides whether to merge or
+/// `sbagent sync --force-tunables`.
+fn check_bundle_context_drift(ctx: &CliContext) {
+    let dir = &ctx.layout.context_dir;
+    let drifts = match crate::context::drift(dir) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("note: context bundle drift check failed: {e:#}");
+            return;
+        }
+    };
+    if drifts.is_empty() {
+        return;
+    }
+    eprintln!(
+        "note: {} context file(s) under {} differ from the binary's bundled defaults (operator \
+         edits are legitimate; run `sbagent sync --force-tunables` to reset):",
+        drifts.len(),
+        dir.display(),
+    );
+    for d in &drifts {
+        eprintln!(
+            "  - {}: {}",
+            d.file_name(),
+            match d {
+                crate::context::DriftEntry::Missing { .. } => "missing on disk",
+                crate::context::DriftEntry::Differs { .. } => "differs from bundle",
+            }
+        );
+    }
+}
+
+/// Validate the bundled context manifest is internally consistent
+/// (unique ids, non-empty titles/descriptions/phases, ids match
+/// filenames). Surfaced as a hard failure because a malformed bundle
+/// is a sbagent bug, not an operator-tunable condition.
+fn check_context_bundle_consistency(findings: &mut Vec<String>) {
+    if let Err(e) = crate::context::lint_bundle() {
+        findings.push(format!("context bundle manifest invalid: {e:#}"));
     }
 }

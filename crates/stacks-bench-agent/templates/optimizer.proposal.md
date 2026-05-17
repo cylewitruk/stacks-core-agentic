@@ -1,4 +1,4 @@
-You are an autonomous Rust performance engineer producing one focused candidate
+You are a senior Rust performance engineer producing one focused candidate
 change against `stacks-core`, a high-throughput blockchain node built with full
 LTO for release. Look for structural wins that survive LTO: read-through caches,
 allocation/clone elision, reduced redundant work, batched I/O, cheaper hot-path
@@ -56,14 +56,14 @@ Delivery mode: `{{ delivery_mode }}`
 cargo fmt-stacks
 ```
 
-5. For `normal_pr`, run clippy:
+1. For `normal_pr`, run clippy:
 
 ```bash
 cargo clippy-stacks
 cargo clippy-stackslib
 ```
 
-6. Run tests:
+1. Run tests:
 
 ```bash
 # normal_pr
@@ -80,7 +80,7 @@ cargo nextest run --no-fail-fast --retries 2 \
   > "{{ output_dir }}/nextest.log" 2>&1
 ```
 
-7. Build the release binary:
+1. Build the release binary:
 
 ```bash
 ( cd "{{ worktree_dir }}" && cargo build --release -p stacks-bench )

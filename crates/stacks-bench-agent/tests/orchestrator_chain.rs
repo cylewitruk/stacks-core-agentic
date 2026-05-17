@@ -385,6 +385,7 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
         framework: Some(FrameworkDir::new(framework.clone())),
         schemas_dir: framework.join("schemas"),
         queries_dir: framework.join("queries"),
+        context_dir: framework.join("context"),
         sessions_root,
         stacks_bench_data_dir: tmp.path().join("data"),
         bench_lock: tmp.path().join("bench.lock"),

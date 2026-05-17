@@ -21,20 +21,9 @@ the next phase efficient.
 
 # Deliverables
 
-Write durable files under `{{ opt_session_dir }}/triage/`:
+**Your only contract is `{{ opt_session_dir }}/triage/candidates.json`** matching `{{ candidates_schema_path }}`. The coordinator validates against a typed model — missing or inflated fields fail the phase at parse time. The coordinator also renders `candidates.md` and any human-readable views from the JSON post-hoc; you do NOT write those files yourself.
 
-1. `candidates.json` matching `{{ candidates_schema_path }}`.
-2. `candidates.md`, derived from the JSON for human review.
-3. `final-message.md`, with:
-   - `Rejected alternative families`
-   - `Per-lens slate coverage`
-
-You may write drilldown CSVs under `{{ opt_session_dir }}/triage/drilldowns/`.
-
-For `final-message.md`, rejected-family reasons should be concrete, e.g.
-"below noise floor in absolute whole-run terms", "dominated by one outlier tx",
-"cross-epoch Clarity-cost aggregate only", or "counter-search found no
-non-storage family above sampling noise".
+You may write drilldown CSVs under `{{ opt_session_dir }}/triage/drilldowns/`. Nothing else under `{{ opt_session_dir }}` should be written by you.
 
 # Inputs
 
@@ -198,7 +187,14 @@ non-target wrapper.
   "baseline_run_id": {{ baseline_run_id }},
   "baseline_rerun_id": {{ baseline_rerun_id }},
   "noise_floor_pct": 0.0,
-  "candidates": []
+  "candidates": [],
+  "rejected_families": [],
+  "lens_coverage": {
+    "tx_latency": 0,
+    "tenure_throughput": 0,
+    "commit_time": 0,
+    "weights_applied": "{{ stacks_bench_axis_weights }}"
+  }
 }
 ```
 
@@ -208,5 +204,27 @@ For `representative_ids`:
 - `block_family`: `{"stacks_block_hashes": ["0x..."]}`
 - `contract_family`:
   `{"contract_function": {"issuer": "...", "contract": "...", "function": "..."}, "stacks_tx_hashes": ["0x..."]}`
+
+## `rejected_families` — counter-search audit (REQUIRED)
+
+One entry per workload family considered during counter-search but not
+promoted. Each entry: `{family_id, lens, reason}`. `reason` must be a
+concrete code-level one-liner — `"below noise floor in absolute terms"`,
+`"dominated by 1-2 outlier representatives"`,
+`"already addressed by an existing cache"`,
+`"cross-epoch Clarity-cost aggregate only"`. Cover serialization,
+Clarity VM execution under `with_abort_callback`, allocation-heavy
+contract-call paths, hashing/encoding, and pure CPU work unless any of
+those ended up promoted. May be empty only when the slate was dominated
+by a single clear winner with no alternatives to consider.
+
+## `lens_coverage` — per-lens slate report (REQUIRED)
+
+`tx_latency`, `tenure_throughput`, `commit_time` are integer counts of
+accepted candidates whose `selection_lens` matches. **Tallies must equal
+the per-lens distribution of `candidates[]`** — the coordinator
+cross-validates and fails the phase on mismatch. `weights_applied` is
+the operator weights verbatim. `redistribution_notes` is optional, one
+line.
 
 Validate against `{{ candidates_schema_path }}` before finishing.

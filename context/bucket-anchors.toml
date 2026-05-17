@@ -1,0 +1,5 @@
+id = "bucket-anchors"
+title = "Bucket anchors"
+description = "Mapping from trace ancestor segments to block_processing vs block_commit bucket classification, including the deferred-write coupling between buckets."
+phases = ["triage", "analyzer", "merge"]
+required = true

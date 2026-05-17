@@ -42,7 +42,10 @@ You are working inside `{{ worktree_dir }}` — a fresh per-target git clone on 
 
 Read the suspected files listed in `target_json`. If your investigation shows the hotspot is rooted in a different file, follow it. Edit source. Stay focused on the one hotspot — record any opportunistic improvements you notice in `side-observations.md`, but do NOT bundle them into the candidate change.
 
-Reference: `{{ non_targets_path }}` — read-only list of profiler spans known to be dead-end targets. If your target's span matches an entry, abort early (write `abort.md` with the reason).
+References (read these BEFORE you start cutting code):
+
+- `{{ domain_context_path }}` — Stacks scale, terminology, and performance magnitude calibration. Anchors what "fast enough" looks like for tx execution and commit work, and flags the validation-path coverage gap.
+- `{{ non_targets_path }}` — read-only list of profiler spans known to be dead-end targets. If your target's span matches an entry, abort early (write `abort.md` with the reason).
 
 ## Step 2 — Format + lint
 

@@ -305,6 +305,21 @@ pub async fn run(args: InitArgs, settings: &Settings) -> Result<()> {
         queries_report.kept.len(),
     );
 
+    // Step 4d: seed context docs (operator-tunable reference material,
+    // same drift contract as prompts — warn on drift, force on
+    // `--force-tunables`).
+    let context_rel = crate::settings::default_context_dir(settings)
+        .unwrap_or_else(|| std::path::PathBuf::from(".sbagent").join("context"));
+    let context_abs =
+        if context_rel.is_absolute() { context_rel.clone() } else { target_dir.join(&context_rel) };
+    let context_report = crate::context::seed_to(&context_abs)
+        .with_context(|| format!("seeding bundled context docs into {}", context_abs.display()))?;
+    eprintln!(
+        "  ✓ context seeded: {} written, {} kept",
+        context_report.seeded.len(),
+        context_report.kept.len(),
+    );
+
     // Step 5: drop a `.gitignore` template if absent.
     write_default_gitignore(&target_dir, base_path)?;
 
@@ -319,6 +334,7 @@ pub async fn run(args: InitArgs, settings: &Settings) -> Result<()> {
     //   - `<prompt_overrides_dir>` (seeded prompts)
     //   - `<schemas_dir>` (seeded JSON Schemas)
     //   - `<queries_dir>` (seeded triage/analyzer SQL bundle)
+    //   - `<context_dir>` (seeded reference docs)
     // We `git add -- <pathspec>` only paths that actually exist (a
     // re-run on an already-seeded dir might have some absent if the
     // operator deleted them in between).
@@ -332,6 +348,9 @@ pub async fn run(args: InitArgs, settings: &Settings) -> Result<()> {
     let queries_rel_str = queries_rel
         .to_string_lossy()
         .into_owned();
+    let context_rel_str = context_rel
+        .to_string_lossy()
+        .into_owned();
     let init_paths: &[&str] = &[
         ".gitignore",
         ".gitmodules",
@@ -339,6 +358,7 @@ pub async fn run(args: InitArgs, settings: &Settings) -> Result<()> {
         prompts_rel.as_str(),
         schemas_rel_str.as_str(),
         queries_rel_str.as_str(),
+        context_rel_str.as_str(),
     ];
     match git::stage_and_commit(&target_dir, init_paths, "chore: initial operator state", &env)? {
         git::CommitOutcome::Committed => eprintln!("  ✓ initial commit"),

@@ -36,7 +36,7 @@ cylewitruk/stacks-bench-agent           ~/Code/.../stacks-bench-agent/
 
 cylewitruk/stacks-bench-agentic-        ~/Code/.../stacks-bench-agentic-operator/
 operator                                ├─ committable (sessions/, events/,
-(operator state — sessions, config,     │  config.toml.example, roadmap)
+(operator state — sessions, config,     │  example.config.toml, roadmap)
 roadmap, etc.)                          ├─ config.toml          (gitignored, machine-local)
                                         ├─ repos/stacks-core/   (submodule)
                                         └─ sessions/<id>/results/  (durable artifacts)
@@ -346,7 +346,7 @@ Not urgent for pilot — at session-end, the operator can run `sbagent session o
 | What | Where |
 | ---- | ----- |
 | Operator config | `<operator>/config.toml` (gitignored) |
-| Operator config template | `<operator>/.sbagent/config.toml.example` (committed) |
+| Operator config template | `<operator>/.sbagent/example.config.toml` (committed) |
 | Bot PAT | `~/.config/sbagent/gh_token` (mode 0600) |
 | Operator's stacks-core submodule | `<operator>/repos/stacks-core/` |
 | Per-target agent clones (mutable) | `/private/tmp/sbagent-workspaces/optimizers/<sid>/<target>/` |

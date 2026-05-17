@@ -51,7 +51,7 @@ Operator config lives at `~/.config/sbagent/config.toml` by default
 (XDG-compliant). Copy the annotated template from the tool repo:
 
 ```bash
-cp ~/Code/stacks-bench-agent/assets/config.toml.example \
+cp ~/Code/stacks-bench-agent/assets/example.config.toml \
    ~/.config/sbagent/config.toml
 chmod 600 ~/.config/sbagent/config.toml
 ```

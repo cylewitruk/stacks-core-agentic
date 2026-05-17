@@ -42,6 +42,7 @@ It carries:
 - Pre-built triage SQL queries: `{{ queries_dir }}/` (see `{{ queries_dir }}/README.md`). The same library triage used; you can drive it deeper since you're focused on one family.
 - Pre-rendered run-id-scoped query outputs from triage: `{{ triage_queries_dir }}/*.csv` — the orientation set and the top-N rankings have already been run for the baseline. Read those CSVs (e.g. `top_spans_by_self_wall.csv`, `top_contract_calls.csv`, `span_recurrence.csv`) instead of re-running the same queries. For per-span / per-tx / per-block / per-contract drilldowns you still drive `{{ queries_dir }}/` yourself.
 - Baseline run id: `{{ baseline_run_id }}` — pass as `:run_id` for any DB query.
+- Stacks domain context: `{{ domain_context_path }}` (read-only; read this FIRST for scale + magnitude + terminology calibration — Clarity cost axis semantics, validation-path coverage gap, deferred-write coupling, what stacks-bench does/doesn't exercise).
 - Non-targets reference: `{{ non_targets_path }}` (read-only).
 - Bucket anchors reference: `{{ bucket_anchors_path }}` (read-only; classifies every target as `block_processing` vs `block_commit` by its nearest `Segment: ...` ancestor).
 - Output schema: `{{ analysis_schema_path }}`.

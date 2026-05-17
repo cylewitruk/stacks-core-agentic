@@ -108,7 +108,7 @@ Foundational mechanisms in `stacks-bench-agent` that aren't tied to a single Lay
 
 | Status | Item | Notes |
 | ------ | ---- | ----- |
-| `[x]` | Operator repo created + bootstrapped | `cylewitruk/stacks-bench-agentic-operator` bootstrapped 2026-05-12 with skeleton (README, `.gitignore`, `.sbagent/config.toml.example`, `events/`, `sessions/`, `reports/`, `.github/workflows/` placeholders). |
+| `[x]` | Operator repo created + bootstrapped | `cylewitruk/stacks-bench-agentic-operator` bootstrapped 2026-05-12 with skeleton (README, `.gitignore`, `.sbagent/example.config.toml`, `events/`, `sessions/`, `reports/`, `.github/workflows/` placeholders). |
 | `[x]` | Submodule migrated tool → operator | `repos/stacks-core` removed from tool repo on 2026-05-12; lives in operator repo, pinned to `6ec953ee94`. Tool's `Settings::base` made lazy (`Option<PathBuf>` + `Layout::require_base()`); ~25 callsites updated. |
 | `[x]` | Disk-first prompt templates + `prompt_overrides_dir` mechanism | Templates now live on disk in `<settings.prompt_overrides_dir>/`. Tool seeds bundled defaults on startup with don't-replace-if-exists. Askama replaced by MiniJinja (runtime parser, strict-undefined mode, keeps trailing newlines). Reference docs (`non-targets.md`, `bucket-anchors.md`) seed alongside templates — symmetric tuning surface. |
 | `[x]` | `sbagent prompt lint` / `sbagent prompt sync --force` | Lint dry-renders every disk template against the matching prompt struct's field-complete synthetic context; exits non-zero on any finding. Sync force-rewrites every template from bundled defaults (refuses without `--force`). End-to-end verified on 2026-05-12. |
@@ -538,7 +538,7 @@ Per-attempt hard timeout (Codex finding 5b) remains v2 work — codex doesn't ex
 ### 2026-05-12 (earlier)
 
 - **Split decision taken**: yes, option (1) — now. Operator repo created at [`cylewitruk/stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator). Naming kept symmetric (`stacks-bench-agent` ↔ `stacks-bench-agentic-operator`). `feature-requests-stacks-bench.md` stays here; `autonomous-roadmap.md` moves to operator repo (this copy becomes a stub).
-- Operator-repo skeleton bootstrapped (README, `.sbagent/config.toml.example`, empty `events/`/`sessions/`/`reports/` with `.gitkeep`, `.github/workflows/` placeholder).
+- Operator-repo skeleton bootstrapped (README, `.sbagent/example.config.toml`, empty `events/`/`sessions/`/`reports/` with `.gitkeep`, `.github/workflows/` placeholder).
 
 ### 2026-05-12 (initial)
 

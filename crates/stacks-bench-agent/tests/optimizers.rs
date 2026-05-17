@@ -184,6 +184,9 @@ fn stage_framework_and_session(
         queries_dir: framework
             .clone()
             .join("queries"),
+        context_dir: framework
+            .clone()
+            .join("context"),
         sessions_root: tmp.path().join("sessions"),
         stacks_bench_data_dir: tmp
             .path()

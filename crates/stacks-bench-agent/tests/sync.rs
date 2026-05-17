@@ -53,7 +53,7 @@ async fn sync_overwrites_schemas_preserves_prompt_edits() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: false,
             push: false,
         },
@@ -93,7 +93,7 @@ async fn sync_force_prompts_overwrites_prompts_too() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_prompts: true,
+            force_tunables: true,
             commit: false,
             push: false,
         },
@@ -128,7 +128,7 @@ async fn sync_force_prompts_requires_prompt_overrides_dir() {
 
     let err = sync::run(
         SyncArgs {
-            force_prompts: true,
+            force_tunables: true,
             commit: false,
             push: false,
         },
@@ -155,7 +155,7 @@ async fn sync_bootstraps_empty_operator_dir() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: false,
             push: false,
         },
@@ -204,7 +204,7 @@ async fn sync_overwrites_stale_queries_unconditionally() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: false,
             push: false,
         },
@@ -280,7 +280,7 @@ async fn sync_commit_produces_one_bot_authored_commit() {
 
     let result = sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: true,
             push: false,
         },
@@ -351,7 +351,7 @@ async fn sync_commit_is_noop_on_clean_tree() {
     // First run lands a commit.
     sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: true,
             push: false,
         },
@@ -364,7 +364,7 @@ async fn sync_commit_is_noop_on_clean_tree() {
     // Second run on the clean tree leaves HEAD unchanged.
     sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: true,
             push: false,
         },
@@ -413,7 +413,7 @@ async fn sync_push_rejects_ssh_origin() {
 
     let err = sync::run(
         SyncArgs {
-            force_prompts: false,
+            force_tunables: false,
             commit: false,
             push: true,
         },

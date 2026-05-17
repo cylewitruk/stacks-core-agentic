@@ -19,7 +19,7 @@ overrides live as explicit clap flags; the only env var that backs a
 flag is `SBAGENT_SESSION_ID` (on `--session-id`). No `.env` file.
 
 The annotated template is checked in at
-[assets/config.toml.example](../assets/config.toml.example) — copy it
+[assets/example.config.toml](../assets/example.config.toml) — copy it
 to `~/.config/sbagent/config.toml` and edit. The shape (canonical
 Nakamoto-era block ranges, lock paths, publish targets, bundle dirs,
 forge auth) is documented inline in that file.

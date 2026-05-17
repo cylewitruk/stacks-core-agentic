@@ -1,0 +1,854 @@
+{
+  "$defs": {
+    "BreakageClass": {
+      "description": "Classification of a consensus-breaking change. Required when\n`consensus_breaking == true`.",
+      "oneOf": [
+        {
+          "const": "clarity_cost_weight",
+          "description": "Recalibrating a Clarity-VM cost weight (e.g. `costs.toml`).",
+          "type": "string"
+        },
+        {
+          "const": "clarity_vm_behavior",
+          "description": "Changing how the Clarity VM evaluates an opcode or function.",
+          "type": "string"
+        },
+        {
+          "const": "mining_flow",
+          "description": "Block production logic (mempool ordering, tx admission, fee logic).\nExercised by stacks-bench.",
+          "type": "string"
+        },
+        {
+          "const": "block_validation",
+          "description": "Block acceptance / header / signature checks. NOT exercised by\nstacks-bench — `poc_implementable` MUST be false.",
+          "type": "string"
+        },
+        {
+          "const": "marf_layout",
+          "description": "MARF on-disk storage format change.",
+          "type": "string"
+        },
+        {
+          "const": "on_chain_format",
+          "description": "Other consensus-relevant serialization changes.",
+          "type": "string"
+        }
+      ]
+    },
+    "Bucket": {
+      "description": "Work-bucket classification for a target. Determined by the nearest\n`Segment: ...` ancestor of the target span in the trace tree.",
+      "oneOf": [
+        {
+          "const": "block_processing",
+          "description": "Target lives under `Segment: Tx Execution` / `Transaction`.",
+          "type": "string"
+        },
+        {
+          "const": "block_commit",
+          "description": "Target lives under one of the commit-bucket Segment anchors.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "Hotspot": {
+      "additionalProperties": false,
+      "description": "Hotspot record carried on every analyzer-emitted target and merged target.",
+      "properties": {
+        "calls": {
+          "description": "Number of times the span was entered in the run.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "location": {
+          "description": "`file.rs:LINE` location string.",
+          "type": "string"
+        },
+        "self_wall_us": {
+          "description": "Exclusive wall time at the target span (microseconds).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "span": {
+          "description": "Span name as it appears in trace queries.",
+          "type": "string"
+        },
+        "total_wall_us": {
+          "description": "Inclusive wall time at the target span (self plus subtree, µs).",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "span",
+        "self_wall_us",
+        "total_wall_us",
+        "calls",
+        "location"
+      ],
+      "type": "object"
+    },
+    "ImprovementVector": {
+      "additionalProperties": false,
+      "description": "Per-axis honest estimate of a fix's percent reduction on each value lens.\nAll three axes are required; use `0` for axes the fix doesn't move.",
+      "properties": {
+        "commit_time": {
+          "description": "Percent reduction in commit-bucket wall time.",
+          "format": "double",
+          "type": "number"
+        },
+        "tenure_throughput": {
+          "description": "Percent reduction in the binding Clarity-cost axis.",
+          "format": "double",
+          "type": "number"
+        },
+        "tx_latency": {
+          "description": "Percent reduction in execution-bucket wall time.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tx_latency",
+        "tenure_throughput",
+        "commit_time"
+      ],
+      "type": "object"
+    },
+    "LensDispositionEntry": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "not_actionable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ],
+      "description": "Per-family lens-disposition entry as it appears in\n`optimization-targets.json` and `summary.json`. Independent of the\ntargets array — every accepted analysis contributes one entry here, even\nwhen it contributes zero targets.",
+      "properties": {
+        "family_id": {
+          "description": "Identifier of the family this disposition belongs to.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "lens": {
+          "$ref": "#/$defs/SelectionLens",
+          "description": "Lens triage promoted the family on."
+        },
+        "reason": {
+          "description": "Required when `status == NotActionable`; optional but allowed when\n`status == Addressed` (e.g. to note an unintuitive mechanism).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/LensDispositionStatus",
+          "description": "Disposition status."
+        }
+      },
+      "required": [
+        "family_id",
+        "lens",
+        "status"
+      ],
+      "type": "object"
+    },
+    "LensDispositionStatus": {
+      "description": "Status of a lens disposition: either an analyzer committed at least one\ntarget on the lens (`Addressed`) or it confirmed the lens signal is real\nbut structurally unfixable (`NotActionable`).",
+      "oneOf": [
+        {
+          "const": "addressed",
+          "description": "At least one target in the analysis claims non-trivial impact on the\nlens.",
+          "type": "string"
+        },
+        {
+          "const": "not_actionable",
+          "description": "Analyzer drilled in, confirmed the signal, found no structural handle.\nRequires a code-level reason in the carrying record.",
+          "type": "string"
+        }
+      ]
+    },
+    "MergeMethod": {
+      "description": "Identifier of the merge implementation.",
+      "oneOf": [
+        {
+          "const": "llm",
+          "description": "LLM consolidation pass (the only implementation today).",
+          "type": "string"
+        }
+      ]
+    },
+    "MergedFrom": {
+      "additionalProperties": false,
+      "description": "Reference to one analyzer-emitted target, by family id and zero-based\nindex into that analysis's `targets[]`.",
+      "properties": {
+        "family_id": {
+          "description": "Family id (kebab-case).",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "target_index": {
+          "description": "Zero-based index into the source analysis's `targets[]`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "family_id",
+        "target_index"
+      ],
+      "type": "object"
+    },
+    "MergedTarget": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "consensus_breaking": {
+                "const": true
+              }
+            },
+            "required": [
+              "consensus_breaking"
+            ]
+          },
+          "then": {
+            "properties": {
+              "breakage_class": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "consensus_writeup": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "poc_implementable": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "breakage_class",
+              "poc_implementable",
+              "consensus_writeup"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "poc_implementable": {
+                "const": true
+              }
+            },
+            "required": [
+              "poc_implementable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "poc_test_scope": {
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "minItems": 1
+                  }
+                ]
+              }
+            },
+            "required": [
+              "poc_test_scope"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "breakage_class": {
+                "const": "block_validation"
+              }
+            },
+            "required": [
+              "breakage_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "poc_implementable": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "poc_implementable": {
+                  "const": true
+                }
+              },
+              "required": [
+                "poc_implementable"
+              ]
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "poc_test_scope"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "consensus_breaking": {
+                  "const": true
+                }
+              },
+              "required": [
+                "consensus_breaking"
+              ]
+            }
+          },
+          "then": {
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "breakage_class"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "poc_implementable"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "poc_test_scope"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "consensus_writeup"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "consensus_breaking": {
+                "const": false
+              }
+            },
+            "required": [
+              "consensus_breaking"
+            ]
+          },
+          "then": {
+            "properties": {
+              "delivery_mode": {
+                "const": "normal_pr"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "consensus_breaking": {
+                "const": true
+              },
+              "poc_implementable": {
+                "const": true
+              }
+            },
+            "required": [
+              "consensus_breaking",
+              "poc_implementable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "delivery_mode": {
+                "const": "consensus_poc_pr"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "consensus_breaking": {
+                "const": true
+              },
+              "poc_implementable": {
+                "const": false
+              }
+            },
+            "required": [
+              "consensus_breaking",
+              "poc_implementable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "delivery_mode": {
+                "const": "consensus_issue"
+              }
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "bench_eligible": {
+                "const": false
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "normal_pr"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "bench_eligible": {
+                "const": true
+              }
+            }
+          }
+        }
+      ],
+      "description": "One merged optimization target.",
+      "properties": {
+        "bench_eligible": {
+          "description": "Derived: true iff `delivery_mode == NormalPr`.",
+          "type": "boolean"
+        },
+        "breakage_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BreakageClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required when `consensus_breaking == true`."
+        },
+        "bucket": {
+          "$ref": "#/$defs/Bucket",
+          "description": "Authoritative bucket. Must match across all contributors."
+        },
+        "consensus_breaking": {
+          "description": "Carried through from contributors. Must match across all contributors.",
+          "type": "boolean"
+        },
+        "consensus_writeup": {
+          "description": "Required when `consensus_breaking == true`. Most-detailed contributor\nwriteup.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contributor_differences": {
+          "description": "Optional: short bullets describing where contributors disagreed.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "convergence_count": {
+          "description": "`merged_from.len()` — confidence signal.",
+          "format": "uint",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "Derived: routing decision for Phase 5."
+        },
+        "evidence": {
+          "description": "Synthesized evidence.",
+          "type": "string"
+        },
+        "expected_improvement": {
+          "$ref": "#/$defs/ImprovementVector",
+          "description": "Per-axis median improvement across contributors."
+        },
+        "files": {
+          "description": "Repo-relative paths.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hotspot": {
+          "$ref": "#/$defs/Hotspot",
+          "description": "Hotspot record carried from the contributor with the largest total\nwall time."
+        },
+        "id": {
+          "description": "Canonical kebab-case identifier (= canonical fix_signature).",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "merge_notes": {
+          "description": "Optional reviewer-facing note from the merger.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merged_from": {
+          "description": "References to the analyzer-emitted targets that contributed.",
+          "items": {
+            "$ref": "#/$defs/MergedFrom"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "poc_implementable": {
+          "description": "Required when `consensus_breaking == true`. Conservative (false if\nany contributor said false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "poc_test_scope": {
+          "description": "Required when `poc_implementable == true`. Union of contributors'\nscopes.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "proposed_change": {
+          "description": "Canonical proposed change.",
+          "type": "string"
+        },
+        "rank": {
+          "description": "Optional priority ordering hint for the optimizer fan-out.",
+          "format": "uint",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "risk": {
+          "$ref": "#/$defs/Risk",
+          "description": "Maximum (most cautious) risk among contributors."
+        },
+        "target_span": {
+          "description": "Span the optimizer should target.",
+          "type": "string"
+        },
+        "verification_plan": {
+          "description": "Union of contributors' verification requirements.",
+          "type": "string"
+        },
+        "verification_replay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerificationReplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional targeted-replay recipe carried through from analyzer\ncontributors. When multiple contributors disagree, the merger\npicks the most specific recipe (broadest txid/block set) or\ndrops to `None` (full-range fallback) — recorded in\n`merge_notes`. Absent → Phase 3 falls back to the session's\nfull-range bench."
+        }
+      },
+      "required": [
+        "id",
+        "merged_from",
+        "convergence_count",
+        "target_span",
+        "bucket",
+        "hotspot",
+        "files",
+        "evidence",
+        "proposed_change",
+        "expected_improvement",
+        "risk",
+        "verification_plan",
+        "consensus_breaking",
+        "delivery_mode",
+        "bench_eligible"
+      ],
+      "type": "object"
+    },
+    "RejectedByMerge": {
+      "additionalProperties": false,
+      "description": "Analyzer-emitted target the merger affirmatively dropped.",
+      "properties": {
+        "family_id": {
+          "description": "Family id of the source analysis.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the target was dropped (e.g. duplicate of an already-shipped fix).",
+          "type": "string"
+        },
+        "target_index": {
+          "description": "Zero-based index into the source analysis's `targets[]`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "family_id",
+        "target_index",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Risk": {
+      "description": "Subjective risk level on a proposed fix.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Low-risk: localized, mechanical, easily reverted.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Medium-risk: moderate scope, well-tested area.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "High-risk: cross-cutting, hard-to-verify, or touches subtle invariants.",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaVersionV2": {
+      "const": 2,
+      "type": "integer"
+    },
+    "SelectionLens": {
+      "description": "Selection lens — the value-axis triage promoted a candidate on, and that\nthe analyzer must dispose of explicitly. Carries through verbatim into\nmerge output and the summary.",
+      "oneOf": [
+        {
+          "const": "tx_latency",
+          "description": "Wall-time savings under execution-bucket spans.",
+          "type": "string"
+        },
+        {
+          "const": "tenure_throughput",
+          "description": "Clarity-budget headroom freed (deterministic Clarity cost units).",
+          "type": "string"
+        },
+        {
+          "const": "commit_time",
+          "description": "Wall-time savings under commit-bucket spans.",
+          "type": "string"
+        }
+      ]
+    },
+    "VerificationReplay": {
+      "additionalProperties": false,
+      "description": "Per-target replay recipe — the analyzer's verification plan rendered as\nmachine-readable inputs for stacks-bench's targeted-replay modes\n(`--txid`/`--block` with `--repetitions`). Optional: absence keeps the\ncurrent full-range fallback in `bench_experiments.rs`.\n\n`txids` and `blocks` are mutually inclusive: an analyzer may emit\neither, both, or neither. When both are present, the bench coordinator\nruns separate replay phases (txid mode first, block mode second)\nagainst the same per-target binary; the per-phase results land in one\n`bench-run.json` per target.\n\nAll identifier values are 0x-prefixed 64-hex-char hashes\n([`HEX_HASH_PATTERN`]). Heights and synthetic ids are NEVER acceptable\nhere — see `feature-requests-stacks-bench.md` and the autonomous\nroadmap's Layer 1A design notes for the rationale.",
+      "properties": {
+        "blocks": {
+          "description": "Representative stacks index block hashes the analyzer wants\nre-run. Picked from drilldown queries via the `stacks_block_hash`\n(a.k.a. `stacks_block.block_hash_hex`) column.",
+          "items": {
+            "pattern": "^0x[0-9a-fA-F]{64}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rationale": {
+          "description": "One-line explanation of why the analyzer picked txids vs blocks\nvs both (e.g. \"block-context: seal-path change needs full block\ncommit\"). Surfaced in summaries; non-actionable for the\ncoordinator.",
+          "type": "string"
+        },
+        "repetitions": {
+          "description": "Number of measured repetitions per replay target. Mapped to\n`--repetitions` on stacks-bench `bench run`. The full bench\nsubstitutes per-target replay budget for full-range wall-time.",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "txids": {
+          "description": "Representative transaction hashes the analyzer wants re-run.\nPicked from drilldown queries via the `tx_hash` (a.k.a.\n`stacks_tx.tx_hash_hex`) column.",
+          "items": {
+            "pattern": "^0x[0-9a-fA-F]{64}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "warmup": {
+          "description": "Number of warmup repetitions discarded before measurement\nbegins. Mapped to `--warmup` on stacks-bench `bench run`.\nCold-fork single-tx / single-block replay has empty caches\n(MARF node cache, SQLite page cache, allocator state); 5-10\nwarmup reps lets caches settle into a representative-ish state\nbefore the measured reps run. Defaults to `10` when omitted;\nrecipes can override (e.g. set lower for very expensive blocks\nwhere each rep is already minutes).",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repetitions",
+        "rationale"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Top-level shape of `optimization-targets.json`.",
+  "properties": {
+    "baseline_rerun_id": {
+      "description": "Baseline rerun id (matches `<results>/baseline-rerun-id`).",
+      "format": "int64",
+      "type": "integer"
+    },
+    "baseline_run_id": {
+      "description": "Baseline run id (matches `<results>/baseline-run-id`).",
+      "format": "int64",
+      "type": "integer"
+    },
+    "lens_dispositions": {
+      "description": "Per-family lens dispositions, one per accepted analysis.",
+      "items": {
+        "$ref": "#/$defs/LensDispositionEntry"
+      },
+      "type": "array"
+    },
+    "merge_method": {
+      "$ref": "#/$defs/MergeMethod",
+      "description": "Identifier of the merge implementation. Currently only `Llm`."
+    },
+    "merge_model": {
+      "description": "Exact model identifier used for the merge call.",
+      "type": "string"
+    },
+    "noise_floor_pct": {
+      "description": "Per-host noise floor as a percentage.",
+      "format": "double",
+      "type": "number"
+    },
+    "rejected_by_merge": {
+      "description": "Analyzer-emitted targets the merger affirmatively dropped.",
+      "items": {
+        "$ref": "#/$defs/RejectedByMerge"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV2",
+      "description": "Constant: 2."
+    },
+    "session_id": {
+      "description": "Session this artifact belongs to.",
+      "type": "string"
+    },
+    "targets": {
+      "description": "Merged optimization targets.",
+      "items": {
+        "$ref": "#/$defs/MergedTarget"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "merge_method",
+    "merge_model",
+    "targets",
+    "lens_dispositions"
+  ],
+  "title": "OptimizationTargets",
+  "type": "object"
+}

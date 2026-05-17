@@ -145,6 +145,9 @@ fn stage_framework_and_session(
         queries_dir: framework
             .clone()
             .join("queries"),
+        context_dir: framework
+            .clone()
+            .join("context"),
         sessions_root: tmp.path().join("sessions"),
         stacks_bench_data_dir: tmp
             .path()
@@ -185,6 +188,7 @@ fn stage_framework_and_session(
             })
         })
         .collect();
+    let n_candidates = candidates.len() as u32;
     let cand_doc = serde_json::json!({
         "schema_version": 2,
         "session_id": "20260507-104400",
@@ -192,6 +196,14 @@ fn stage_framework_and_session(
         "baseline_rerun_id": 101,
         "noise_floor_pct": 0.8,
         "candidates": candidates,
+        "rejected_families": [],
+        "lens_coverage": {
+            // The fixture candidates above all use selection_lens = "tx_latency".
+            "tx_latency": n_candidates,
+            "tenure_throughput": 0,
+            "commit_time": 0,
+            "weights_applied": "0.4,0.4,0.2",
+        },
     });
     std::fs::write(session.candidates_json(), cand_doc.to_string()).unwrap();
 

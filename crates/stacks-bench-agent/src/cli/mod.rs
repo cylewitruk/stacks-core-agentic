@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 
 use crate::layout::Layout;
@@ -119,6 +119,12 @@ impl CliContext {
         // and `check` would report OK), contradicting the contract.
         // `check` callers expecting auto-heal can run `sbagent sync`
         // first.
+        // Legacy context-doc migration is a one-time layout fix; it
+        // runs on every command (including `check`) so an operator who
+        // upgrades sbagent and runs `sbagent check` first doesn't see a
+        // misleading "missing on disk" drift report for files that
+        // would be auto-relocated the next time they ran anything else.
+        migrate_legacy_context_docs(&settings, &layout)?;
         if !matches!(args.command, Command::Check(_)) {
             let report = crate::schemas::seed_to(&layout.schemas_dir)?;
             if !report.seeded.is_empty() {
@@ -142,9 +148,82 @@ impl CliContext {
                     "seeded bundled SQL queries into operator dir",
                 );
             }
+            // Context docs are operator-tunable like prompts (warn on
+            // drift, not fail), but `seed_to` is still don't-replace so
+            // a fresh operator gets a working baseline. Migration
+            // already ran above outside this block; by the time we
+            // get here, any legacy files have been relocated and
+            // seed only fills in what's still missing.
+            let report = crate::context::seed_to(&layout.context_dir)?;
+            if !report.seeded.is_empty() {
+                tracing::info!(
+                    seeded = ?report.seeded,
+                    kept = ?report.kept,
+                    dir = %layout.context_dir.display(),
+                    "seeded bundled context docs into operator dir",
+                );
+            }
         }
         Ok(Self { settings, layout })
     }
+}
+
+/// One-time migration of context docs from the legacy `prompts/`
+/// location to the new `context/` bundle. For each bundled context
+/// file: if `<prompts>/<file>` exists AND `<context>/<file>` doesn't,
+/// move the prompts copy to context. Preserves any operator edits via
+/// `rename` (atomic on the same fs; falls back to copy+remove). Warns
+/// to stderr when files moved so the operator notices the layout
+/// change.
+///
+/// Skipped silently when `prompt_overrides_dir` isn't configured (no
+/// legacy location to migrate from). Idempotent.
+fn migrate_legacy_context_docs(settings: &Settings, layout: &Layout) -> Result<()> {
+    let prompts_dir = match settings
+        .prompt_overrides_dir
+        .as_deref()
+    {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+    let mut migrated: Vec<String> = Vec::new();
+    for name in crate::context::bundled_file_names() {
+        let legacy = prompts_dir.join(name);
+        let new_path = layout.context_dir.join(name);
+        if !legacy.is_file() || new_path.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(&layout.context_dir)
+            .with_context(|| format!("creating context dir {}", layout.context_dir.display()))?;
+        match std::fs::rename(&legacy, &new_path) {
+            Ok(()) => migrated.push(name.to_owned()),
+            Err(_) => {
+                std::fs::copy(&legacy, &new_path).with_context(|| {
+                    format!("copying {} → {}", legacy.display(), new_path.display())
+                })?;
+                std::fs::remove_file(&legacy)
+                    .with_context(|| format!("removing legacy {}", legacy.display()))?;
+                migrated.push(name.to_owned());
+            }
+        }
+    }
+    if !migrated.is_empty() {
+        eprintln!(
+            "sbagent: migrated {} legacy context file(s) from {} to {}:",
+            migrated.len(),
+            prompts_dir.display(),
+            layout.context_dir.display(),
+        );
+        for name in &migrated {
+            eprintln!("  - {name}");
+        }
+        eprintln!(
+            "sbagent: reference docs (`non-targets.md`, `bucket-anchors.md`, \
+             `stacks-domain-context.md`) now live under the operator's `context/` dir alongside \
+             per-doc `.toml` sidecars. Any local edits were preserved.",
+        );
+    }
+    Ok(())
 }
 
 /// Parse-then-route the top-level command. Called once from `main`.

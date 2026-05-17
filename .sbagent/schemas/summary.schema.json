@@ -1,0 +1,482 @@
+{
+  "$defs": {
+    "BreakageClass": {
+      "description": "Classification of a consensus-breaking change. Required when\n`consensus_breaking == true`.",
+      "oneOf": [
+        {
+          "const": "clarity_cost_weight",
+          "description": "Recalibrating a Clarity-VM cost weight (e.g. `costs.toml`).",
+          "type": "string"
+        },
+        {
+          "const": "clarity_vm_behavior",
+          "description": "Changing how the Clarity VM evaluates an opcode or function.",
+          "type": "string"
+        },
+        {
+          "const": "mining_flow",
+          "description": "Block production logic (mempool ordering, tx admission, fee logic).\nExercised by stacks-bench.",
+          "type": "string"
+        },
+        {
+          "const": "block_validation",
+          "description": "Block acceptance / header / signature checks. NOT exercised by\nstacks-bench — `poc_implementable` MUST be false.",
+          "type": "string"
+        },
+        {
+          "const": "marf_layout",
+          "description": "MARF on-disk storage format change.",
+          "type": "string"
+        },
+        {
+          "const": "on_chain_format",
+          "description": "Other consensus-relevant serialization changes.",
+          "type": "string"
+        }
+      ]
+    },
+    "ConsensusIssueCounts": {
+      "additionalProperties": false,
+      "description": "Counts for `ConsensusIssue` rows.",
+      "properties": {
+        "aborted": {
+          "description": "`status == Aborted`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "routed_to_issue": {
+          "description": "`status == RoutedToIssue`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "routed_to_issue",
+        "aborted"
+      ],
+      "type": "object"
+    },
+    "ConsensusPocPrCounts": {
+      "additionalProperties": false,
+      "description": "Counts for `ConsensusPocPr` rows.",
+      "properties": {
+        "aborted": {
+          "description": "`status == Aborted`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "poc_landed": {
+          "description": "`status == PocLanded`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "poc_landed",
+        "aborted"
+      ],
+      "type": "object"
+    },
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "Experiment": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "normal_pr"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected",
+                  "aborted"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "consensus_poc_pr"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "poc_landed",
+                  "aborted"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "consensus_issue"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "routed_to_issue",
+                  "aborted"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "One experiment row.",
+      "properties": {
+        "breakage_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BreakageClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Surfaced for `consensus_poc_pr` / `consensus_issue` rows."
+        },
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "Carried from `optimization-targets.json`."
+        },
+        "improvement_pct": {
+          "description": "Improvement vs baseline as a signed percentage. Set only for\n`NormalPr` targets that reached benchmarking.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Free-form reason (e.g. abort message excerpt, \"within noise floor\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_ids": {
+          "description": "Run ids associated with this experiment (only set for `NormalPr`\ntargets that reached benchmarking).",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ExperimentStatus",
+          "description": "Outcome of this target. Valid values depend on `delivery_mode`; see\n[`Experiment::validate`] for the seven legal combinations."
+        },
+        "target_id": {
+          "description": "Canonical kebab-case target id.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "delivery_mode",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ExperimentStatus": {
+      "description": "Outcome of an experiment row.\n\nValid combinations with `delivery_mode`:\n- `NormalPr` → `Accepted | Rejected | Aborted`\n- `ConsensusPocPr` → `PocLanded | Aborted`\n- `ConsensusIssue` → `RoutedToIssue | Aborted`",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "Bench measured a real improvement (NormalPr only).",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "Bench did not show an improvement (NormalPr only).",
+          "type": "string"
+        },
+        {
+          "const": "aborted",
+          "description": "Pipeline did not produce a usable artifact (any mode).",
+          "type": "string"
+        },
+        {
+          "const": "poc_landed",
+          "description": "Scoped tests passed; no benchmark by design (ConsensusPocPr only).",
+          "type": "string"
+        },
+        {
+          "const": "routed_to_issue",
+          "description": "Routing marker present; analyzer's writeup is the artifact\n(ConsensusIssue only).",
+          "type": "string"
+        }
+      ]
+    },
+    "LensDispositionEntry": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "not_actionable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ],
+      "description": "Per-family lens-disposition entry as it appears in\n`optimization-targets.json` and `summary.json`. Independent of the\ntargets array — every accepted analysis contributes one entry here, even\nwhen it contributes zero targets.",
+      "properties": {
+        "family_id": {
+          "description": "Identifier of the family this disposition belongs to.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "lens": {
+          "$ref": "#/$defs/SelectionLens",
+          "description": "Lens triage promoted the family on."
+        },
+        "reason": {
+          "description": "Required when `status == NotActionable`; optional but allowed when\n`status == Addressed` (e.g. to note an unintuitive mechanism).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/LensDispositionStatus",
+          "description": "Disposition status."
+        }
+      },
+      "required": [
+        "family_id",
+        "lens",
+        "status"
+      ],
+      "type": "object"
+    },
+    "LensDispositionStatus": {
+      "description": "Status of a lens disposition: either an analyzer committed at least one\ntarget on the lens (`Addressed`) or it confirmed the lens signal is real\nbut structurally unfixable (`NotActionable`).",
+      "oneOf": [
+        {
+          "const": "addressed",
+          "description": "At least one target in the analysis claims non-trivial impact on the\nlens.",
+          "type": "string"
+        },
+        {
+          "const": "not_actionable",
+          "description": "Analyzer drilled in, confirmed the signal, found no structural handle.\nRequires a code-level reason in the carrying record.",
+          "type": "string"
+        }
+      ]
+    },
+    "NormalPrCounts": {
+      "additionalProperties": false,
+      "description": "Counts for `NormalPr` rows.",
+      "properties": {
+        "aborted": {
+          "description": "`status == Aborted`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "accepted": {
+          "description": "`status == Accepted`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected": {
+          "description": "`status == Rejected`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "accepted",
+        "rejected",
+        "aborted"
+      ],
+      "type": "object"
+    },
+    "OutcomeCounts": {
+      "additionalProperties": false,
+      "description": "Aggregate counts by (delivery_mode, status). Mirrors the schema's nested\nshape so summary.md can render headline tallies without re-grouping.",
+      "properties": {
+        "consensus_issue": {
+          "$ref": "#/$defs/ConsensusIssueCounts",
+          "description": "Counts for `delivery_mode == ConsensusIssue`."
+        },
+        "consensus_poc_pr": {
+          "$ref": "#/$defs/ConsensusPocPrCounts",
+          "description": "Counts for `delivery_mode == ConsensusPocPr`."
+        },
+        "normal_pr": {
+          "$ref": "#/$defs/NormalPrCounts",
+          "description": "Counts for `delivery_mode == NormalPr`."
+        }
+      },
+      "required": [
+        "normal_pr",
+        "consensus_poc_pr",
+        "consensus_issue"
+      ],
+      "type": "object"
+    },
+    "SchemaVersionV2": {
+      "const": 2,
+      "type": "integer"
+    },
+    "SelectionLens": {
+      "description": "Selection lens — the value-axis triage promoted a candidate on, and that\nthe analyzer must dispose of explicitly. Carries through verbatim into\nmerge output and the summary.",
+      "oneOf": [
+        {
+          "const": "tx_latency",
+          "description": "Wall-time savings under execution-bucket spans.",
+          "type": "string"
+        },
+        {
+          "const": "tenure_throughput",
+          "description": "Clarity-budget headroom freed (deterministic Clarity cost units).",
+          "type": "string"
+        },
+        {
+          "const": "commit_time",
+          "description": "Wall-time savings under commit-bucket spans.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Top-level shape of `summary.json`.",
+  "properties": {
+    "baseline_rerun_id": {
+      "description": "Baseline rerun id.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "baseline_run_id": {
+      "description": "Baseline run id.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "experiments": {
+      "description": "One row per merged target.",
+      "items": {
+        "$ref": "#/$defs/Experiment"
+      },
+      "type": "array"
+    },
+    "lens_dispositions": {
+      "description": "Carried verbatim from `optimization-targets.json`.",
+      "items": {
+        "$ref": "#/$defs/LensDispositionEntry"
+      },
+      "type": "array"
+    },
+    "next_targets_hint": {
+      "description": "Operator-facing recommendation for the next session.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "noise_floor_pct": {
+      "description": "Per-host noise floor as a percentage.",
+      "format": "double",
+      "type": "number"
+    },
+    "outcome_counts": {
+      "$ref": "#/$defs/OutcomeCounts",
+      "description": "Demo-friendly aggregate counts by (delivery_mode, status)."
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV2",
+      "description": "Constant: 2."
+    },
+    "session_id": {
+      "description": "Session this artifact belongs to.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "experiments",
+    "outcome_counts",
+    "lens_dispositions"
+  ],
+  "title": "Summary",
+  "type": "object"
+}

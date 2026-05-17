@@ -190,6 +190,24 @@ pub struct Settings {
     #[serde(default)]
     pub prompt_overrides_dir: Option<PathBuf>,
 
+    /// Directory of operator-tunable context / reference docs (the
+    /// agent's "brainstem"). Each entry is a markdown file + a TOML
+    /// sidecar declaring which phases may surface it. See
+    /// [`crate::context`] for the bundle.
+    ///
+    /// Resolution when unset: sibling of `prompt_overrides_dir`
+    /// (`<parent>/context`) — same derivation rule as
+    /// [`Settings::schemas_dir`] / [`Settings::queries_dir`], so the
+    /// conventional `.sbagent/prompts` + `.sbagent/context` layout
+    /// works without a config change.
+    ///
+    /// Operator-tunable: `sbagent sync` rewrites only with
+    /// `--force-tunables` (or the legacy `--force-prompts`),
+    /// `sbagent check` warns (not fails) on drift between the on-disk
+    /// copy and the running binary's bundle.
+    #[serde(default)]
+    pub context_overrides_dir: Option<PathBuf>,
+
     /// Chainstate source dir (must contain `chainstate/`). Required by
     /// `session baseline run`.
     #[serde(default)]
@@ -401,6 +419,19 @@ pub fn default_schemas_dir(settings: &Settings) -> Option<PathBuf> {
 /// full doc.
 pub fn default_queries_dir(settings: &Settings) -> Option<PathBuf> {
     default_bundle_sibling(settings.queries_dir.as_ref(), settings, "queries")
+}
+
+/// Operator-side default for `context_overrides_dir`. Same shape +
+/// contract as [`default_schemas_dir`]; see
+/// [`Settings::context_overrides_dir`] for the full doc.
+pub fn default_context_dir(settings: &Settings) -> Option<PathBuf> {
+    default_bundle_sibling(
+        settings
+            .context_overrides_dir
+            .as_ref(),
+        settings,
+        "context",
+    )
 }
 
 /// Shared bundle-dir resolution: explicit override wins; otherwise

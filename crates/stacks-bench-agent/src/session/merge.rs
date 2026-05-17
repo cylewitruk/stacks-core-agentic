@@ -140,6 +140,10 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let prompts_dir = inputs
         .settings
         .require_prompt_overrides_dir()?;
+    let ctx_paths = crate::context::paths_for_phase(
+        &inputs.framework.context_dir,
+        crate::context::Phase::Merge,
+    )?;
     let rendered = prompts::render(
         "merge-analyses",
         &prompts::MergePrompt {
@@ -163,10 +167,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
                 .join("optimization-targets.schema.json")
                 .to_string_lossy()
                 .into_owned(),
-            bucket_anchors_path: prompts_dir
-                .join("bucket-anchors.md")
-                .to_string_lossy()
-                .into_owned(),
+            bucket_anchors_path: crate::context::ctx_path(&ctx_paths, "bucket-anchors")?,
             codex_merge_model: merge_model_id.to_owned(),
             accepted_analyses_json: accepted_json,
         },
@@ -192,13 +193,17 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         .codex_dangerously_bypass_sandbox
         .unwrap_or(false);
     // Agent reads the schema file + bucket-anchors.md (both rendered
-    // into the prompt as absolute paths). With the bundled-schemas
-    // model, those live under the operator's `.sbagent/` tree, not
-    // under the tool checkout.
+    // into the prompt as absolute paths). The schema file is under
+    // `<operator>/.sbagent/schemas/`; bucket-anchors.md is under
+    // `<operator>/.sbagent/context/`.
     let add_dirs: Vec<PathBuf> = vec![
         inputs
             .framework
             .schemas_dir
+            .clone(),
+        inputs
+            .framework
+            .context_dir
             .clone(),
         prompts_dir.to_path_buf(),
     ];

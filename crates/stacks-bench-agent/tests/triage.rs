@@ -115,7 +115,14 @@ impl AgentHarness for RecordingHarness {
                     ] },
                     "rationale": "fake"
                 }
-            ]
+            ],
+            "rejected_families": [],
+            "lens_coverage": {
+                "tx_latency": 1,
+                "tenure_throughput": 0,
+                "commit_time": 0,
+                "weights_applied": "0.4,0.4,0.2"
+            }
         });
         std::fs::write(cwd.join("candidates.json"), candidates.to_string())?;
 
@@ -146,6 +153,9 @@ fn stage_framework(tmp: &tempfile::TempDir) -> Layout {
         queries_dir: framework
             .clone()
             .join("queries"),
+        context_dir: framework
+            .clone()
+            .join("context"),
         sessions_root: tmp.path().join("sessions"),
         stacks_bench_data_dir: tmp
             .path()

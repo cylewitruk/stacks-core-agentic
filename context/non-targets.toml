@@ -1,0 +1,5 @@
+id = "non-targets"
+title = "Non-target spans"
+description = "Profiler spans known to be dead-end optimization targets. Span-level exclusions; descendants under a non-target wrapper remain valid candidates."
+phases = ["triage", "analyzer", "optimizer"]
+required = true

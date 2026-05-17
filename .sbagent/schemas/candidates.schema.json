@@ -1,0 +1,402 @@
+{
+  "$defs": {
+    "Bucket": {
+      "description": "Work-bucket classification for a target. Determined by the nearest\n`Segment: ...` ancestor of the target span in the trace tree.",
+      "oneOf": [
+        {
+          "const": "block_processing",
+          "description": "Target lives under `Segment: Tx Execution` / `Transaction`.",
+          "type": "string"
+        },
+        {
+          "const": "block_commit",
+          "description": "Target lives under one of the commit-bucket Segment anchors.",
+          "type": "string"
+        }
+      ]
+    },
+    "Candidate": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tx_family"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "representative_ids": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "stacks_block_hashes"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "contract_function"
+                      ]
+                    }
+                  ]
+                },
+                "required": [
+                  "stacks_tx_hashes"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "block_family"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "representative_ids": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "stacks_tx_hashes"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "contract_function"
+                      ]
+                    }
+                  ]
+                },
+                "required": [
+                  "stacks_block_hashes"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "contract_family"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "representative_ids": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "stacks_block_hashes"
+                      ]
+                    }
+                  ]
+                },
+                "required": [
+                  "contract_function",
+                  "stacks_tx_hashes"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "One workload-entry family.",
+      "properties": {
+        "bucket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bucket"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional bucket hint; analyzer commits the authoritative bucket per\nemitted target."
+        },
+        "global_materiality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GlobalMateriality"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional aggregate cost signal across the run."
+        },
+        "id": {
+          "description": "Stable kebab-case family id; used as a path segment downstream.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FamilyKind",
+          "description": "Family kind."
+        },
+        "rationale": {
+          "description": "One-line motivation.",
+          "type": "string"
+        },
+        "representative_ids": {
+          "$ref": "#/$defs/RepresentativeIds",
+          "description": "Representative workload entry points the analyzer should inspect.\nShape is constrained by [`kind`](Self::kind)."
+        },
+        "selection_lens": {
+          "$ref": "#/$defs/SelectionLens",
+          "description": "Lens triage promoted this family on."
+        },
+        "suspected_spans": {
+          "description": "Optional non-binding suspected hot-span hints for the analyzer.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "selection_lens",
+        "representative_ids",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "ContractFunction": {
+      "additionalProperties": false,
+      "description": "Issuer / contract / function triple identifying a Clarity contract.function.",
+      "properties": {
+        "contract": {
+          "description": "Contract name.",
+          "type": "string"
+        },
+        "function": {
+          "description": "Function name.",
+          "type": "string"
+        },
+        "issuer": {
+          "description": "Issuer principal (standard or contract principal).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "contract",
+        "function"
+      ],
+      "type": "object"
+    },
+    "FamilyKind": {
+      "description": "Family kind discriminator on triage candidates and downstream analyses.",
+      "oneOf": [
+        {
+          "const": "tx_family",
+          "description": "Family identified by representative transaction shapes.",
+          "type": "string"
+        },
+        {
+          "const": "block_family",
+          "description": "Family identified by representative blocks.",
+          "type": "string"
+        },
+        {
+          "const": "contract_family",
+          "description": "Family identified by a specific contract.function.",
+          "type": "string"
+        }
+      ]
+    },
+    "GlobalMateriality": {
+      "additionalProperties": false,
+      "description": "Aggregate cost signal across the whole run, populated from\n`span_recurrence`.",
+      "properties": {
+        "notes": {
+          "description": "Optional analyst note (e.g. workload-conditional caveat).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pct_blocks": {
+          "description": "Maximum `pct_blocks` across the family's suspected spans.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "self_wall_ms": {
+          "description": "Sum of `self_wall_ms` across the family's suspected spans.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RepresentativeIds": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "`contract_family` shape — listed first so that a payload containing\nboth `contract_function` and `stacks_tx_hashes` is unambiguously\nmatched here rather than partially against `Tx`.",
+          "properties": {
+            "contract_function": {
+              "$ref": "#/$defs/ContractFunction",
+              "description": "Issuer / contract / function triple identifying the function."
+            },
+            "stacks_tx_hashes": {
+              "description": "Heaviest representative txs exercising the function.",
+              "items": {
+                "pattern": "^0x[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "maxItems": 5,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "contract_function",
+            "stacks_tx_hashes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`tx_family` shape: 1–5 representative transaction hashes.",
+          "properties": {
+            "stacks_tx_hashes": {
+              "description": "Heaviest representative txs (hex hashes).",
+              "items": {
+                "pattern": "^0x[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "maxItems": 5,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "stacks_tx_hashes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`block_family` shape: 1–5 representative stacks index block hashes.",
+          "properties": {
+            "stacks_block_hashes": {
+              "description": "Heaviest representative stacks index block hashes.",
+              "items": {
+                "pattern": "^0x[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "maxItems": 5,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "stacks_block_hashes"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "Representative workload entry points. Shape varies by family kind; the\nuntagged enum deserializes by required-field discrimination.\n\nAll identifier values are 0x-prefixed 64-hex-char hashes\n([`HEX_HASH_PATTERN`](crate::models::common::HEX_HASH_PATTERN)) — the\ntriage agent picks them from query output via the `tx_hash` / dim\n`stacks_block_hash` columns, never the stacks-bench-DB synthetic\ninteger ids (which are data-dir-local)."
+    },
+    "SchemaVersionV2": {
+      "const": 2,
+      "type": "integer"
+    },
+    "SelectionLens": {
+      "description": "Selection lens — the value-axis triage promoted a candidate on, and that\nthe analyzer must dispose of explicitly. Carries through verbatim into\nmerge output and the summary.",
+      "oneOf": [
+        {
+          "const": "tx_latency",
+          "description": "Wall-time savings under execution-bucket spans.",
+          "type": "string"
+        },
+        {
+          "const": "tenure_throughput",
+          "description": "Clarity-budget headroom freed (deterministic Clarity cost units).",
+          "type": "string"
+        },
+        {
+          "const": "commit_time",
+          "description": "Wall-time savings under commit-bucket spans.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Top-level shape of `candidates.json`.",
+  "properties": {
+    "baseline_rerun_id": {
+      "description": "Baseline rerun id (matches `<results>/baseline-rerun-id`).",
+      "format": "int64",
+      "type": "integer"
+    },
+    "baseline_run_id": {
+      "description": "Baseline run id (matches `<results>/baseline-run-id`).",
+      "format": "int64",
+      "type": "integer"
+    },
+    "candidates": {
+      "description": "One entry per identified workload-entry family.",
+      "items": {
+        "$ref": "#/$defs/Candidate"
+      },
+      "type": "array"
+    },
+    "noise_floor_pct": {
+      "description": "Per-host noise floor expressed as a percentage.",
+      "format": "double",
+      "type": "number"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV2",
+      "description": "Constant: 2."
+    },
+    "session_id": {
+      "description": "Session this artifact belongs to.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "baseline_run_id",
+    "baseline_rerun_id",
+    "noise_floor_pct",
+    "candidates"
+  ],
+  "title": "Candidates",
+  "type": "object"
+}

@@ -27,18 +27,62 @@ pub struct Candidates {
     pub noise_floor_pct: f64,
     /// One entry per identified workload-entry family.
     pub candidates: Vec<Candidate>,
+    /// Counter-search audit: workload families the triage agent considered
+    /// during its counter-search step but did NOT promote, each with a
+    /// one-line code-level rejection reason. The audit lives here as a
+    /// typed field rather than in the agent's final-message narrative so
+    /// it survives parse-time validation (serde catches missing entries)
+    /// and downstream tooling can render the audit programmatically.
+    ///
+    /// May be empty when the slate was dominated by a single clear
+    /// winner and no alternatives needed rejecting — but a non-empty
+    /// candidates list with empty `rejected_families` is a smell
+    /// (suggests counter-search was skipped).
+    pub rejected_families: Vec<RejectedFamily>,
+    /// Per-lens slate coverage report: how many candidates each
+    /// value-axis lens contributed, plus the operator weights and any
+    /// redistribution notes. Replaces the agent's
+    /// "Per-lens slate coverage" final-message section with a typed
+    /// summary that downstream consumers can read without scraping
+    /// markdown.
+    pub lens_coverage: LensCoverage,
 }
 
 impl Candidates {
-    /// Cross-field validation: every candidate's `representative_ids` shape
-    /// matches its declared `kind`. Serde already enforces required fields
-    /// + `deny_unknown_fields` per variant.
+    /// Cross-field validation: every candidate's `representative_ids`
+    /// shape matches its declared `kind`, and `lens_coverage` tallies
+    /// agree with the per-lens distribution of `candidates[]`. Serde
+    /// already enforces required fields + `deny_unknown_fields` per
+    /// variant.
     pub fn validate(&self) -> Result<(), String> {
         for c in &self.candidates {
             if c.id.is_empty() {
                 return Err("candidate id is empty".to_owned());
             }
             c.validate_kind_consistency()?;
+        }
+        // Tally accepted candidates by lens; reject if `lens_coverage`
+        // disagrees. The agent fills the tallies itself; this is the
+        // contract that catches inflated or off-by-one counts.
+        let (mut latency, mut throughput, mut commit) = (0u32, 0u32, 0u32);
+        for c in &self.candidates {
+            match c.selection_lens {
+                SelectionLens::TxLatency => latency += 1,
+                SelectionLens::TenureThroughput => throughput += 1,
+                SelectionLens::CommitTime => commit += 1,
+            }
+        }
+        let lc = &self.lens_coverage;
+        if lc.tx_latency != latency
+            || lc.tenure_throughput != throughput
+            || lc.commit_time != commit
+        {
+            return Err(format!(
+                "lens_coverage tallies disagree with per-lens candidate counts: reported \
+                 {{tx_latency: {}, tenure_throughput: {}, commit_time: {}}} vs actual \
+                 {{tx_latency: {latency}, tenure_throughput: {throughput}, commit_time: {commit}}}",
+                lc.tx_latency, lc.tenure_throughput, lc.commit_time,
+            ));
         }
         Ok(())
     }
@@ -148,6 +192,51 @@ pub struct ContractFunction {
     pub contract: String,
     /// Function name.
     pub function: String,
+}
+
+/// One entry in [`Candidates::rejected_families`] — a family the
+/// triage agent considered during counter-search and rejected with a
+/// code-level reason.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RejectedFamily {
+    /// Stable kebab-case family identifier describing what was
+    /// considered (e.g. `serialization-clarity-values`,
+    /// `hashing-keccak-do-fold`). Same naming convention as accepted
+    /// candidates' `id`.
+    #[schemars(regex(pattern = KEBAB_PATTERN))]
+    pub family_id: String,
+    /// The lens the family would have been promoted on if accepted.
+    pub lens: SelectionLens,
+    /// One-line code-level rejection reason. Examples: "below noise
+    /// floor in absolute terms", "dominated by 1-2 outlier
+    /// representatives", "already addressed by an existing cache",
+    /// "cross-epoch Clarity-cost aggregate only".
+    pub reason: String,
+}
+
+/// Per-lens slate coverage summary on [`Candidates`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LensCoverage {
+    /// Number of accepted candidates whose
+    /// `selection_lens == "tx_latency"`.
+    pub tx_latency: u32,
+    /// Number of accepted candidates whose
+    /// `selection_lens == "tenure_throughput"`.
+    pub tenure_throughput: u32,
+    /// Number of accepted candidates whose
+    /// `selection_lens == "commit_time"`.
+    pub commit_time: u32,
+    /// Operator weights applied (the `stacks_bench_axis_weights`
+    /// setting passed to triage, verbatim — comma-separated triple
+    /// `tx_latency,tenure_throughput,commit_time`).
+    pub weights_applied: String,
+    /// Optional notes on redistribution or honest-omission decisions
+    /// (e.g. "throughput contributed 0; no contracts above 5% of any
+    /// Clarity-budget axis"). Skipped from output when empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redistribution_notes: Option<String>,
 }
 
 /// Aggregate cost signal across the whole run, populated from

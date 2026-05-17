@@ -83,6 +83,15 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let prompts_dir = inputs
         .settings
         .require_prompt_overrides_dir()?;
+    // Resolve per-phase context-doc paths from the bundle manifest.
+    // Replaces the prior hard-coded `prompts_dir.join("<doc>.md")` —
+    // which docs apply to which phase is now declared in the sidecars
+    // under `<context_dir>/<id>.toml`, and the orchestrator just
+    // surfaces the paths the prompt body references by name.
+    let ctx_paths = crate::context::paths_for_phase(
+        &inputs.framework.context_dir,
+        crate::context::Phase::Triage,
+    )?;
     let rendered = prompts::render(
         "triage",
         &prompts::TriagePrompt {
@@ -104,14 +113,9 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             baseline_run_id: baseline_run_id.to_string(),
             baseline_rerun_id: baseline_rerun_id.to_string(),
             precomputed_noise_floor_pct,
-            non_targets_path: prompts_dir
-                .join("non-targets.md")
-                .to_string_lossy()
-                .into_owned(),
-            bucket_anchors_path: prompts_dir
-                .join("bucket-anchors.md")
-                .to_string_lossy()
-                .into_owned(),
+            non_targets_path: crate::context::ctx_path(&ctx_paths, "non-targets")?,
+            bucket_anchors_path: crate::context::ctx_path(&ctx_paths, "bucket-anchors")?,
+            domain_context_path: crate::context::ctx_path(&ctx_paths, "stacks-domain-context")?,
             candidates_schema_path: inputs
                 .framework
                 .schemas_dir
@@ -168,8 +172,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             .require_base()?
             .to_path_buf(),
         // Operator-side bundles (rendered prompt references files
-        // inside each by absolute path: bucket-anchors.md / non-targets.md
-        // in prompts, *.sql in queries, candidates.schema.json in schemas).
+        // inside each by absolute path: *.sql in queries,
+        // candidates.schema.json in schemas, reference docs in context).
         inputs
             .framework
             .queries_dir
@@ -177,6 +181,10 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         inputs
             .framework
             .schemas_dir
+            .clone(),
+        inputs
+            .framework
+            .context_dir
             .clone(),
         prompts_dir.to_path_buf(),
     ];
@@ -222,6 +230,19 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         .validate()
         .map_err(|e| anyhow::anyhow!("candidates.json failed cross-field validation: {e}"))?;
 
+    // 6. Generate the human-readable `candidates.md` view from the validated JSON.
+    //    The agent no longer writes this file; the JSON is the contract, markdown
+    //    is orchestrator-derived sugar.
+    let rendered_md = render_candidates_md(&candidates);
+    fs::write(layout.candidates_md(), rendered_md).with_context(|| {
+        format!(
+            "writing derived {}",
+            layout
+                .candidates_md()
+                .display()
+        )
+    })?;
+
     let candidate_count = candidates.candidates.len();
     Ok(Outputs {
         candidate_count,
@@ -233,4 +254,84 @@ fn is_non_empty_file(path: &std::path::Path) -> bool {
     fs::metadata(path)
         .map(|m| m.is_file() && m.len() > 0)
         .unwrap_or(false)
+}
+
+/// Render a human-readable `candidates.md` view from a validated
+/// [`crate::models::candidates::Candidates`]. Includes the candidate
+/// slate, the per-lens coverage tally, and the counter-search audit —
+/// everything the prior "agent-written final-message.md" was supposed
+/// to carry, now derived from typed fields so the audit content
+/// can't drift from the JSON.
+fn render_candidates_md(c: &crate::models::candidates::Candidates) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(2 * 1024);
+    let _ = writeln!(s, "# Triage candidates — session {}", c.session_id);
+    let _ = writeln!(s);
+    let _ = writeln!(
+        s,
+        "- baseline run id: `{}`  ·  rerun id: `{}`  ·  noise floor: `{:.4}%`",
+        c.baseline_run_id, c.baseline_rerun_id, c.noise_floor_pct,
+    );
+    let _ = writeln!(
+        s,
+        "- lens coverage: `tx_latency`={}, `tenure_throughput`={}, `commit_time`={}  ·  weights \
+         applied: `{}`",
+        c.lens_coverage.tx_latency,
+        c.lens_coverage
+            .tenure_throughput,
+        c.lens_coverage.commit_time,
+        c.lens_coverage
+            .weights_applied,
+    );
+    if let Some(notes) = &c
+        .lens_coverage
+        .redistribution_notes
+    {
+        let _ = writeln!(s, "- redistribution notes: {notes}");
+    }
+    let _ = writeln!(s);
+    let _ = writeln!(s, "## Promoted candidates ({})", c.candidates.len());
+    let _ = writeln!(s);
+    if c.candidates.is_empty() {
+        let _ = writeln!(
+            s,
+            "_None._ See **Rejected alternative families** below for what was investigated."
+        );
+    } else {
+        for cand in &c.candidates {
+            let _ = writeln!(s, "### `{}`", cand.id);
+            let _ = writeln!(s);
+            let _ = writeln!(s, "- **kind**: `{:?}`", cand.kind);
+            let _ = writeln!(s, "- **selection lens**: `{:?}`", cand.selection_lens);
+            if let Some(b) = &cand.bucket {
+                let _ = writeln!(s, "- **bucket**: `{b:?}`");
+            }
+            let _ = writeln!(s, "- **rationale**: {}", cand.rationale);
+            if let Some(spans) = &cand.suspected_spans {
+                let _ = writeln!(s, "- **suspected spans**: `{}`", spans.join("`, `"));
+            }
+            if let Some(gm) = &cand.global_materiality {
+                let _ = writeln!(
+                    s,
+                    "- **global materiality**: pct_blocks={:?}, self_wall_ms={:?}",
+                    gm.pct_blocks, gm.self_wall_ms,
+                );
+            }
+            let _ = writeln!(s);
+        }
+    }
+    let _ = writeln!(s, "## Rejected alternative families ({})", c.rejected_families.len());
+    let _ = writeln!(s);
+    if c.rejected_families.is_empty() {
+        let _ = writeln!(
+            s,
+            "_None._ (Agent reported the slate was dominated by clear winners; no counter-search \
+             alternatives needed rejecting.)",
+        );
+    } else {
+        for r in &c.rejected_families {
+            let _ = writeln!(s, "- `{}` (lens `{:?}`): {}", r.family_id, r.lens, r.reason,);
+        }
+    }
+    s
 }

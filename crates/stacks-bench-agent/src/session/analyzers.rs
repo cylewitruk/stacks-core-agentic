@@ -147,6 +147,10 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
     let prompts_dir = state
         .settings
         .require_prompt_overrides_dir()?;
+    let ctx_paths = crate::context::paths_for_phase(
+        &state.framework.context_dir,
+        crate::context::Phase::Analyzer,
+    )?;
     let rendered = prompts::render(
         "analyzer",
         &prompts::AnalyzerPrompt {
@@ -179,14 +183,9 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             baseline_run_id: state
                 .baseline_run_id
                 .to_string(),
-            non_targets_path: prompts_dir
-                .join("non-targets.md")
-                .to_string_lossy()
-                .into_owned(),
-            bucket_anchors_path: prompts_dir
-                .join("bucket-anchors.md")
-                .to_string_lossy()
-                .into_owned(),
+            non_targets_path: crate::context::ctx_path(&ctx_paths, "non-targets")?,
+            bucket_anchors_path: crate::context::ctx_path(&ctx_paths, "bucket-anchors")?,
+            domain_context_path: crate::context::ctx_path(&ctx_paths, "stacks-domain-context")?,
             analysis_schema_path: state
                 .framework
                 .schemas_dir
@@ -226,8 +225,8 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             .stacks_bench_data_dir
             .clone(),
         // Operator-side bundles (rendered prompt references files
-        // inside each by absolute path: bucket-anchors.md / non-targets.md
-        // in prompts, *.sql in queries, analysis.schema.json in schemas,
+        // inside each by absolute path: *.sql in queries,
+        // analysis.schema.json in schemas, reference docs in context,
         // plus the session's pre-rendered triage CSVs).
         state
             .framework
@@ -236,6 +235,10 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         state
             .framework
             .schemas_dir
+            .clone(),
+        state
+            .framework
+            .context_dir
             .clone(),
         prompts_dir.to_path_buf(),
         state
