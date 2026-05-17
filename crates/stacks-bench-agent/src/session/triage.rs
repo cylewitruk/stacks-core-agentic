@@ -88,6 +88,27 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // which docs apply to which phase is now declared in the sidecars
     // under `<context_dir>/<id>.toml`, and the orchestrator just
     // surfaces the paths the prompt body references by name.
+    // Hard-fail BEFORE rendering the prompt when any context doc
+    // declared as required for this phase is missing or empty on
+    // disk. The prompt would otherwise embed the missing absolute
+    // path and the agent would discover the broken read inside its
+    // own reasoning chain, surfacing as a confusing tool-call error.
+    let missing = crate::context::required_missing_for_phase(
+        &inputs.framework.context_dir,
+        crate::context::Phase::Triage,
+    )?;
+    if !missing.is_empty() {
+        let summary = missing
+            .iter()
+            .map(|(id, p)| format!("  - `{id}` → expected at {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "required context docs missing or empty for the triage phase:\n{summary}\n\nRun \
+             `sbagent sync` to restore from the binary's bundled defaults, or `sbagent check` to \
+             see the full drift report.",
+        );
+    }
     let ctx_paths = crate::context::paths_for_phase(
         &inputs.framework.context_dir,
         crate::context::Phase::Triage,
@@ -131,6 +152,11 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
                 .to_string_lossy()
                 .into_owned(),
             stacks_bench_axis_weights: inputs.axis_weights.to_owned(),
+            memory_dir: inputs
+                .framework
+                .memory_dir
+                .to_string_lossy()
+                .into_owned(),
         },
         prompts_dir,
     )?;
@@ -160,6 +186,21 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         .codex_dangerously_bypass_sandbox
         .unwrap_or(false);
 
+    // Ensure the operator memory dir exists BEFORE handing it to
+    // codex via --add-dir. On a fresh operator the dir may not have
+    // been created yet (the first `sbagent rejections probe` would
+    // otherwise create it via the lockfile open). Codex / the macOS
+    // sandbox treats a non-existent --add-dir target as "no write
+    // root granted", which would silently break the probe.
+    fs::create_dir_all(&inputs.framework.memory_dir).with_context(|| {
+        format!(
+            "creating operator memory dir at {}",
+            inputs
+                .framework
+                .memory_dir
+                .display(),
+        )
+    })?;
     let add_dirs: Vec<PathBuf> = vec![
         // Persistent stacks-bench db + stacks-core checkout (agent reads
         // these directly).
@@ -187,6 +228,14 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             .context_dir
             .clone(),
         prompts_dir.to_path_buf(),
+        // Operator memory dir. The agent's per-candidate
+        // `sbagent rejections probe --memory-dir <...>` invocations
+        // need this readable AND writable (probe's lock-acquire path
+        // creates the `.locks/memory.lock` file on first use).
+        inputs
+            .framework
+            .memory_dir
+            .clone(),
     ];
     let triage_dir = layout.triage_dir();
     let invoke_outputs = inputs
@@ -244,6 +293,26 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     })?;
 
     let candidate_count = candidates.candidates.len();
+    // Soft cap warning. The triage-only-rejects-on-quality-grounds
+    // architecture (no fixability gates) can produce 10-15+
+    // candidates per session early on, before the ledger has
+    // absorbed plausible-but-dead-end families. The soft cap exists
+    // so a degenerate run that dumps every workload-entry pattern
+    // surfaces an operator-visible warning rather than silently
+    // spawning N analyzer subagents.
+    let soft_cap = inputs
+        .settings
+        .triage_candidate_soft_cap
+        .unwrap_or(20);
+    if candidate_count > soft_cap {
+        tracing::warn!(
+            count = candidate_count,
+            soft_cap,
+            "triage emitted {candidate_count} candidates, exceeding soft cap of {soft_cap}; \
+             analyzer phase may be slow. Tune `triage_candidate_soft_cap` to silence, or expect \
+             the ledger to converge over the next few sessions.",
+        );
+    }
     Ok(Outputs {
         candidate_count,
         conversation_id: invoke_outputs.conversation_id,

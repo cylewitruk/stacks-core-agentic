@@ -34,8 +34,11 @@ Do not confuse:
 - `stacks-bench` synthetic block id: local integer id in one stacks-bench DB; not
   stable across data dirs, imports, or runs.
 
-Emit `block_hash`es in artifacts unless a schema explicitly asks for local DB ids.
-Heights and synthetic ids are not valid replay identifiers. 
+In artifacts, emit schema-named hashes — `tx_hash` for transactions and
+`stacks_block_hash` for Stacks blocks (the user-visible block hash, not
+`index_block_hash`). Never emit heights or `stacks-bench` synthetic ids.
+Never emit `index_block_hash` — it's an internal node identifier, not the
+user-visible replay form.
 
 ## Codebase Terms
 

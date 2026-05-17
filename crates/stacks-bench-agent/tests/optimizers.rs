@@ -163,6 +163,12 @@ impl GitCheckoutManager for FakeGit {
     }
 }
 
+// Stages a context dir with the bundled docs seeded so the
+// orchestrator's required-doc startup check passes.
+fn stage_context_seeds(framework: &std::path::Path) {
+    stacks_bench_agent::context::seed_to(&framework.join("context")).unwrap();
+}
+
 fn stage_framework_and_session(
     tmp: &tempfile::TempDir,
     targets: Vec<MergedTarget>,
@@ -170,6 +176,7 @@ fn stage_framework_and_session(
     let framework = tmp.path().join("framework");
     std::fs::create_dir_all(framework.join("prompts")).unwrap();
     std::fs::create_dir_all(framework.join("schemas")).unwrap();
+    stage_context_seeds(&framework);
     std::fs::create_dir_all(
         framework
             .join("repos")
@@ -187,6 +194,9 @@ fn stage_framework_and_session(
         context_dir: framework
             .clone()
             .join("context"),
+        memory_dir: framework
+            .clone()
+            .join("memory"),
         sessions_root: tmp.path().join("sessions"),
         stacks_bench_data_dir: tmp
             .path()

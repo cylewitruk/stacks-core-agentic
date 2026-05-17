@@ -190,6 +190,41 @@ pub struct Settings {
     #[serde(default)]
     pub prompt_overrides_dir: Option<PathBuf>,
 
+    /// Directory holding the operator's accumulated cross-session
+    /// memory — currently the analyzed-rejections ledger, with
+    /// room for future memory types (manual review decisions,
+    /// performance baseline history, etc.). Each memory file is a
+    /// JSONL or markdown artifact the operator can edit or trim
+    /// directly; a single `<memory_dir>/.locks/memory.lock` protects
+    /// concurrent writes from coordinator-side appends.
+    ///
+    /// Resolution when unset: `<operator>/memory/` derived from
+    /// `prompt_overrides_dir`'s parent (same sibling-of-tunables
+    /// pattern as `schemas_dir` / `context_overrides_dir`).
+    ///
+    /// Operator-visible top-level; NOT under `.sbagent/` because
+    /// this is accumulated bot knowledge, not bundled/synced state.
+    #[serde(default)]
+    pub memory_dir: Option<PathBuf>,
+
+    /// Maximum number of analyzer subagents the Phase 1.5 fan-out
+    /// runs in parallel. The analyzer is expensive (one Codex
+    /// invocation + a model with deep reasoning, several minutes
+    /// per family). The triage-rejects-only-on-quality-grounds
+    /// architecture (Axis 2) can produce 10-20 candidates per session
+    /// on early runs; capping parallelism prevents N concurrent
+    /// codex processes from saturating the host. Defaults to 4.
+    #[serde(default)]
+    pub analyzer_concurrency_cap: Option<usize>,
+
+    /// Soft cap on the number of triage candidates per session. The
+    /// orchestrator warns (but doesn't reject) when triage emits
+    /// more than this. Catches degenerate sessions where the agent
+    /// dumps every workload-entry pattern as a candidate. Defaults
+    /// to 20.
+    #[serde(default)]
+    pub triage_candidate_soft_cap: Option<usize>,
+
     /// Directory of operator-tunable context / reference docs (the
     /// agent's "brainstem"). Each entry is a markdown file + a TOML
     /// sidecar declaring which phases may surface it. See
@@ -432,6 +467,13 @@ pub fn default_context_dir(settings: &Settings) -> Option<PathBuf> {
         settings,
         "context",
     )
+}
+
+/// Operator-side default for `memory_dir`. Same sibling-of-tunables
+/// derivation as [`default_schemas_dir`]; see [`Settings::memory_dir`]
+/// for the full doc.
+pub fn default_memory_dir(settings: &Settings) -> Option<PathBuf> {
+    default_bundle_sibling(settings.memory_dir.as_ref(), settings, "memory")
 }
 
 /// Shared bundle-dir resolution: explicit override wins; otherwise

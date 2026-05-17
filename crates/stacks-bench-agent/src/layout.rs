@@ -122,6 +122,13 @@ pub struct Layout {
     /// conventional `.sbagent/context`. Phase orchestrators consult
     /// [`crate::context::paths_for_phase`] to resolve which docs apply.
     pub context_dir: PathBuf,
+    /// Operator's accumulated cross-session memory dir
+    /// (`<operator>/memory/` by convention). Top-level visible (NOT
+    /// under `.sbagent/`) because this is accumulated bot
+    /// knowledge — not bundled state. Houses the
+    /// analyzed-rejections ledger today; future memory types land
+    /// here too. See [`crate::analyzed_rejections`].
+    pub memory_dir: PathBuf,
     /// Sessions root — `<framework>/sessions` by default. Each session lives
     /// at `<sessions_root>/<id>/results`. Equivalent to bash
     /// `$OPT_SESSIONS_ROOT`.
@@ -305,11 +312,43 @@ impl Layout {
                 })
                 .unwrap_or_else(|| PathBuf::from(".sbagent").join("context")),
         )?;
+        // Memory dir derivation: same sibling-of-tunables rule as
+        // schemas/queries/context, except the natural sibling is
+        // `<operator>/memory/` (top-level, not under `.sbagent/`).
+        // When `prompt_overrides_dir = ".sbagent/prompts"`, the
+        // sibling helper yields `.sbagent/memory` which is wrong —
+        // we want `<operator>/memory`. So when the helper returned
+        // a path under `.sbagent/`, climb one level up.
+        let memory_dir = absolutize({
+            let derived = crate::settings::default_memory_dir(settings);
+            let chosen = derived.as_ref().map(|p| {
+                // If we ended up under `.sbagent/memory`, lift to
+                // `<operator>/memory` instead.
+                if p.parent()
+                    .and_then(|pp| pp.file_name())
+                    .is_some_and(|n| n == ".sbagent")
+                {
+                    p.parent()
+                        .and_then(|pp| pp.parent())
+                        .map_or_else(|| PathBuf::from("memory"), |gp| gp.join("memory"))
+                } else {
+                    p.clone()
+                }
+            });
+            chosen
+                .or_else(|| {
+                    framework
+                        .as_deref()
+                        .map(|fw| fw.join("memory"))
+                })
+                .unwrap_or_else(|| PathBuf::from("memory"))
+        })?;
         Ok(Self {
             framework: framework.map(FrameworkDir::new),
             schemas_dir,
             queries_dir,
             context_dir,
+            memory_dir,
             sessions_root,
             stacks_bench_data_dir,
             bench_lock,

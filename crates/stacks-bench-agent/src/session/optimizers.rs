@@ -752,6 +752,21 @@ where
     let prompts_dir = state
         .settings
         .require_prompt_overrides_dir()?;
+    let missing = crate::context::required_missing_for_phase(
+        &state.framework.context_dir,
+        crate::context::Phase::Optimizer,
+    )?;
+    if !missing.is_empty() {
+        let summary = missing
+            .iter()
+            .map(|(id, p)| format!("  - `{id}` → expected at {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::bail!(
+            "required context docs missing or empty for the optimizer phase:\n{summary}\n\nRun \
+             `sbagent sync` to restore from the binary's bundled defaults.",
+        );
+    }
     let ctx_paths = crate::context::paths_for_phase(
         &state.framework.context_dir,
         crate::context::Phase::Optimizer,

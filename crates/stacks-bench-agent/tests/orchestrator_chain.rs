@@ -376,6 +376,10 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
     let schemas = framework.join("schemas");
     std::fs::create_dir_all(&prompts).unwrap();
     std::fs::create_dir_all(&schemas).unwrap();
+    // Seed the bundled context docs — the orchestrator's required-doc
+    // startup check (added in Codex-review pass) fails when these are
+    // missing from disk.
+    stacks_bench_agent::context::seed_to(&framework.join("context")).unwrap();
     let base = framework
         .join("repos")
         .join("stacks-core");
@@ -386,6 +390,7 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
         schemas_dir: framework.join("schemas"),
         queries_dir: framework.join("queries"),
         context_dir: framework.join("context"),
+        memory_dir: framework.join("memory"),
         sessions_root,
         stacks_bench_data_dir: tmp.path().join("data"),
         bench_lock: tmp.path().join("bench.lock"),

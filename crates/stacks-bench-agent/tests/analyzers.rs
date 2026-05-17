@@ -131,6 +131,9 @@ fn stage_framework_and_session(
     std::fs::create_dir_all(framework.join("prompts")).unwrap();
     std::fs::create_dir_all(framework.join("schemas")).unwrap();
     std::fs::create_dir_all(framework.join("queries")).unwrap();
+    // Seed the bundled context docs — the orchestrator's required-doc
+    // startup check now fails when any of these are missing.
+    stacks_bench_agent::context::seed_to(&framework.join("context")).unwrap();
     std::fs::create_dir_all(
         framework
             .join("repos")
@@ -148,6 +151,9 @@ fn stage_framework_and_session(
         context_dir: framework
             .clone()
             .join("context"),
+        memory_dir: framework
+            .clone()
+            .join("memory"),
         sessions_root: tmp.path().join("sessions"),
         stacks_bench_data_dir: tmp
             .path()

@@ -175,23 +175,23 @@ pub fn ctx_path(paths: &BTreeMap<String, PathBuf>, id: &str) -> Result<String> {
         .into_owned())
 }
 
-/// Resolve `<dir>/<id>.md` for every bundled doc whose sidecar lists
-/// `phase` in its `phases`. Used by phase orchestrators to populate
-/// the per-doc template variables (`{{ non_targets_path }}`,
-/// `{{ bucket_anchors_path }}`, `{{ domain_context_path }}`, ...).
+/// Resolve `<dir>/<id>.md` for every bundled doc whose **effective
+/// sidecar** lists `phase` in its `phases`. "Effective" = the
+/// operator's on-disk `<dir>/<id>.toml` if present and parseable,
+/// otherwise the bundled default. This honors the operator-tunable
+/// contract documented in the module-level docs — an operator who
+/// edits `phases` in `<operator>/.sbagent/context/<id>.toml` sees
+/// their edits respected at runtime.
 ///
-/// Returns `id → absolute_path`. The path is built unconditionally; the
-/// file may or may not exist on disk at call time (operator may have
-/// deleted it). Drift checking is the operator-facing gate; here we
-/// just compute paths.
+/// Returns `id → absolute_path` for the markdown file. The path is
+/// built unconditionally — file presence is the next layer's job
+/// (see [`required_missing_for_phase`]).
 pub fn paths_for_phase(dir: &Path, phase: Phase) -> Result<BTreeMap<String, PathBuf>> {
-    let manifests = bundled_manifests()?;
+    let bundled = bundled_manifests()?;
     let mut out = BTreeMap::new();
-    for (id, (m, _)) in manifests {
-        if m.phases.contains(&phase) {
-            // Find the matching md file name (id + ".md") in the bundle.
-            // Could derive from id but go through the bundle table for
-            // safety against id/filename divergence.
+    for (id, (bundled_manifest, _)) in &bundled {
+        let phases = effective_phases(dir, id, bundled_manifest);
+        if phases.contains(&phase) {
             for d in BUNDLED {
                 if stem(d.md_name) == id {
                     out.insert(id.clone(), dir.join(d.md_name));
@@ -201,6 +201,82 @@ pub fn paths_for_phase(dir: &Path, phase: Phase) -> Result<BTreeMap<String, Path
         }
     }
     Ok(out)
+}
+
+/// Required-doc startup check. Returns the list of context docs that
+/// are declared required for the given phase (per the effective
+/// on-disk-or-bundled sidecar) but whose markdown body is missing
+/// or empty on disk. Orchestrators call this before invoking the
+/// agent and fail with a clear error when the list is non-empty —
+/// the prompt would otherwise tell the agent to read a path that
+/// doesn't resolve, surfacing as a confusing tool-call error inside
+/// the agent's reasoning.
+///
+/// Each entry: `(id, absolute_md_path)`.
+pub fn required_missing_for_phase(dir: &Path, phase: Phase) -> Result<Vec<(String, PathBuf)>> {
+    let bundled = bundled_manifests()?;
+    let mut missing = Vec::new();
+    for (id, (bundled_manifest, _)) in &bundled {
+        let phases = effective_phases(dir, id, bundled_manifest);
+        let required = effective_required(dir, id, bundled_manifest);
+        if !phases.contains(&phase) || !required {
+            continue;
+        }
+        // Find the matching md file in the bundle to learn the
+        // canonical filename.
+        let md_path = BUNDLED
+            .iter()
+            .find(|d| stem(d.md_name) == id)
+            .map(|d| dir.join(d.md_name));
+        if let Some(path) = md_path {
+            let is_present_and_nonempty = std::fs::metadata(&path)
+                .map(|m| m.is_file() && m.len() > 0)
+                .unwrap_or(false);
+            if !is_present_and_nonempty {
+                missing.push((id.clone(), path));
+            }
+        }
+    }
+    Ok(missing)
+}
+
+/// Load the operator's on-disk sidecar for `id` and return its
+/// `phases` field; on missing / unparseable, fall back to the bundled
+/// manifest's phases. Defense-in-depth: never blocks a phase on a
+/// broken sidecar — drift / lint catches bad sidecars elsewhere.
+fn effective_phases(dir: &Path, id: &str, bundled: &ContextManifest) -> Vec<Phase> {
+    match load_sidecar(dir, id) {
+        Some(m) => m.phases,
+        None => bundled.phases.clone(),
+    }
+}
+
+/// Same as [`effective_phases`] for the `required` field.
+fn effective_required(dir: &Path, id: &str, bundled: &ContextManifest) -> bool {
+    match load_sidecar(dir, id) {
+        Some(m) => m.required,
+        None => bundled.required,
+    }
+}
+
+/// Attempt to load `<dir>/<id>.toml` as a [`ContextManifest`]. Returns
+/// `None` when the file doesn't exist or fails to parse — `paths_for_phase`
+/// and `required_missing_for_phase` fall back to the bundled manifest
+/// in either case.
+fn load_sidecar(dir: &Path, id: &str) -> Option<ContextManifest> {
+    let path = dir.join(format!("{id}.toml"));
+    let content = std::fs::read_to_string(&path).ok()?;
+    match toml::from_str::<ContextManifest>(&content) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "on-disk context sidecar parse failed; falling back to bundled manifest",
+            );
+            None
+        }
+    }
 }
 
 /// Result of a [`seed_to`] call. Mirrors [`crate::prompts::SeedReport`].

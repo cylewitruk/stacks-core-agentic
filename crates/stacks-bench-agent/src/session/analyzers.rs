@@ -59,10 +59,21 @@ where
         return Ok(Outputs::default());
     }
 
-    let parallel = inputs
+    // Concurrency cap resolution order:
+    //   1. Explicit `inputs.parallel` (per-invocation override).
+    //   2. `Settings::analyzer_concurrency_cap` (operator config).
+    //   3. Hard default of 4 — small enough that even a degenerate triage session
+    //      emitting 20 candidates doesn't spawn 20 concurrent codex processes.
+    // Always capped by the candidate count (no point spinning up
+    // more permits than there are families to analyze).
+    let configured = inputs
         .parallel
-        .unwrap_or(candidates.candidates.len())
+        .or(inputs
+            .settings
+            .analyzer_concurrency_cap)
+        .unwrap_or(4)
         .max(1);
+    let parallel = configured.min(candidates.candidates.len());
     let semaphore = Arc::new(Semaphore::new(parallel));
 
     let mut set: JoinSet<Result<()>> = JoinSet::new();
@@ -71,6 +82,11 @@ where
             family_id: candidate.id.clone(),
             family_json: serde_json::to_string(candidate)
                 .context("serializing single-family slice for the analyzer prompt")?,
+            session_id: inputs
+                .layout
+                .id
+                .as_str()
+                .to_owned(),
             baseline_run_id: candidates.baseline_run_id,
             framework: inputs.framework.clone(),
             settings: inputs.settings.clone(),
@@ -123,6 +139,9 @@ where
 struct AnalyzerTaskInputs<H: AgentHarness + 'static> {
     family_id: String,
     family_json: String,
+    /// Session id — used by the post-analysis ledger-append hook to
+    /// record which session produced the rejection.
+    session_id: String,
     baseline_run_id: i64,
     framework: Layout,
     settings: Settings,
@@ -132,8 +151,10 @@ struct AnalyzerTaskInputs<H: AgentHarness + 'static> {
 }
 
 async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Result<()> {
-    let _permit = state
-        .sem
+    // Clone the Arc before acquire_owned consumes it so we can keep
+    // `state` whole for later borrows (e.g. the ledger-append hook).
+    let sem = state.sem.clone();
+    let _permit = sem
         .acquire_owned()
         .await
         .context("acquiring analyzer semaphore permit")?;
@@ -147,6 +168,23 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
     let prompts_dir = state
         .settings
         .require_prompt_overrides_dir()?;
+    // Hard-fail when any required context doc is missing — see the
+    // matching gate in `triage::run` for rationale.
+    let missing = crate::context::required_missing_for_phase(
+        &state.framework.context_dir,
+        crate::context::Phase::Analyzer,
+    )?;
+    if !missing.is_empty() {
+        let summary = missing
+            .iter()
+            .map(|(id, p)| format!("  - `{id}` → expected at {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::bail!(
+            "required context docs missing or empty for the analyzer phase:\n{summary}\n\nRun \
+             `sbagent sync` to restore from the binary's bundled defaults.",
+        );
+    }
     let ctx_paths = crate::context::paths_for_phase(
         &state.framework.context_dir,
         crate::context::Phase::Analyzer,
@@ -286,8 +324,23 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         );
     }
     let raw = std::fs::read_to_string(&analysis_path)?;
-    let _: Analysis = serde_json::from_str(&raw)
+    let analysis: Analysis = serde_json::from_str(&raw)
         .with_context(|| format!("parsing {}", analysis_path.display()))?;
+
+    // Ledger append hook. If the analyzer concluded the family is
+    // either rejected (signal was wrong) or accepted-with-not-
+    // actionable (signal was real but no structural handle), append
+    // a ledger entry so future triage sessions skip it. Failures are
+    // logged + tolerated — the ledger is a nice-to-have audit
+    // surface, not a critical phase output.
+    if let Err(e) = maybe_append_rejection(&state, &analysis, &analysis_path) {
+        tracing::warn!(
+            family_id = %state.family_id,
+            error = %e,
+            "analyzed-rejections ledger append failed; phase continues but the rejection \
+             will not be remembered across sessions",
+        );
+    }
     Ok(())
 }
 
@@ -295,4 +348,129 @@ fn is_non_empty_file(path: &std::path::Path) -> bool {
     std::fs::metadata(path)
         .map(|m| m.is_file() && m.len() > 0)
         .unwrap_or(false)
+}
+
+/// If the analyzer concluded the family is rejected or
+/// accepted-with-not-actionable, build a ledger record and append
+/// it in-process. Returns `Ok(())` when there's nothing to append
+/// (accepted-and-addressed analyses).
+///
+/// Calls the `analyzed_rejections` module directly rather than
+/// shelling out to `sbagent rejections append`: a child invocation
+/// of `current_exe()` does NOT inherit `--config-path`, which would
+/// silently route the append to the wrong `memory_dir`. In-process
+/// also drops a process spawn from the critical path.
+fn maybe_append_rejection<H: AgentHarness + 'static>(
+    state: &AnalyzerTaskInputs<H>,
+    analysis: &Analysis,
+    analysis_path: &std::path::Path,
+) -> Result<()> {
+    use crate::analyzed_rejections::{
+        self, FingerprintInputs, Outcome, Record, compute_fingerprint, now_utc_iso8601,
+    };
+    use crate::models::analyze::Analysis as A;
+    use crate::models::common::LensDispositionStatus;
+    let (outcome, reason) = match analysis {
+        A::Rejected(r) => (Outcome::Rejected, r.reason.clone()),
+        A::Accepted(a) if a.lens_disposition.status == LensDispositionStatus::NotActionable => (
+            Outcome::NotActionable,
+            a.lens_disposition
+                .reason
+                .clone()
+                .unwrap_or_else(|| "(analyzer did not provide a reason)".to_owned()),
+        ),
+        // Accepted-and-addressed: nothing to record.
+        A::Accepted(_) => return Ok(()),
+    };
+    // Parse the original candidate to extract lens, kind, suspected_spans,
+    // contract_function.
+    let candidate: crate::models::candidates::Candidate =
+        serde_json::from_str(&state.family_json).context("re-parsing candidate JSON for ledger")?;
+    let lens = match candidate.selection_lens {
+        crate::models::common::SelectionLens::TxLatency => "tx_latency",
+        crate::models::common::SelectionLens::TenureThroughput => "tenure_throughput",
+        crate::models::common::SelectionLens::CommitTime => "commit_time",
+    };
+    let kind = match candidate.kind {
+        crate::models::common::FamilyKind::TxFamily => "tx_family",
+        crate::models::common::FamilyKind::BlockFamily => "block_family",
+        crate::models::common::FamilyKind::ContractFamily => "contract_family",
+    };
+    let spans = candidate
+        .suspected_spans
+        .clone()
+        .unwrap_or_default();
+    let contract = match &candidate.representative_ids {
+        crate::models::candidates::RepresentativeIds::Contract { contract_function, .. } => {
+            Some(format!(
+                "{}.{}.{}",
+                contract_function.issuer, contract_function.contract, contract_function.function,
+            ))
+        }
+        _ => None,
+    };
+
+    // Gate on fingerprint specificity *before* doing any work the
+    // append would have rejected anyway. The append helper logs +
+    // skips, but bailing here keeps the call site simple to reason
+    // about and avoids computing the sha / record for nothing.
+    if !analyzed_rejections::fingerprint_specific_enough(&spans, contract.as_deref()) {
+        tracing::debug!(
+            family_id = %state.family_id,
+            "skipping ledger append: candidate has no suspected_spans and no contract \
+             — fingerprint would collide with every family on the same lens/kind",
+        );
+        return Ok(());
+    }
+
+    let stacks_core_sha = state
+        .framework
+        .require_base()
+        .ok()
+        .and_then(|base| {
+            std::process::Command::new("git")
+                .args(["-C"])
+                .arg(base)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|out| {
+                    if out.status.success() {
+                        Some(
+                            String::from_utf8_lossy(&out.stdout)
+                                .trim()
+                                .to_owned(),
+                        )
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let fingerprint = compute_fingerprint(&FingerprintInputs {
+        lens,
+        kind,
+        suspected_spans: &spans,
+        contract_function: contract.as_deref(),
+    });
+    let record = Record {
+        ts: now_utc_iso8601(),
+        session_id: state.session_id.clone(),
+        family_id: state.family_id.clone(),
+        lens: lens.to_owned(),
+        outcome,
+        kind: kind.to_owned(),
+        suspected_spans: spans,
+        contract_function: contract,
+        fingerprint,
+        stacks_core_sha,
+        reason,
+        evidence_path: Some(
+            analysis_path
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    };
+    analyzed_rejections::append(&state.framework.memory_dir, &record)
+        .context("appending analyzed-rejection record")
 }

@@ -311,6 +311,11 @@ pub struct TriagePrompt {
     /// Comma-separated axis weights
     /// (`tx_latency,tenure_throughput,commit_time`).
     pub stacks_bench_axis_weights: String,
+    /// Absolute operator memory dir. The agent passes this verbatim
+    /// to `sbagent rejections probe --memory-dir <...>` so the
+    /// sandboxed child reads the orchestrator-resolved ledger
+    /// instead of whatever it would resolve from its own cwd.
+    pub memory_dir: String,
 }
 
 impl Prompt for TriagePrompt {
@@ -512,6 +517,7 @@ impl TriagePrompt {
             queries_dir: "/tmp/lint/queries".into(),
             triage_queries_dir: "/tmp/lint/triage/queries".into(),
             stacks_bench_axis_weights: "0.4,0.4,0.2".into(),
+            memory_dir: "/tmp/lint/memory".into(),
         }
     }
 }

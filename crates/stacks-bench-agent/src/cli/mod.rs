@@ -17,6 +17,7 @@ pub mod init;
 pub mod preflight;
 pub mod prompt;
 pub mod publish;
+pub mod rejections;
 pub mod schema;
 pub mod session;
 pub mod sync;
@@ -58,6 +59,13 @@ pub enum Command {
 
     /// Publish PRs / issues for a session's accepted artifacts. Stub.
     Publish(publish::PublishArgs),
+
+    /// Operate on the cross-session analyzed-rejections ledger
+    /// (probe / append / list / show / search / render / remove /
+    /// trim / fingerprint). Agents call `probe`; coordinators call
+    /// `append`; operators use the rest for inspection and
+    /// housekeeping.
+    Rejections(rejections::RejectionsArgs),
 
     /// Schema-related commands (export typed models to JSON Schema files).
     Schema(schema::SchemaArgs),
@@ -244,6 +252,7 @@ pub async fn dispatch(args: CliArgs) -> Result<()> {
         Command::Init(_) => unreachable!("handled before CliContext build"),
         Command::Prompt(a) => prompt::run(a, &ctx).await,
         Command::Publish(a) => publish::run(a, &ctx).await,
+        Command::Rejections(a) => rejections::run(a, &ctx).await,
         Command::Schema(a) => schema::run(a, &ctx).await,
         Command::Session(a) => session::run(a, &ctx).await,
         Command::Sync(a) => sync::run(a, &ctx).await,
