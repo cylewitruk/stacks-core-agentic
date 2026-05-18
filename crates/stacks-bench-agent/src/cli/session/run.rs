@@ -285,8 +285,13 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
             range: bench_experiments::BenchRange {
                 source_dir,
                 network,
-                start_at: range.start_at,
-                count: range.count,
+                // The full-pipeline orchestrator always runs baseline,
+                // so the resolver has already produced concrete values
+                // here. Wrap as Some for BenchRange's Option-typed slot
+                // (which is None-able only on the `session bench run`
+                // standalone path with all-recipe targets).
+                start_at: Some(range.start_at),
+                count: Some(range.count),
                 warmup: range.warmup,
                 filter: range.filter.as_deref(),
                 shadow_dir_root: ctx

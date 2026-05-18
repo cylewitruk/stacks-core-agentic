@@ -68,10 +68,15 @@ pub struct BenchRange<'a> {
     pub source_dir: &'a Path,
     /// `--network` arg.
     pub network: &'a str,
-    /// `--start-at` arg.
-    pub start_at: u64,
-    /// `--count` arg.
-    pub count: u64,
+    /// `--start-at` arg. Only used in full-range mode (no
+    /// `verification_replay` on the target); required when at least
+    /// one target needs that mode, ignored otherwise. The CLI's
+    /// preflight enforces presence iff a target actually needs it,
+    /// so reaching the full-range fallback path with `None` here is a
+    /// caller bug.
+    pub start_at: Option<u64>,
+    /// `--count` arg. Same semantics as [`Self::start_at`].
+    pub count: Option<u64>,
     /// Optional `--warmup` arg.
     pub warmup: Option<u64>,
     /// Optional `--filter` arg (e.g. `contract-call`).
@@ -359,13 +364,26 @@ fn build_phases(target: &MergedTarget, range: &BenchRange<'_>) -> Vec<BenchPhase
     }
 
     // Full-range default: two invocations for variance smoothing.
+    // start_at + count MUST be Some here — the CLI preflight rejects
+    // configs missing them whenever any target lacks a recipe. Unwrap
+    // via .expect with a pointed message so a future regression in
+    // the preflight surfaces as a clear panic instead of a confusing
+    // bench failure.
+    let start_at = range.start_at.expect(
+        "reached full-range bench fallback with BenchRange.start_at=None; CLI preflight should \
+         have required it",
+    );
+    let count = range.count.expect(
+        "reached full-range bench fallback with BenchRange.count=None; CLI preflight should have \
+         required it",
+    );
     (1..=2u32)
         .map(|n| {
             let mut extra = Vec::with_capacity(6);
             extra.push("--start-at".to_owned());
-            extra.push(range.start_at.to_string());
+            extra.push(start_at.to_string());
             extra.push("--count".to_owned());
-            extra.push(range.count.to_string());
+            extra.push(count.to_string());
             if let Some(w) = range.warmup {
                 extra.push("--warmup".to_owned());
                 extra.push(w.to_string());
