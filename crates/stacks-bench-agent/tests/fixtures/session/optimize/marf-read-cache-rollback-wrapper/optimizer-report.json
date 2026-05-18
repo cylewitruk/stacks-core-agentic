@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "session_id": "20260507-104400",
+  "target_id": "marf-read-cache-rollback-wrapper",
+  "outcome": "implemented",
+  "delivery_mode": "normal_pr",
+  "implementation_summary": "Added a read-through cache to RollbackWrapper to avoid redundant MARF reads during tx execution.",
+  "test_summary": {
+    "framework": "nextest",
+    "passed": 1234,
+    "failed": 0,
+    "duration_secs": 421.3,
+    "log_path": "nextest.log"
+  },
+  "clippy_clean": true,
+  "pr_title": "perf: add read-through cache to RollbackWrapper",
+  "parity": {
+    "consensus_sensitive": false,
+    "evidence": [],
+    "tests": [],
+    "unproven_risk": null
+  }
+}

@@ -1,19 +1,23 @@
 //! Phase 4: produce `summary.json` + `summary.md` for one session.
 //!
-//! Per-target dispatch:
-//! - `consensus_issue` → `RoutedToIssue` if marker present, else `Aborted`.
-//! - `consensus_poc_pr` → `Aborted` if `abort.md` present, `PocLanded` if
-//!   `implementation.md` present, else `Aborted` (no output at all).
-//! - `normal_pr` → `Aborted` if `abort.md` present or no run-ids; otherwise
-//!   compare bench means. `improvement_pct > noise_floor` → `Accepted`, `<
-//!   -noise_floor` → `Rejected (regression)`, otherwise `Rejected (within
-//!   noise)`.
+//! Per-target dispatch (reads the typed `optimizer-report.json` written
+//! by Phase 2 for non-consensus_issue targets):
+//! - `consensus_issue` → `RoutedToIssue` if `consensus-issue.md` marker present
+//!   (coordinator-written; the optimizer is skipped for this mode), else
+//!   `Aborted`.
+//! - `consensus_poc_pr` → `PocLanded` if `outcome=implemented`, `Aborted`
+//!   otherwise (either `outcome=aborted` or no report at all).
+//! - `normal_pr` → `Aborted` if `outcome=aborted` or no report or no run-ids;
+//!   otherwise compare bench means. `improvement_pct > noise_floor` →
+//!   `Accepted`, `< -noise_floor` → `Rejected (regression)`, otherwise
+//!   `Rejected (within noise)`.
 
 use std::fs;
 
 use anyhow::{Context as _, Result};
 
 use crate::models::common::{DeliveryMode, SchemaVersionV2};
+use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::{
     ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
     OutcomeCounts, Summary,
@@ -151,6 +155,8 @@ fn evaluate_target(
     noise_floor_pct: f64,
 ) -> Result<Experiment> {
     // consensus_issue: marker present → RoutedToIssue, else Aborted.
+    // This is the only branch that still reads a marker file directly,
+    // because the coordinator (not the agent) writes consensus-issue.md.
     if t.delivery_mode == DeliveryMode::ConsensusIssue {
         let marker = inputs
             .layout
@@ -167,29 +173,39 @@ fn evaluate_target(
         return Ok(experiment(t, status, None, None, reason));
     }
 
-    // Subagent abort marker (any non-issue mode).
-    let abort_path = inputs
-        .layout
-        .experiment_abort(&t.id);
-    if is_non_empty_file(&abort_path) {
-        let reason = read_abort_reason(&abort_path)?;
-        return Ok(experiment(t, ExperimentStatus::Aborted, None, None, Some(reason)));
-    }
+    // Non-issue modes read the typed optimizer report. The report's
+    // `outcome` is the agent's authoritative claim about what happened;
+    // for `normal_pr` the bench-eval flow layers on top. The
+    // context-checking variant rejects reports whose target_id /
+    // session_id / delivery_mode don't match the merged target's, so a
+    // misbehaving agent can't claim a different mode to bypass
+    // mode-specific invariants.
+    let report = loader::read_optimizer_report_for_target(inputs.layout, &t.id, t.delivery_mode)
+        .with_context(|| format!("reading optimizer-report.json for {}", t.id))?;
 
-    // consensus_poc_pr: implementation.md presence is the success gate.
+    let implemented = match report {
+        None => {
+            return Ok(experiment(
+                t,
+                ExperimentStatus::Aborted,
+                None,
+                None,
+                Some(
+                    "no optimizer-report.json emitted — Phase 2 agent crashed or never ran"
+                        .to_owned(),
+                ),
+            ));
+        }
+        Some(OptimizerReport::Aborted(r)) => {
+            return Ok(experiment(t, ExperimentStatus::Aborted, None, None, Some(r.reason)));
+        }
+        Some(OptimizerReport::Implemented(r)) => r,
+    };
+
+    // consensus_poc_pr: implemented → PocLanded (no bench).
     if t.delivery_mode == DeliveryMode::ConsensusPocPr {
-        let impl_path = inputs
-            .layout
-            .experiment_implementation(&t.id);
-        let status = if is_non_empty_file(&impl_path) {
-            ExperimentStatus::PocLanded
-        } else {
-            ExperimentStatus::Aborted
-        };
-        let reason = (status == ExperimentStatus::Aborted).then(|| {
-            "no implementation.md emitted (PoC-mode optimizer produced no output)".to_owned()
-        });
-        return Ok(experiment(t, status, None, None, reason));
+        let _ = implemented; // landed; agent's pr_title etc. stay in the typed report
+        return Ok(experiment(t, ExperimentStatus::PocLanded, None, None, None));
     }
 
     // normal_pr: bench-eval flow.
@@ -272,29 +288,6 @@ fn experiment(
         breakage_class: t.breakage_class,
         reason,
     }
-}
-
-/// First 300 chars of the abort.md, with newlines collapsed and edges
-/// trimmed. Mirrors the bash `REASON=$(head -c 4096 ... | tr ... | awk ... |
-/// cut -c1-300)`.
-fn read_abort_reason(path: &std::path::Path) -> Result<String> {
-    let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let head: String = raw
-        .chars()
-        .take(4096)
-        .collect();
-    let collapsed: String = head
-        .chars()
-        .map(|c| if c == '\n' { ' ' } else { c })
-        .collect();
-    let trimmed = collapsed
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    Ok(trimmed
-        .chars()
-        .take(300)
-        .collect())
 }
 
 /// Aggregate experiment outcomes into the schema-shaped `outcome_counts`.

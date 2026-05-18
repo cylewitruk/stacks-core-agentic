@@ -18,9 +18,9 @@
 //! - `normal_pr` — needs `summary.experiments[id].status == "accepted"`, then
 //!   runs `pr-writer.md`. Push: PR (draft per `PUBLISH_DRAFT_PRS`,
 //!   default-labeled).
-//! - `consensus_poc_pr` — needs `optimize/<id>/implementation.md`, then runs
-//!   `pr-writer.md`. Push: PR ALWAYS draft, with the safety labels
-//!   `consensus-change,needs-HIP,do-not-merge`.
+//! - `consensus_poc_pr` — needs `optimize/<id>/optimizer-report.json` with
+//!   `outcome=implemented`, then runs `pr-writer.md`. Push: PR ALWAYS draft,
+//!   with the safety labels `consensus-change,needs-HIP,do-not-merge`.
 //! - `consensus_issue` — needs `optimize/<id>/consensus-issue.md`, then runs
 //!   `issue-writer.md`. Push: issue with the safety labels
 //!   `consensus-change,needs-HIP`. Idempotent via a hidden trace tag in the
@@ -34,6 +34,7 @@ use anyhow::{Context as _, Result, bail};
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::common::DeliveryMode;
+use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::{ExperimentStatus, Summary};
 use crate::models::targets::MergedTarget;
 use crate::prompts;
@@ -133,10 +134,19 @@ fn decide_publish(
             }
         }
         DeliveryMode::ConsensusPocPr => {
-            if is_non_empty_file(&exp_dir.join("implementation.md")) {
-                PublishDecision::ShipPr
-            } else {
-                PublishDecision::Skip("no-implementation".to_owned())
+            // Gate on the typed report's outcome, not the rendered
+            // companion file (the markdown might be present-but-stale
+            // if a prior phase wrote it before a demotion). Use the
+            // context-checking loader so a misbehaving agent can't
+            // emit a report claiming a different mode to bypass
+            // mode-specific invariants.
+            match loader::read_optimizer_report_for_target(layout, &target.id, target.delivery_mode)
+            {
+                Ok(Some(OptimizerReport::Implemented(_))) => PublishDecision::ShipPr,
+                Ok(Some(OptimizerReport::Aborted(_))) | Ok(None) => {
+                    PublishDecision::Skip("no-implementation".to_owned())
+                }
+                Err(e) => PublishDecision::Skip(format!("optimizer-report error: {e}")),
             }
         }
         DeliveryMode::ConsensusIssue => {
@@ -156,8 +166,17 @@ async fn run_pr_writer<H: AgentHarness>(
     let exp_dir = inputs
         .layout
         .experiment_dir(&target.id);
-    if !is_non_empty_file(&exp_dir.join("implementation.md")) {
-        bail!("missing implementation.md for {}", target.id);
+    // Pre-flight: the typed optimizer report must say `implemented`
+    // AND its context (target_id/session_id/delivery_mode) must match
+    // the merged target. pr-writer only runs after `decide_publish`
+    // already cleared this gate, so this check is defense-in-depth.
+    match loader::read_optimizer_report_for_target(inputs.layout, &target.id, target.delivery_mode)?
+    {
+        Some(OptimizerReport::Implemented(_)) => {}
+        _ => bail!(
+            "missing or non-implemented optimizer-report.json for {} (cannot ship a PR)",
+            target.id
+        ),
     }
     let target_json = serde_json::to_string_pretty(target)?;
     let summary = loader::read_summary(inputs.layout).ok();

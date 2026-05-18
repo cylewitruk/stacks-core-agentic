@@ -92,6 +92,36 @@ impl AgentHarness for CodexHarness {
             cmd.arg("--ask-for-approval")
                 .arg("never");
         }
+        // Grant write access to every `add_dirs` path via the TOML config
+        // grammar, NOT via the `--add-dir` exec flag. Reason: in
+        // codex 0.130.0, `--add-dir <path>` adds the path to the
+        // workspace-write writable_roots *listing* but the OS sandbox
+        // grant doesn't take effect for paths outside the default
+        // whitelist (`/tmp`, `$TMPDIR`, auto-discovered repo roots).
+        // Empirical: `apply_patch` writes to `/Users/.../sessions/...`
+        // get rejected with `patch rejected: writing outside of the
+        // project; rejected by user approval settings`; even raw shell
+        // `printf >` writes fail with `operation not permitted`. The
+        // `-c sandbox_workspace_write.writable_roots=[...]` form works
+        // for both. Skip when bypassing sandbox (the override is moot
+        // in danger-full-access mode).
+        if !inputs.dangerously_bypass_sandbox && !inputs.add_dirs.is_empty() {
+            let toml_array = inputs
+                .add_dirs
+                .iter()
+                .map(|p| {
+                    let escaped = p
+                        .display()
+                        .to_string()
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"");
+                    format!("\"{escaped}\"")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            cmd.arg("-c")
+                .arg(format!("sandbox_workspace_write.writable_roots=[{toml_array}]"));
+        }
 
         // exec subcommand.
         cmd.arg("exec");
@@ -100,9 +130,6 @@ impl AgentHarness for CodexHarness {
         }
         cmd.arg("--cd")
             .arg(inputs.cwd);
-        for d in inputs.add_dirs {
-            cmd.arg("--add-dir").arg(d);
-        }
         if !inputs.dangerously_bypass_sandbox {
             cmd.arg("--sandbox")
                 .arg("workspace-write");

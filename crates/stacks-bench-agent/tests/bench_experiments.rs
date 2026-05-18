@@ -112,6 +112,52 @@ impl BenchClient for RecordingBench {
     }
 }
 
+/// Seed a typed `optimizer-report.json` with `outcome=implemented` for
+/// `target_id` in the experiment dir. Tests that exercise the bench
+/// path need this so the typed-report gate in `static_skip_reason`
+/// permits the target. The `session_id` MUST match `make_layout`'s id
+/// or the context-checking loader rejects.
+fn write_implemented_report(layout: &SessionLayout, target_id: &str) {
+    use stacks_bench_agent::models::common::SchemaVersionV2;
+    use stacks_bench_agent::models::optimizer_report::{
+        ImplementedOutcomeTag, ImplementedReport, OptimizerReport, ParityReport, TestFramework,
+        TestSummary,
+    };
+    let exp = layout.experiment_dir(target_id);
+    std::fs::create_dir_all(&exp).unwrap();
+    let report = OptimizerReport::Implemented(ImplementedReport {
+        schema_version: SchemaVersionV2,
+        session_id: "20260507-104400".to_owned(),
+        target_id: target_id.to_owned(),
+        outcome: ImplementedOutcomeTag::Implemented,
+        delivery_mode: DeliveryMode::NormalPr,
+        implementation_summary: "test impl".to_owned(),
+        deviation_from_proposed_change: None,
+        dependency_changes: None,
+        test_summary: TestSummary {
+            framework: TestFramework::Nextest,
+            passed: 1,
+            failed: 0,
+            duration_secs: 1.0,
+            log_path: "nextest.log".to_owned(),
+        },
+        clippy_clean: Some(true),
+        pr_title: "perf: test".to_owned(),
+        parity: ParityReport {
+            consensus_sensitive: false,
+            evidence: vec![],
+            tests: vec![],
+            unproven_risk: None,
+        },
+        hard_fork_followup: None,
+    });
+    std::fs::write(
+        exp.join("optimizer-report.json"),
+        serde_json::to_string_pretty(&report).unwrap(),
+    )
+    .unwrap();
+}
+
 fn make_layout(tmp: &tempfile::TempDir) -> SessionLayout {
     let id: SessionId = "20260507-104400"
         .to_owned()
@@ -187,6 +233,9 @@ fn bench_experiments_normal_pr_target_runs_two_invocations() {
         .join("benchmark.lock");
     // Create the worktree directory the build step expects to find.
     std::fs::create_dir_all(worktrees_root.join("target-a")).unwrap();
+    // Seed a typed `outcome=implemented` report so the bench gate
+    // doesn't skip the target.
+    write_implemented_report(&layout, "target-a");
 
     let targets_doc = make_targets(vec![target("target-a", DeliveryMode::NormalPr)]);
     let bench = RecordingBench::new(1000);
@@ -336,7 +385,11 @@ fn bench_experiments_skips_consensus_targets() {
 }
 
 #[test]
-fn bench_experiments_skips_targets_with_abort_marker() {
+fn bench_experiments_skips_targets_with_aborted_optimizer_report() {
+    use stacks_bench_agent::models::common::SchemaVersionV2;
+    use stacks_bench_agent::models::optimizer_report::{
+        AbortedOutcomeTag, AbortedReport, FailedGate, OptimizerReport,
+    };
     let tmp = tempfile::tempdir().unwrap();
     let layout = make_layout(&tmp);
     let worktrees_root = tmp.path().join("worktrees");
@@ -344,10 +397,26 @@ fn bench_experiments_skips_targets_with_abort_marker() {
     let bench_lock = tmp
         .path()
         .join("benchmark.lock");
-    // Pre-create the experiment dir + abort.md so static_skip_reason fires.
+    // Pre-create the experiment dir + a typed `outcome=aborted`
+    // report so the bench gate skips this target. session_id must
+    // match `make_layout`'s id or the context-checking loader rejects.
     let exp = layout.experiment_dir("aborted");
     std::fs::create_dir_all(&exp).unwrap();
-    std::fs::write(exp.join("abort.md"), b"aborted reason").unwrap();
+    let report = OptimizerReport::Aborted(AbortedReport {
+        schema_version: SchemaVersionV2,
+        session_id: "20260507-104400".to_owned(),
+        target_id: "aborted".to_owned(),
+        outcome: AbortedOutcomeTag::Aborted,
+        delivery_mode: DeliveryMode::NormalPr,
+        reason: "test abort".to_owned(),
+        failed_gate: Some(FailedGate::NoImplementationFound),
+        failing_tests: None,
+    });
+    std::fs::write(
+        exp.join("optimizer-report.json"),
+        serde_json::to_string_pretty(&report).unwrap(),
+    )
+    .unwrap();
 
     let targets_doc = make_targets(vec![target("aborted", DeliveryMode::NormalPr)]);
     let bench = RecordingBench::new(3000);
@@ -379,7 +448,10 @@ fn bench_experiments_skips_targets_with_abort_marker() {
     let TargetOutcome::Skipped { reason } = outcome else {
         panic!("expected skipped, got {outcome:?}");
     };
-    assert_eq!(reason, "aborted");
+    assert!(
+        reason.contains("optimizer report outcome=aborted"),
+        "unexpected skip reason: {reason}",
+    );
     assert!(bench.calls().is_empty());
 }
 
@@ -395,6 +467,9 @@ fn bench_experiments_uses_verification_replay_when_present() {
     let layout = make_layout(&tmp);
     let worktrees_root = tmp.path().join("worktrees");
     std::fs::create_dir_all(worktrees_root.join("repl-tgt")).unwrap();
+    // Seed a typed `outcome=implemented` report so the bench gate
+    // doesn't skip the target.
+    write_implemented_report(&layout, "repl-tgt");
     let bench_lock = tmp
         .path()
         .join("benchmark.lock");
@@ -570,6 +645,7 @@ fn bench_experiments_emits_shadow_dir_root_when_set() {
     let layout = make_layout(&tmp);
     let worktrees_root = tmp.path().join("worktrees");
     std::fs::create_dir_all(worktrees_root.join("tgt-A")).unwrap();
+    write_implemented_report(&layout, "tgt-A");
     let bench_lock = tmp
         .path()
         .join("benchmark.lock");

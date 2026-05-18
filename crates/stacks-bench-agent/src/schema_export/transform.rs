@@ -45,6 +45,8 @@ pub fn apply_invariants(schema: &mut Value) {
             // form in optimization-targets and summary.
             "LensDisposition" | "LensDispositionEntry" => inject_lens_disposition(def),
             "Experiment" => inject_experiment(def),
+            "ImplementedReport" => inject_implemented_report(def),
+            "AbortedReport" => inject_aborted_report(def),
             _ => {}
         }
     }
@@ -350,4 +352,172 @@ fn inject_experiment(def: &mut Value) {
             }),
         );
     }
+}
+
+/// ImplementedReport: mirrors the Rust-side [`ImplementedReport::validate`]
+/// invariants in JSON Schema. Six rules:
+///
+/// 1. `parity.consensus_sensitive == true` requires non-empty `evidence` and
+///    `tests` arrays whose items are also non-empty (`minLength: 1` per item —
+///    best the schema can do; Rust validator does the trim-aware check).
+/// 2. `parity.unproven_risk` must be `null` (Phase 2 territory).
+/// 3. `test_summary.failed` must be `0`.
+/// 4. Free-text fields (`implementation_summary`, `pr_title`,
+///    `test_summary.log_path`) must be `minLength: 1`.
+/// 5. `test_summary.duration_secs` must be `>= 0`.
+/// 6. `clippy_clean` matrix: `normal_pr` requires `true`, `consensus_poc_pr`
+///    unconstrained, `consensus_issue` impossible (the variant never appears on
+///    implemented reports).
+fn inject_implemented_report(def: &mut Value) {
+    // Rule 1: consensus_sensitive=true → parity.evidence + tests must
+    // be non-empty AND each item must contain at least one
+    // non-whitespace char (mirrors the Rust trim-aware check via
+    // `pattern: "\\S"`; `minLength: 1` alone would let `"   "` pass).
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": {
+                    "parity": {
+                        "properties": { "consensus_sensitive": { "const": true } },
+                        "required": ["consensus_sensitive"]
+                    }
+                },
+                "required": ["parity"]
+            },
+            "then": {
+                "properties": {
+                    "parity": {
+                        "properties": {
+                            "evidence": {
+                                "minItems": 1,
+                                "items": { "minLength": 1, "pattern": "\\S" }
+                            },
+                            "tests": {
+                                "minItems": 1,
+                                "items": { "minLength": 1, "pattern": "\\S" }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    );
+    // Rule 2: parity.unproven_risk must be null on implemented
+    append_all_of(
+        def,
+        json!({
+            "properties": {
+                "parity": {
+                    "properties": {
+                        "unproven_risk": { "type": "null" }
+                    }
+                }
+            }
+        }),
+    );
+    // Rule 3: test_summary.failed == 0
+    append_all_of(
+        def,
+        json!({
+            "properties": {
+                "test_summary": {
+                    "properties": { "failed": { "const": 0 } }
+                }
+            }
+        }),
+    );
+    // Rule 4: free-text fields non-blank (trim-aware via `pattern: "\\S"`
+    // — `minLength: 1` alone would let `"   "` slip through).
+    append_all_of(
+        def,
+        json!({
+            "properties": {
+                "implementation_summary": { "minLength": 1, "pattern": "\\S" },
+                "pr_title": { "minLength": 1, "pattern": "\\S" },
+                "test_summary": {
+                    "properties": { "log_path": { "minLength": 1, "pattern": "\\S" } }
+                }
+            }
+        }),
+    );
+    // Rule 5: test_summary.duration_secs >= 0 (finite-ness is intrinsic to JSON)
+    append_all_of(
+        def,
+        json!({
+            "properties": {
+                "test_summary": {
+                    "properties": { "duration_secs": { "minimum": 0 } }
+                }
+            }
+        }),
+    );
+    // Rule 6: clippy_clean by delivery_mode
+    // - normal_pr → must be true
+    // - consensus_poc_pr → unconstrained (any value or omission)
+    // - consensus_issue → impossible on implemented; force-fail by forbidding the
+    //   const value entirely
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": { "delivery_mode": { "const": "normal_pr" } },
+                "required": ["delivery_mode"]
+            },
+            "then": {
+                "required": ["clippy_clean"],
+                "properties": { "clippy_clean": { "const": true } }
+            }
+        }),
+    );
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": { "delivery_mode": { "const": "consensus_issue" } },
+                "required": ["delivery_mode"]
+            },
+            "then": false
+        }),
+    );
+}
+
+/// AbortedReport: mirrors the Rust-side [`AbortedReport::validate`]
+/// invariants. Two rules:
+///
+/// 1. `reason` must be `minLength: 1` (Rust validator does the trim-aware
+///    check).
+/// 2. `failed_gate == "nextest"` requires non-empty `failing_tests` with each
+///    item also non-empty.
+fn inject_aborted_report(def: &mut Value) {
+    // Rule 1: reason non-blank (trim-aware via `pattern: "\\S"`).
+    append_all_of(
+        def,
+        json!({
+            "properties": {
+                "reason": { "minLength": 1, "pattern": "\\S" }
+            }
+        }),
+    );
+    // Rule 2: failed_gate=nextest → non-empty failing_tests, each
+    // entry trim-aware non-blank.
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": { "failed_gate": { "const": "nextest" } },
+                "required": ["failed_gate"]
+            },
+            "then": {
+                "required": ["failing_tests"],
+                "properties": {
+                    "failing_tests": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": { "minLength": 1, "pattern": "\\S" }
+                    }
+                }
+            }
+        }),
+    );
 }

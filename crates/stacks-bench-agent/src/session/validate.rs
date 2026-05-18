@@ -125,13 +125,33 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
                             }
                         }
                         DeliveryMode::NormalPr | DeliveryMode::ConsensusPocPr => {
-                            let impl_path = layout.experiment_implementation(&t.id);
-                            let abort_path = layout.experiment_abort(&t.id);
-                            if !is_non_empty_file(&impl_path) && !is_non_empty_file(&abort_path) {
-                                report.missing.push(format!(
-                                    "optimize/{}/{{implementation.md|abort.md}}",
-                                    t.id
-                                ));
+                            // Validate against the typed optimizer-report.json
+                            // (the authoritative contract). The companion
+                            // implementation.md / abort.md are derived from
+                            // it post-hoc and can drift, so we don't check
+                            // for them — a stale companion alongside a
+                            // missing/malformed report would otherwise mask
+                            // the real problem.
+                            match loader::read_optimizer_report_for_target(
+                                layout,
+                                &t.id,
+                                t.delivery_mode,
+                            ) {
+                                Ok(Some(_)) => {}
+                                Ok(None) => {
+                                    report.missing.push(format!(
+                                        "optimize/{}/optimizer-report.json (agent never wrote it; \
+                                         Phase 2 crashed or didn't run)",
+                                        t.id
+                                    ));
+                                }
+                                Err(e) => {
+                                    report.missing.push(format!(
+                                        "optimize/{}/optimizer-report.json failed validation: \
+                                         {e:#}",
+                                        t.id
+                                    ));
+                                }
                             }
                         }
                     }

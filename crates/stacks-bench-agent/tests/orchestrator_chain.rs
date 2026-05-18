@@ -134,18 +134,56 @@ impl AgentHarness for ChainHarness {
 
         match kind {
             "optimizer" => {
-                // Marker written by optimizer based on delivery_mode.
-                // For consensus_issue, optimizer phase is skipped entirely
+                // Typed optimizer-report.json written by the agent. For
+                // consensus_issue, the optimizer phase is skipped entirely
                 // by the orchestrator; this branch only handles normal_pr
                 // and consensus_poc_pr.
+                use stacks_bench_agent::models::common::{DeliveryMode, SchemaVersionV2};
+                use stacks_bench_agent::models::optimizer_report::{
+                    ImplementedOutcomeTag, ImplementedReport, OptimizerReport, ParityReport,
+                    TestFramework, TestSummary,
+                };
+                let mode = match delivery {
+                    "consensus_poc_pr" => DeliveryMode::ConsensusPocPr,
+                    _ => DeliveryMode::NormalPr,
+                };
+                let report = OptimizerReport::Implemented(ImplementedReport {
+                    schema_version: SchemaVersionV2,
+                    // Must match the session id the test layout uses or
+                    // the coordinator's context-checking loader rejects
+                    // the report.
+                    session_id: "20260507-104400".to_owned(),
+                    target_id: target.clone(),
+                    outcome: ImplementedOutcomeTag::Implemented,
+                    delivery_mode: mode,
+                    implementation_summary: format!("chain harness implementation for {target}"),
+                    deviation_from_proposed_change: None,
+                    dependency_changes: None,
+                    test_summary: TestSummary {
+                        framework: TestFramework::Nextest,
+                        passed: 1,
+                        failed: 0,
+                        duration_secs: 1.0,
+                        log_path: "nextest.log".to_owned(),
+                    },
+                    clippy_clean: Some(true),
+                    pr_title: format!("perf: chain {target}"),
+                    parity: ParityReport {
+                        consensus_sensitive: false,
+                        evidence: vec![],
+                        tests: vec![],
+                        unproven_risk: None,
+                    },
+                    hard_fork_followup: None,
+                });
                 std::fs::write(
-                    output_dir.join("implementation.md"),
-                    format!("# implementation for {target}\n"),
+                    output_dir.join("optimizer-report.json"),
+                    serde_json::to_string_pretty(&report)?,
                 )?;
-                // Layer 1B v2 pass-b.1: coordinator commits after the
-                // agent exits, requiring `git status --porcelain` to
-                // show changes. Simulate the agent's source edit so
-                // the coordinator commit contract is satisfied.
+                // Coordinator commits after the agent exits, requiring
+                // `git status --porcelain` to show changes. Simulate
+                // the agent's source edit so the coordinator commit
+                // contract is satisfied.
                 std::fs::write(
                     inputs
                         .cwd

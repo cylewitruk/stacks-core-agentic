@@ -30,7 +30,10 @@ use tokio::task::JoinSet;
 
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
-use crate::models::common::DeliveryMode;
+use crate::models::common::{DeliveryMode, SchemaVersionV2};
+use crate::models::optimizer_report::{
+    AbortedOutcomeTag, AbortedReport, FailedGate, ImplementedReport, OptimizerReport,
+};
 use crate::models::targets::MergedTarget;
 use crate::prompts;
 use crate::session::{SessionLayout, loader};
@@ -359,9 +362,9 @@ fn replicate_remotes(base: &Path, checkout: &Path) -> Result<()> {
 }
 
 /// Tear down the per-target git clone for every experiment in this
-/// session whose marker is `abort.md` (or has neither marker —
-/// meaning the agent crashed / never finished, equivalent to abort
-/// for cleanup purposes).
+/// session whose typed report says `outcome=aborted`, has no report at
+/// all (agent crashed / never finished), or whose report fails to
+/// parse / validate (treat as abort for cleanup purposes).
 ///
 /// Since each per-target checkout is a stand-alone clone (own `.git/`
 /// inside its cwd, own refs, own branch), teardown is a single
@@ -370,10 +373,10 @@ fn replicate_remotes(base: &Path, checkout: &Path) -> Result<()> {
 /// `agent/<session>/<target>` branch lived inside the clone and goes
 /// away with it.
 ///
-/// **Kept (`implementation.md`-marked) experiments are NOT touched** —
-/// their checkouts are what Phase 5 publish reads + pushes from, and
-/// their commits must survive until the PR is filed. Operators may
-/// also want to inspect a kept checkout post-session.
+/// **Experiments whose typed report has `outcome=implemented` are NOT
+/// touched** — their checkouts are what Phase 5 publish reads + pushes
+/// from, and their commits must survive until the PR is filed.
+/// Operators may also want to inspect a kept checkout post-session.
 ///
 /// Returns the count of checkouts dropped. Failures on individual
 /// entries are logged but don't abort the caller — this runs at
@@ -408,12 +411,13 @@ pub fn prune_aborted_experiments(
             .file_name()
             .to_string_lossy()
             .into_owned();
-        // Marker-file gating: implementation.md → keep checkout
-        // (publish reads it). abort.md OR no marker → drop it.
-        if exp
-            .join("implementation.md")
-            .exists()
-        {
+        // Typed-report gating: `outcome=implemented` → keep checkout
+        // (publish reads it). `outcome=aborted` OR no report → drop it.
+        // Skip on malformed JSON / validation failures too — those
+        // would have been demoted by `coordinator_commit_if_kept` if
+        // reachable, but if not, dropping the checkout is the safe
+        // conservative call (matches the prior "no marker" path).
+        if let Ok(Some(OptimizerReport::Implemented(_))) = read_optimizer_report(&exp) {
             continue;
         }
 
@@ -533,11 +537,14 @@ pub struct Inputs<H: AgentHarness + 'static, G: GitCheckoutManager + 'static> {
 pub struct Outputs {
     /// Total targets considered.
     pub total: usize,
-    /// `optimize/<id>/implementation.md` exists post-run.
+    /// `optimize/<id>/optimizer-report.json` has `outcome=implemented`.
     pub landed: usize,
-    /// `optimize/<id>/abort.md` exists post-run.
+    /// `optimize/<id>/optimizer-report.json` has `outcome=aborted`,
+    /// is missing, or failed to parse/validate (all treated as abort
+    /// for tally purposes).
     pub aborted: usize,
-    /// `optimize/<id>/consensus-issue.md` exists post-run.
+    /// `optimize/<id>/consensus-issue.md` exists post-run
+    /// (coordinator-written marker; optimizer skipped for this mode).
     pub routed_to_issue: usize,
 }
 
@@ -650,7 +657,9 @@ where
         return Err(first);
     }
 
-    // Tally per-target markers.
+    // Tally per-target outcomes. consensus_issue is the only branch
+    // still gated on its marker file (coordinator-written, no agent
+    // report); everything else reads the typed `optimizer-report.json`.
     let mut outputs = Outputs { total, ..Default::default() };
     for t in &targets.targets {
         let dir = inputs
@@ -661,13 +670,25 @@ where
             .is_file()
         {
             outputs.routed_to_issue += 1;
-        } else if dir.join("abort.md").is_file() {
-            outputs.aborted += 1;
-        } else if dir
-            .join("implementation.md")
-            .is_file()
-        {
-            outputs.landed += 1;
+            continue;
+        }
+        match read_optimizer_report(&dir) {
+            Ok(Some(OptimizerReport::Implemented(_))) => outputs.landed += 1,
+            Ok(Some(OptimizerReport::Aborted(_))) => outputs.aborted += 1,
+            Ok(None) => {
+                // Agent crashed before writing a report; treat as aborted
+                // for tallying so the operator sees the failure surface.
+                outputs.aborted += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target = "session.optimizers",
+                    target_id = %t.id,
+                    error = %e,
+                    "tally: optimizer-report.json failed to parse/validate; counting as aborted",
+                );
+                outputs.aborted += 1;
+            }
         }
     }
     Ok(outputs)
@@ -787,6 +808,12 @@ where
                 .framework
                 .schemas_dir
                 .join("optimization-targets.schema.json")
+                .to_string_lossy()
+                .into_owned(),
+            optimizer_report_schema_path: state
+                .framework
+                .schemas_dir
+                .join("optimizer-report.schema.json")
                 .to_string_lossy()
                 .into_owned(),
             delivery_mode: match target.delivery_mode {
@@ -943,26 +970,40 @@ where
     // outside the sandbox, using the same `optimizer_git_env` env-var
     // overrides (bot identity + signing off).
     //
-    // Strict verification contract before committing — pulled from
-    // Codex's b.1 review:
-    //   1. `implementation.md` is present AND `abort.md` is absent.
-    //   2. `git status --porcelain` reports actual changes (catches "agent wrote
-    //      the marker but did nothing").
+    // Strict verification contract before committing:
+    //   1. `optimizer-report.json` parses + validates AND `outcome=implemented`.
+    //   2. `git status --porcelain` reports actual changes (catches "agent reported
+    //      implemented but did nothing").
     //   3. The commit itself succeeds.
     //   4. HEAD advances past `baseline_head` (defense in depth —
     //      `verify_kept_or_demote` re-checks this after we return).
     //
-    // Any failure in (1)-(3) demotes to `abort.md` immediately so the
-    // rest of the pipeline correctly skips this target.
-    coordinator_commit_if_kept(&exp_dir, &worktree, &target.id, &state.settings)?;
+    // Any failure in (1)-(3) demotes the typed report from
+    // `outcome=implemented` to `outcome=aborted` (preserving the original
+    // at `optimizer-report.json.demoted`) so downstream phases correctly
+    // skip this target.
+    coordinator_commit_if_kept(
+        &exp_dir,
+        &worktree,
+        &target.id,
+        &state.session_id,
+        target.delivery_mode,
+        &state.settings,
+    )?;
 
-    // Post-invoke correctness gate: if `implementation.md` survived
+    // Post-invoke correctness gate: if `outcome=implemented` survived
     // the coordinator commit step, verify HEAD has actually advanced.
-    // This is now defense-in-depth — `coordinator_commit_if_kept` already
-    // demotes on most failure modes — but it catches any path that
-    // produced an `implementation.md` without a corresponding HEAD
-    // advance (e.g. a future refactor that skips the commit step).
-    verify_kept_or_demote(&exp_dir, &worktree, baseline_head.as_deref(), &target.id)?;
+    // Defense-in-depth — `coordinator_commit_if_kept` already demotes on
+    // most failure modes — but catches any path that produced a kept
+    // report without a corresponding HEAD advance.
+    verify_kept_or_demote(
+        &exp_dir,
+        &worktree,
+        baseline_head.as_deref(),
+        &target.id,
+        &state.session_id,
+        target.delivery_mode,
+    )?;
 
     Ok(())
 }
@@ -993,31 +1034,46 @@ fn coordinator_commit_if_kept(
     exp_dir: &Path,
     checkout: &Path,
     target_id: &str,
+    session_id: &str,
+    delivery_mode: DeliveryMode,
     settings: &Settings,
 ) -> Result<()> {
-    let impl_md = exp_dir.join("implementation.md");
-    let abort_md = exp_dir.join("abort.md");
+    // Contract step 1: read + schema-validate the typed optimizer
+    // report, then cross-check its context (target_id, session_id,
+    // delivery_mode) against what the merged target says. Without the
+    // context check, a misbehaving agent could claim a different
+    // delivery_mode and bypass mode-specific invariants.
+    let report = match read_optimizer_report(exp_dir)? {
+        Some(r) => r,
+        None => {
+            // Agent never wrote a report (sandbox kill, panic, etc.).
+            // Mirrors the prior "no marker = no commit" path — downstream
+            // phases treat absence as "experiment crashed."
+            return Ok(());
+        }
+    };
+    validate_report_context(&report, target_id, session_id, delivery_mode)?;
+    let implemented = match report {
+        OptimizerReport::Implemented(r) => r,
+        OptimizerReport::Aborted(r) => {
+            // Agent declared abort. Render the companion abort.md for the
+            // operator's audit trail and leave the worktree alone.
+            std::fs::write(exp_dir.join("abort.md"), render_abort_md(&r)).with_context(|| {
+                format!("writing companion abort.md for {target_id} at {}", exp_dir.display())
+            })?;
+            return Ok(());
+        }
+    };
 
-    // Contract step 1: marker file shape.
-    if !impl_md.is_file() {
-        // Agent didn't declare kept; nothing for us to commit. If
-        // `abort.md` is also missing, `verify_kept_or_demote` won't
-        // demote (no marker = NoMarker path), which is the right
-        // call — the experiment crashed and downstream phases will
-        // treat it as such.
-        return Ok(());
-    }
-    if abort_md.is_file() {
-        // Both markers present = agent confusion. Trust `abort.md`
-        // (the more conservative signal) and demote.
-        demote_kept_to_abort(
-            exp_dir,
-            target_id,
-            "agent wrote both `implementation.md` AND `abort.md`; treating as abort (the \
-             conservative signal)",
-        )?;
-        return Ok(());
-    }
+    // Render the companion implementation.md eagerly — even if commit
+    // fails below and we demote, the original implementation report is
+    // preserved as `optimizer-report.json.demoted` and the abort.md
+    // overwrites this implementation.md. This way operators inspecting
+    // mid-run see something readable.
+    std::fs::write(exp_dir.join("implementation.md"), render_implementation_md(&implemented))
+        .with_context(|| {
+            format!("writing companion implementation.md for {target_id} at {}", exp_dir.display())
+        })?;
 
     // Contract step 2: tree must actually have changes. `git status
     // --porcelain` outputs one line per modified/untracked path; empty
@@ -1030,24 +1086,30 @@ fn coordinator_commit_if_kept(
         .output()
         .with_context(|| format!("git status in {}", checkout.display()))?;
     if !porcelain.status.success() {
-        demote_kept_to_abort(
+        demote_implemented_to_aborted(
             exp_dir,
             target_id,
+            session_id,
+            delivery_mode,
             &format!(
                 "`git status --porcelain` failed in {} (exit {})",
                 checkout.display(),
                 porcelain.status
             ),
+            FailedGate::EnvironmentalError,
         )?;
         return Ok(());
     }
     let dirty = !porcelain.stdout.is_empty();
     if !dirty {
-        demote_kept_to_abort(
+        demote_implemented_to_aborted(
             exp_dir,
             target_id,
-            "agent wrote `implementation.md` but the worktree has no changes (status --porcelain \
-             empty); coordinator has nothing to commit",
+            session_id,
+            delivery_mode,
+            "agent reported `outcome=implemented` but the worktree has no changes (`git status \
+             --porcelain` empty); coordinator has nothing to commit",
+            FailedGate::EnvironmentalError,
         )?;
         return Ok(());
     }
@@ -1066,10 +1128,13 @@ fn coordinator_commit_if_kept(
         .status()
         .with_context(|| format!("git add -A in {}", checkout.display()))?;
     if !add.success() {
-        demote_kept_to_abort(
+        demote_implemented_to_aborted(
             exp_dir,
             target_id,
+            session_id,
+            delivery_mode,
             &format!("coordinator `git add -A` failed in {} (exit {})", checkout.display(), add),
+            FailedGate::EnvironmentalError,
         )?;
         return Ok(());
     }
@@ -1087,15 +1152,18 @@ fn coordinator_commit_if_kept(
         .status()
         .with_context(|| format!("git commit in {}", checkout.display()))?;
     if !commit.success() {
-        demote_kept_to_abort(
+        demote_implemented_to_aborted(
             exp_dir,
             target_id,
+            session_id,
+            delivery_mode,
             &format!(
                 "coordinator `git commit -m {msg:?}` failed in {} (exit {}); check operator's git \
                  config / signing setup",
                 checkout.display(),
                 commit
             ),
+            FailedGate::EnvironmentalError,
         )?;
         return Ok(());
     }
@@ -1109,31 +1177,174 @@ fn coordinator_commit_if_kept(
     Ok(())
 }
 
-/// Rename `implementation.md` → `implementation.md.demoted` and write
-/// `abort.md` carrying `reason`. Used by
-/// [`coordinator_commit_if_kept`] whenever the verification contract
-/// fails. Mirrors [`verify_kept_or_demote`]'s demotion mechanics
-/// (same file layout for downstream phases to consume).
-fn demote_kept_to_abort(exp_dir: &Path, target_id: &str, reason: &str) -> Result<()> {
-    let impl_md = exp_dir.join("implementation.md");
-    let demoted = exp_dir.join("implementation.md.demoted");
-    let _ = std::fs::rename(&impl_md, &demoted);
-    let note = format!(
-        "Coordinator demoted `implementation.md` → `abort.md` for `{target_id}`.\n\nReason: \
-         {reason}\n\nThe original `implementation.md` is preserved at `implementation.md.demoted` \
-         for diagnosis. Inspect `final-message.md` + `events.jsonl` for the agent's own \
-         narrative.\n"
-    );
-    std::fs::write(exp_dir.join("abort.md"), note).with_context(|| {
+/// Read + validate the typed optimizer report for the target whose
+/// `optimize/<target-id>/` dir is `exp_dir`. Operates on a raw path
+/// (not a `SessionLayout`) so callers iterating the experiments
+/// directory (prune, tally) don't have to look up each target in
+/// `optimization-targets.json` just to read the report.
+///
+/// Does NOT cross-check the report's `target_id`/`session_id`/
+/// `delivery_mode` against any expected context — callers that grant
+/// privileges based on the report (commit, demote, publish, finalize)
+/// MUST additionally call [`validate_report_context`] before acting on
+/// it. Pure observers (prune, tally) can skip the context check; the
+/// worst an agent can do there is mis-bucket its own outcome.
+///
+/// Returns `Ok(None)` when the report is absent — agent never wrote it.
+fn read_optimizer_report(exp_dir: &Path) -> Result<Option<OptimizerReport>> {
+    let path = exp_dir.join("optimizer-report.json");
+    match std::fs::metadata(&path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    }
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let report: OptimizerReport =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    report
+        .validate()
+        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    Ok(Some(report))
+}
+
+/// Cross-check the loaded report's `target_id`, `session_id`, and
+/// `delivery_mode` against the expected context. Without this check, a
+/// misbehaving agent could emit `delivery_mode: consensus_poc_pr` for a
+/// `normal_pr` target — bypassing the `clippy_clean: true` invariant
+/// since the typed model's `validate()` only enforces `clippy_clean`
+/// for `normal_pr`. Mirrors
+/// [`crate::session::loader::read_optimizer_report_for_target`] for
+/// callers that hold a raw `exp_dir` (and have already loaded the
+/// report) instead of a `SessionLayout`.
+fn validate_report_context(
+    report: &OptimizerReport,
+    expected_target_id: &str,
+    expected_session_id: &str,
+    expected_delivery_mode: DeliveryMode,
+) -> Result<()> {
+    let (tid, sid, mode) = match report {
+        OptimizerReport::Implemented(r) => {
+            (r.target_id.as_str(), r.session_id.as_str(), r.delivery_mode)
+        }
+        OptimizerReport::Aborted(r) => {
+            (r.target_id.as_str(), r.session_id.as_str(), r.delivery_mode)
+        }
+    };
+    if tid != expected_target_id {
+        anyhow::bail!(
+            "optimizer-report.json for {expected_target_id}: report.target_id={tid:?} does not \
+             match expected target_id={expected_target_id:?}",
+        );
+    }
+    if sid != expected_session_id {
+        anyhow::bail!(
+            "optimizer-report.json for {expected_target_id}: report.session_id={sid:?} does not \
+             match expected session_id={expected_session_id:?}",
+        );
+    }
+    if mode != expected_delivery_mode {
+        anyhow::bail!(
+            "optimizer-report.json for {expected_target_id}: report.delivery_mode={mode:?} does \
+             not match expected delivery_mode={expected_delivery_mode:?} (an agent claiming a \
+             different mode could bypass mode-specific invariants like clippy_clean)",
+        );
+    }
+    Ok(())
+}
+
+/// Rewrite the per-target `optimizer-report.json` with an aborted body
+/// carrying `reason` + `failed_gate`, preserving the original report at
+/// `optimizer-report.json.demoted` for diagnosis. Re-renders companion
+/// markdown: removes the now-stale `implementation.md` and writes the
+/// abort.md derived from the new typed body.
+///
+/// Used by [`coordinator_commit_if_kept`] and [`verify_kept_or_demote`]
+/// whenever the agent claimed `outcome=implemented` but the post-hoc
+/// verification (dirty tree, git commit success, HEAD advance) fails.
+fn demote_implemented_to_aborted(
+    exp_dir: &Path,
+    target_id: &str,
+    session_id: &str,
+    delivery_mode: DeliveryMode,
+    reason: &str,
+    failed_gate: FailedGate,
+) -> Result<()> {
+    let report_path = exp_dir.join("optimizer-report.json");
+    let preserved = exp_dir.join("optimizer-report.json.demoted");
+    let _ = std::fs::rename(&report_path, &preserved);
+
+    let new_report = AbortedReport {
+        schema_version: SchemaVersionV2,
+        session_id: session_id.to_owned(),
+        target_id: target_id.to_owned(),
+        outcome: AbortedOutcomeTag::Aborted,
+        delivery_mode,
+        reason: format!(
+            "Coordinator demoted `outcome=implemented` → `outcome=aborted`: {reason}\n\nOriginal \
+             report preserved at `optimizer-report.json.demoted`."
+        ),
+        failed_gate: Some(failed_gate),
+        failing_tests: None,
+    };
+    let json =
+        serde_json::to_string_pretty(&new_report).context("serializing demoted aborted report")?;
+    std::fs::write(&report_path, json + "\n").with_context(|| {
+        format!("writing demoted optimizer-report.json at {}", report_path.display())
+    })?;
+    // Stale companion: agent's implementation.md no longer reflects truth.
+    let _ = std::fs::remove_file(exp_dir.join("implementation.md"));
+    std::fs::write(exp_dir.join("abort.md"), render_abort_md(&new_report)).with_context(|| {
         format!("writing demotion abort.md for {target_id} at {}", exp_dir.display())
     })?;
     tracing::warn!(
         target = "session.optimizers",
         target_id = %target_id,
         reason = %reason,
-        "demoted implementation.md → abort.md (coordinator commit contract failed)",
+        "demoted optimizer-report.json (implemented → aborted; coordinator gate failed)",
     );
     Ok(())
+}
+
+/// Coordinator-rendered companion view of an `implemented` report.
+/// Dense header + fenced JSON dump. The JSON is authoritative; the
+/// markdown is operator sugar.
+fn render_implementation_md(r: &ImplementedReport) -> String {
+    let json =
+        serde_json::to_string_pretty(r).expect("ImplementedReport always serializable as JSON");
+    format!(
+        "# Implementation report — `{target}`\n\n_Coordinator-rendered companion view of \
+         `optimizer-report.json`. The JSON is authoritative; this file regenerates from it on \
+         every commit/demote pass._\n\n- **Target**: `{target}`\n- **Delivery mode**: \
+         `{mode:?}`\n- **PR title**: {title}\n\n```json\n{json}\n```\n",
+        target = r.target_id,
+        mode = r.delivery_mode,
+        title = r.pr_title,
+        json = json,
+    )
+}
+
+/// Coordinator-rendered companion view of an `aborted` report. Dense
+/// header + fenced JSON dump.
+fn render_abort_md(r: &AbortedReport) -> String {
+    let json = serde_json::to_string_pretty(r).expect("AbortedReport always serializable as JSON");
+    let gate = r
+        .failed_gate
+        .map(|g| format!("`{g:?}`"))
+        .unwrap_or_else(|| "—".to_owned());
+    format!(
+        "# Abort report — `{target}`\n\n_Coordinator-rendered companion view of \
+         `optimizer-report.json`. The JSON is authoritative; this file regenerates from it on \
+         every commit/demote pass._\n\n- **Target**: `{target}`\n- **Delivery mode**: \
+         `{mode:?}`\n- **Failed gate**: {gate}\n\n**Reason**: {reason}\n\n```json\n{json}\n```\n",
+        target = r.target_id,
+        mode = r.delivery_mode,
+        gate = gate,
+        reason = r.reason,
+        json = json,
+    )
 }
 
 /// Outcome of [`verify_kept_or_demote`]. Exposed (with `pub(super)` would
@@ -1141,67 +1352,74 @@ fn demote_kept_to_abort(exp_dir: &Path, target_id: &str, reason: &str) -> Result
 /// can assert which branch ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemotionOutcome {
-    /// `implementation.md` wasn't present — nothing to verify.
+    /// Optimizer report wasn't present or wasn't `outcome=implemented`
+    /// — nothing to verify. Covers both "agent crashed" and "agent
+    /// reported aborted" cases.
     NoMarker,
-    /// `implementation.md` present + HEAD advanced past baseline. Kept.
+    /// `outcome=implemented` present + HEAD advanced past baseline. Kept.
     HeadAdvanced,
-    /// `implementation.md` present, HEAD == baseline. Demoted to
-    /// `abort.md` (original preserved as `implementation.md.demoted`).
+    /// `outcome=implemented` present, HEAD == baseline. Demoted to
+    /// `outcome=aborted` (original preserved as
+    /// `optimizer-report.json.demoted`).
     Demoted,
-    /// `implementation.md` present, but we couldn't resolve a HEAD SHA
-    /// on one side (worktree corrupt / never created / etc.). Marker
-    /// kept as-is; downstream phases will fail loudly if the worktree
-    /// is unusable.
+    /// `outcome=implemented` present, but we couldn't resolve a HEAD
+    /// SHA on one side (worktree corrupt / never created / etc.).
+    /// Report kept as-is; downstream phases will fail loudly if the
+    /// worktree is unusable.
     Indeterminate,
 }
 
-/// Post-invoke correctness gate. If the agent claimed
-/// `implementation.md` ("kept attempt(s)"), verify the worktree's HEAD
-/// has advanced past `baseline_head` (the worktree's initial HEAD,
-/// captured right after creation = base_branch tip at that moment).
-/// If HEAD hasn't advanced, no commits were made and there's nothing
-/// for Phase 3 to bench or Phase 5 to publish — demote to `abort.md`
-/// (preserving the original implementation writeup as
-/// `implementation.md.demoted` for diagnosis).
+/// Post-invoke correctness gate. If the agent emitted
+/// `outcome=implemented`, verify the worktree's HEAD has advanced past
+/// `baseline_head` (the worktree's initial HEAD, captured right after
+/// creation = base_branch tip at that moment). If HEAD hasn't advanced,
+/// no commits were made and there's nothing for Phase 3 to bench or
+/// Phase 5 to publish — demote to `outcome=aborted` (preserving the
+/// original at `optimizer-report.json.demoted`).
 ///
-/// The marker file alone isn't proof of work: sandbox/signing failures
-/// (operator's global `commit.gpgsign=true` with an unreachable token,
-/// sandbox deny on `.git/...`, etc.) can block `git commit` while the
-/// agent's clippy/nextest gates still pass.
+/// The agent's report alone isn't proof of work: sandbox/signing
+/// failures (operator's global `commit.gpgsign=true` with an
+/// unreachable token, sandbox deny on `.git/...`, etc.) can block
+/// `git commit` while the agent's clippy/nextest gates still pass.
 pub fn verify_kept_or_demote(
     exp_dir: &Path,
     worktree: &Path,
     baseline_head: Option<&str>,
     target_id: &str,
+    session_id: &str,
+    delivery_mode: DeliveryMode,
 ) -> Result<DemotionOutcome> {
-    let impl_md = exp_dir.join("implementation.md");
-    if !impl_md.is_file() {
-        return Ok(DemotionOutcome::NoMarker);
+    // Only `outcome=implemented` gates downstream side effects; absence
+    // or `outcome=aborted` is the no-op path. Context-check first so an
+    // agent claiming a different `delivery_mode` can't sneak past this
+    // gate either.
+    match read_optimizer_report(exp_dir)? {
+        Some(report) => {
+            validate_report_context(&report, target_id, session_id, delivery_mode)?;
+            if !matches!(report, OptimizerReport::Implemented(_)) {
+                return Ok(DemotionOutcome::NoMarker);
+            }
+        }
+        None => return Ok(DemotionOutcome::NoMarker),
     }
     let head_now = git_rev_parse_head(worktree);
     match (baseline_head, head_now.as_deref()) {
         (Some(base), Some(now)) if base == now => {
-            let note = format!(
-                "Coordinator demoted `implementation.md` → `abort.md` for `{target_id}`.\n\nThe \
-                 optimizer wrote `implementation.md`, signalling a kept attempt — but the \
-                 worktree's HEAD is still at the base branch tip (`{base}`). No commits were \
-                 made, so there is nothing for Phase 3 to bench or Phase 5 to publish. The most \
-                 common cause is a `git commit` that failed silently inside the codex sandbox \
-                 (signing prompt blocked by missing socket / YubiKey, or a sandbox write deny on \
-                 `.git/...`).\n\nInspect `final-message.md` + `events.jsonl` for the agent's own \
-                 diagnostics; the original `implementation.md` is preserved in \
-                 `implementation.md.demoted` so its content isn't lost.\n"
+            let reason = format!(
+                "agent reported `outcome=implemented` but the worktree's HEAD is still at the \
+                 base branch tip (`{base}`); no commits were made. Most common cause is a `git \
+                 commit` that failed silently inside the codex sandbox (signing prompt blocked by \
+                 missing socket / YubiKey, or a sandbox write deny on `.git/...`). Inspect \
+                 `final-message.md` + `events.jsonl` for the agent's own diagnostics."
             );
-            let preserved = exp_dir.join("implementation.md.demoted");
-            let _ = std::fs::rename(&impl_md, &preserved);
-            std::fs::write(exp_dir.join("abort.md"), note).with_context(|| {
-                format!("writing demotion abort.md for {target_id} at {}", exp_dir.display())
-            })?;
-            tracing::warn!(
-                target = "session.optimizers",
-                target_id = %target_id,
-                "demoted implementation.md → abort.md (HEAD did not advance past base branch)"
-            );
+            demote_implemented_to_aborted(
+                exp_dir,
+                target_id,
+                session_id,
+                delivery_mode,
+                &reason,
+                FailedGate::EnvironmentalError,
+            )?;
             Ok(DemotionOutcome::Demoted)
         }
         (Some(_), Some(_)) => Ok(DemotionOutcome::HeadAdvanced),
@@ -1209,7 +1427,8 @@ pub fn verify_kept_or_demote(
             tracing::warn!(
                 target = "session.optimizers",
                 target_id = %target_id,
-                "could not verify HEAD advance (rev-parse failed); trusting implementation.md as-is"
+                "could not verify HEAD advance (rev-parse failed); trusting \
+                 `outcome=implemented` as-is"
             );
             Ok(DemotionOutcome::Indeterminate)
         }
@@ -1242,8 +1461,12 @@ pub fn git_rev_parse_head(worktree: &Path) -> Option<String> {
 /// decision markers behind. Mirrors the bash `rm -f ...` block.
 fn clear_optimizer_artifacts(exp_dir: &Path) -> Result<()> {
     for name in [
+        // Typed contract + its rendered companions.
+        "optimizer-report.json",
+        "optimizer-report.json.demoted",
         "abort.md",
         "implementation.md",
+        // Agent-written side artifacts.
         "side-observations.md",
         "nextest.log",
         "nextest.stderr.log",
@@ -1392,11 +1615,48 @@ mod tests {
         assert!(signing_off, "commit.gpgsign=false override missing in {env:#?}");
     }
 
-    /// Real-git: stage a worktree, write `implementation.md` WITHOUT
-    /// committing, and verify the demotion path. HEAD unchanged should
-    /// yield `DemotionOutcome::Demoted`, `implementation.md` should
-    /// move to `implementation.md.demoted`, and `abort.md` should be
-    /// written with a diagnostic note.
+    /// Write a minimal valid `optimizer-report.json` with
+    /// `outcome=implemented` for `target_id` in `exp_dir`. Used by every
+    /// coordinator/demote test to stage the agent's typed output.
+    fn write_implemented_report(exp_dir: &Path, target_id: &str) {
+        use crate::models::optimizer_report::{
+            ImplementedOutcomeTag, ImplementedReport, ParityReport, TestFramework, TestSummary,
+        };
+        let report = OptimizerReport::Implemented(ImplementedReport {
+            schema_version: SchemaVersionV2,
+            session_id: "20260517-000000".to_owned(),
+            target_id: target_id.to_owned(),
+            outcome: ImplementedOutcomeTag::Implemented,
+            delivery_mode: DeliveryMode::NormalPr,
+            implementation_summary: "test implementation".to_owned(),
+            deviation_from_proposed_change: None,
+            dependency_changes: None,
+            test_summary: TestSummary {
+                framework: TestFramework::Nextest,
+                passed: 1,
+                failed: 0,
+                duration_secs: 1.0,
+                log_path: "nextest.log".to_owned(),
+            },
+            clippy_clean: Some(true),
+            pr_title: "perf: test".to_owned(),
+            parity: ParityReport {
+                consensus_sensitive: false,
+                evidence: vec![],
+                tests: vec![],
+                unproven_risk: None,
+            },
+            hard_fork_followup: None,
+        });
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        std::fs::write(exp_dir.join("optimizer-report.json"), json).unwrap();
+    }
+
+    /// Real-git: stage a worktree, write an `outcome=implemented`
+    /// report WITHOUT committing, and verify the demotion path. HEAD
+    /// unchanged should yield `DemotionOutcome::Demoted`, the original
+    /// report should be preserved at `optimizer-report.json.demoted`,
+    /// and the live report should be rewritten with `outcome=aborted`.
     #[test]
     fn verify_kept_or_demote_demotes_when_head_unchanged() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1421,31 +1681,42 @@ mod tests {
         let worktree = tmp.path().join("wt");
         run_git(&base, &["worktree", "add", "-q", "-b", "agent/t", worktree.to_str().unwrap()]);
 
-        // Simulate the agent writing implementation.md without committing.
+        // Simulate the agent writing `outcome=implemented` without committing.
         let exp_dir = tmp.path().join("exp");
         std::fs::create_dir_all(&exp_dir).unwrap();
-        std::fs::write(exp_dir.join("implementation.md"), "# pretend kept\n").unwrap();
+        write_implemented_report(&exp_dir, "test-target");
 
-        let outcome =
-            verify_kept_or_demote(&exp_dir, &worktree, Some(&baseline_head), "test-target")
-                .expect("verify_kept_or_demote");
+        let outcome = verify_kept_or_demote(
+            &exp_dir,
+            &worktree,
+            Some(&baseline_head),
+            "test-target",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+        )
+        .expect("verify_kept_or_demote");
 
         assert_eq!(outcome, DemotionOutcome::Demoted);
+        // Demoted report: original preserved, live rewritten as aborted.
+        assert!(
+            exp_dir
+                .join("optimizer-report.json.demoted")
+                .is_file(),
+            "original implemented report should be preserved at .demoted"
+        );
+        let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
+        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        assert!(matches!(parsed, OptimizerReport::Aborted(_)), "live report must be aborted");
+        // Companion abort.md rendered; stale implementation.md removed.
+        let abort = std::fs::read_to_string(exp_dir.join("abort.md")).unwrap();
+        assert!(abort.contains("test-target"), "abort.md missing target id: {abort}");
+        assert!(abort.contains(&baseline_head), "abort.md missing baseline SHA: {abort}");
         assert!(
             !exp_dir
                 .join("implementation.md")
                 .exists(),
-            "implementation.md should have been moved"
+            "stale implementation.md should have been removed during demotion"
         );
-        assert!(
-            exp_dir
-                .join("implementation.md.demoted")
-                .is_file(),
-            "implementation.md.demoted should preserve the original"
-        );
-        let abort = std::fs::read_to_string(exp_dir.join("abort.md")).unwrap();
-        assert!(abort.contains("test-target"), "abort.md missing target id: {abort}");
-        assert!(abort.contains(&baseline_head), "abort.md missing baseline SHA: {abort}");
     }
 
     /// Conversely: if the agent DID commit, HEAD advances and the
@@ -1477,33 +1748,37 @@ mod tests {
 
         let exp_dir = tmp.path().join("exp");
         std::fs::create_dir_all(&exp_dir).unwrap();
-        std::fs::write(exp_dir.join("implementation.md"), "# kept\n").unwrap();
+        write_implemented_report(&exp_dir, "test-target");
 
-        let outcome =
-            verify_kept_or_demote(&exp_dir, &worktree, Some(&baseline_head), "test-target")
-                .expect("verify_kept_or_demote");
+        let outcome = verify_kept_or_demote(
+            &exp_dir,
+            &worktree,
+            Some(&baseline_head),
+            "test-target",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+        )
+        .expect("verify_kept_or_demote");
 
         assert_eq!(outcome, DemotionOutcome::HeadAdvanced);
+        // Report still implemented; no demoted copy, no abort.md.
+        let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
+        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        assert!(matches!(parsed, OptimizerReport::Implemented(_)));
         assert!(
-            exp_dir
-                .join("implementation.md")
-                .is_file(),
-            "implementation.md should be preserved"
+            !exp_dir
+                .join("optimizer-report.json.demoted")
+                .exists()
         );
         assert!(
             !exp_dir
                 .join("abort.md")
                 .exists()
         );
-        assert!(
-            !exp_dir
-                .join("implementation.md.demoted")
-                .exists()
-        );
     }
 
-    /// When `implementation.md` is absent (e.g. agent wrote `abort.md`),
-    /// the gate is a no-op.
+    /// When the optimizer report is absent (e.g. agent crashed), the
+    /// gate is a no-op.
     #[test]
     fn verify_kept_or_demote_noop_when_no_marker() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1511,9 +1786,15 @@ mod tests {
         std::fs::create_dir_all(&exp_dir).unwrap();
         // Worktree path doesn't need to exist — the gate short-circuits
         // before touching it.
-        let outcome =
-            verify_kept_or_demote(&exp_dir, &tmp.path().join("nonexistent"), Some("abcd"), "t")
-                .expect("verify_kept_or_demote");
+        let outcome = verify_kept_or_demote(
+            &exp_dir,
+            &tmp.path().join("nonexistent"),
+            Some("abcd"),
+            "t",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+        )
+        .expect("verify_kept_or_demote");
         assert_eq!(outcome, DemotionOutcome::NoMarker);
     }
 
@@ -1543,33 +1824,44 @@ mod tests {
         git_rev_parse_head(dir).expect("HEAD")
     }
 
-    /// Layer 1B v2 pass-b.1 happy path: agent edits a file + writes
-    /// `implementation.md`. Coordinator's commit step must produce a
-    /// real commit advancing HEAD; downstream `verify_kept_or_demote`
-    /// then accepts.
+    /// Happy path: agent edits a file + writes `outcome=implemented`.
+    /// Coordinator's commit step must produce a real commit advancing
+    /// HEAD; downstream `verify_kept_or_demote` then accepts.
     #[test]
-    fn coordinator_commit_commits_when_implementation_md_with_dirty_tree() {
+    fn coordinator_commit_commits_when_implemented_with_dirty_tree() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let checkout = tmp.path().join("clone");
-        let _baseline_head = init_test_repo_with_initial_commit(&checkout);
+        let baseline_head = init_test_repo_with_initial_commit(&checkout);
         // Simulate the agent's edit.
         std::fs::write(checkout.join("x"), "x edited\n").unwrap();
-        // Simulate the agent's marker.
+        // Simulate the agent's typed report.
         let exp_dir = tmp.path().join("exp");
         std::fs::create_dir_all(&exp_dir).unwrap();
-        std::fs::write(exp_dir.join("implementation.md"), "# kept\n").unwrap();
+        write_implemented_report(&exp_dir, "tgt");
 
-        coordinator_commit_if_kept(&exp_dir, &checkout, "tgt", &Settings::default())
-            .expect("coordinator_commit_if_kept");
+        coordinator_commit_if_kept(
+            &exp_dir,
+            &checkout,
+            "tgt",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+            &Settings::default(),
+        )
+        .expect("coordinator_commit_if_kept");
 
         // Coordinator created a real commit.
         let head_after = git_rev_parse_head(&checkout).expect("post-commit HEAD");
-        assert_ne!(head_after, _baseline_head, "HEAD must advance after coordinator commit");
-        // `implementation.md` survives (not demoted).
+        assert_ne!(head_after, baseline_head, "HEAD must advance after coordinator commit");
+        // Typed report still implemented; companion implementation.md
+        // rendered; no demoted copy, no abort.md.
+        let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
+        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        assert!(matches!(parsed, OptimizerReport::Implemented(_)));
         assert!(
             exp_dir
                 .join("implementation.md")
-                .is_file()
+                .is_file(),
+            "companion implementation.md should be rendered post-commit"
         );
         assert!(
             !exp_dir
@@ -1578,15 +1870,15 @@ mod tests {
         );
         assert!(
             !exp_dir
-                .join("implementation.md.demoted")
+                .join("optimizer-report.json.demoted")
                 .exists()
         );
     }
 
-    /// Contract step 2: `implementation.md` present but the worktree
-    /// has NO changes ("agent wrote the marker but did nothing").
-    /// Must demote to `abort.md` so downstream phases skip the
-    /// target — committing an empty diff would produce a no-op PR.
+    /// `outcome=implemented` but the worktree has NO changes ("agent
+    /// reported implemented but did nothing"). Must demote so downstream
+    /// phases skip the target — committing an empty diff would produce
+    /// a no-op PR.
     #[test]
     fn coordinator_commit_demotes_when_tree_is_clean() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1595,87 +1887,76 @@ mod tests {
         // NO edits — clean tree.
         let exp_dir = tmp.path().join("exp");
         std::fs::create_dir_all(&exp_dir).unwrap();
-        std::fs::write(exp_dir.join("implementation.md"), "# kept (lying)\n").unwrap();
+        write_implemented_report(&exp_dir, "tgt");
 
-        coordinator_commit_if_kept(&exp_dir, &checkout, "tgt", &Settings::default())
-            .expect("coordinator_commit_if_kept");
+        coordinator_commit_if_kept(
+            &exp_dir,
+            &checkout,
+            "tgt",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+            &Settings::default(),
+        )
+        .expect("coordinator_commit_if_kept");
 
+        // Demoted: live report rewritten as aborted; original preserved.
+        let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
+        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        let aborted = match parsed {
+            OptimizerReport::Aborted(r) => r,
+            other => panic!("live report must be aborted; got {other:?}"),
+        };
         assert!(
-            exp_dir
-                .join("abort.md")
-                .is_file(),
-            "abort.md must be written when tree is clean"
+            aborted
+                .reason
+                .contains("no changes"),
+            "demoted reason should mention the empty-tree cause; got: {}",
+            aborted.reason
         );
         assert!(
             exp_dir
-                .join("implementation.md.demoted")
+                .join("optimizer-report.json.demoted")
                 .is_file(),
-            "original implementation.md preserved as .demoted"
+            "original implemented report preserved as .demoted"
+        );
+        // Companion abort.md rendered; stale implementation.md removed.
+        assert!(
+            exp_dir
+                .join("abort.md")
+                .is_file()
         );
         assert!(
             !exp_dir
                 .join("implementation.md")
                 .exists(),
-            "implementation.md must be moved out of the way after demotion"
-        );
-        // Demotion reason mentions the empty-tree case.
-        let abort_body = std::fs::read_to_string(exp_dir.join("abort.md")).unwrap();
-        assert!(
-            abort_body.contains("no changes") || abort_body.contains("porcelain empty"),
-            "abort.md should explain the demotion cause; got:\n{abort_body}",
+            "stale implementation.md must be removed after demotion"
         );
         // HEAD must NOT have advanced (no commit happened).
         let head_after = git_rev_parse_head(&checkout).expect("HEAD still resolvable");
         assert_eq!(head_after, baseline_head);
     }
 
-    /// Contract step 1 edge: agent wrote BOTH `implementation.md` AND
-    /// `abort.md`. Treat as abort (conservative signal); don't commit.
-    #[test]
-    fn coordinator_commit_demotes_when_both_markers_present() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let checkout = tmp.path().join("clone");
-        let baseline_head = init_test_repo_with_initial_commit(&checkout);
-        std::fs::write(checkout.join("x"), "x edited\n").unwrap();
-        let exp_dir = tmp.path().join("exp");
-        std::fs::create_dir_all(&exp_dir).unwrap();
-        std::fs::write(exp_dir.join("implementation.md"), "# kept\n").unwrap();
-        std::fs::write(exp_dir.join("abort.md"), "actually no\n").unwrap();
-
-        coordinator_commit_if_kept(&exp_dir, &checkout, "tgt", &Settings::default())
-            .expect("coordinator_commit_if_kept");
-
-        // implementation.md got demoted; abort.md remains (now
-        // overwritten by the coordinator's diagnostic).
-        assert!(
-            exp_dir
-                .join("abort.md")
-                .is_file()
-        );
-        assert!(
-            exp_dir
-                .join("implementation.md.demoted")
-                .is_file()
-        );
-        // No commit.
-        let head_after = git_rev_parse_head(&checkout).expect("HEAD");
-        assert_eq!(head_after, baseline_head);
-    }
-
-    /// No marker → no-op. The agent crashed or wrote nothing;
-    /// `verify_kept_or_demote` downstream will handle it.
+    /// No optimizer-report.json → no-op. The agent crashed or wrote
+    /// nothing; `verify_kept_or_demote` downstream will handle it.
     #[test]
     fn coordinator_commit_noops_when_no_marker() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let checkout = tmp.path().join("clone");
         let baseline_head = init_test_repo_with_initial_commit(&checkout);
         std::fs::write(checkout.join("x"), "x edited\n").unwrap();
-        // No marker at all.
+        // No report at all.
         let exp_dir = tmp.path().join("exp");
         std::fs::create_dir_all(&exp_dir).unwrap();
 
-        coordinator_commit_if_kept(&exp_dir, &checkout, "tgt", &Settings::default())
-            .expect("coordinator_commit_if_kept");
+        coordinator_commit_if_kept(
+            &exp_dir,
+            &checkout,
+            "tgt",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+            &Settings::default(),
+        )
+        .expect("coordinator_commit_if_kept");
 
         // Nothing changed.
         assert!(
@@ -1688,8 +1969,68 @@ mod tests {
                 .join("implementation.md")
                 .exists()
         );
+        assert!(
+            !exp_dir
+                .join("optimizer-report.json")
+                .exists()
+        );
         let head_after = git_rev_parse_head(&checkout).expect("HEAD");
         assert_eq!(head_after, baseline_head);
+    }
+
+    /// Agent emits `outcome=aborted`: coordinator renders the companion
+    /// abort.md and does NOT commit. Replaces the "both markers
+    /// present" demotion test (structurally impossible under typed
+    /// contract — agent only writes one report).
+    #[test]
+    fn coordinator_commit_renders_companion_when_aborted() {
+        use crate::models::optimizer_report::{AbortedOutcomeTag, AbortedReport, FailedGate};
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let checkout = tmp.path().join("clone");
+        let baseline_head = init_test_repo_with_initial_commit(&checkout);
+        // Agent edited but then chose to abort (clippy failed mid-loop).
+        std::fs::write(checkout.join("x"), "x edited\n").unwrap();
+        let exp_dir = tmp.path().join("exp");
+        std::fs::create_dir_all(&exp_dir).unwrap();
+        let report = OptimizerReport::Aborted(AbortedReport {
+            schema_version: SchemaVersionV2,
+            session_id: "20260517-000000".to_owned(),
+            target_id: "tgt".to_owned(),
+            outcome: AbortedOutcomeTag::Aborted,
+            delivery_mode: DeliveryMode::NormalPr,
+            reason: "clippy failed".to_owned(),
+            failed_gate: Some(FailedGate::Clippy),
+            failing_tests: None,
+        });
+        std::fs::write(
+            exp_dir.join("optimizer-report.json"),
+            serde_json::to_string_pretty(&report).unwrap(),
+        )
+        .unwrap();
+
+        coordinator_commit_if_kept(
+            &exp_dir,
+            &checkout,
+            "tgt",
+            "20260517-000000",
+            DeliveryMode::NormalPr,
+            &Settings::default(),
+        )
+        .expect("coordinator_commit_if_kept");
+
+        // Companion abort.md rendered; no commit.
+        assert!(
+            exp_dir
+                .join("abort.md")
+                .is_file()
+        );
+        let abort_body = std::fs::read_to_string(exp_dir.join("abort.md")).unwrap();
+        assert!(
+            abort_body.contains("clippy failed"),
+            "abort.md should surface the agent's reason; got:\n{abort_body}"
+        );
+        let head_after = git_rev_parse_head(&checkout).expect("HEAD");
+        assert_eq!(head_after, baseline_head, "no commit on aborted outcome");
     }
 
     /// Return the trimmed stdout of `git -C <dir> <args...>`, panicking

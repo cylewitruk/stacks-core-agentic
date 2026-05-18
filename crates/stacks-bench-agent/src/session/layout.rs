@@ -20,8 +20,12 @@
 //!                          (publish artifacts, `pr-writer-*` /
 //!                          `issue-writer-*` prefix) outputs. Audit reads
 //!                          for "what happened with target X" stay in one
-//!                          place. Files include: implementation.md OR
-//!                          abort.md OR consensus-issue.md, prompt.md,
+//!                          place. Files include: optimizer-report.json
+//!                          (agent-written, typed contract), with
+//!                          coordinator-rendered companion views
+//!                          implementation.md / abort.md; consensus-issue.md
+//!                          (coordinator-written marker; the optimizer is
+//!                          skipped for consensus_issue mode); prompt.md,
 //!                          events.jsonl, stderr.log, final-message.md,
 //!                          conversation-id, nextest.log, run-ids,
 //!                          run-N/bench-run.json, pr-title.txt,
@@ -282,19 +286,40 @@ impl SessionLayout {
             .join(target_id)
     }
 
-    /// `results/optimize/<target-id>/implementation.md`.
+    /// `results/optimize/<target-id>/optimizer-report.json` — typed
+    /// authoritative output of the optimizer agent (Phase 2/3 contract).
+    /// The coordinator dispatches commit/abort decisions on this file's
+    /// parsed contents; `implementation.md` / `abort.md` are
+    /// coordinator-rendered companions derived from it.
+    pub fn experiment_optimizer_report(&self, target_id: &str) -> PathBuf {
+        self.experiment_dir(target_id)
+            .join("optimizer-report.json")
+    }
+
+    /// `results/optimize/<target-id>/implementation.md` — coordinator-
+    /// rendered companion view of an `outcome=implemented` optimizer
+    /// report. The agent does NOT write this; it's regenerated from
+    /// [`Self::experiment_optimizer_report`] post-validation.
     pub fn experiment_implementation(&self, target_id: &str) -> PathBuf {
         self.experiment_dir(target_id)
             .join("implementation.md")
     }
 
-    /// `results/optimize/<target-id>/abort.md`.
+    /// `results/optimize/<target-id>/abort.md` — coordinator-rendered
+    /// companion view of an `outcome=aborted` optimizer report (or a
+    /// demoted implementation that didn't actually commit). The agent
+    /// does NOT write this directly; it's regenerated from
+    /// [`Self::experiment_optimizer_report`] post-validation.
     pub fn experiment_abort(&self, target_id: &str) -> PathBuf {
         self.experiment_dir(target_id)
             .join("abort.md")
     }
 
-    /// `results/optimize/<target-id>/consensus-issue.md`.
+    /// `results/optimize/<target-id>/consensus-issue.md` — coordinator-
+    /// written marker for `delivery_mode=consensus_issue` targets.
+    /// Unlike the other markers, this one IS authoritative (the
+    /// coordinator skips the optimizer entirely for issue-only routing,
+    /// so there's no agent-written report to derive from).
     pub fn experiment_consensus_issue(&self, target_id: &str) -> PathBuf {
         self.experiment_dir(target_id)
             .join("consensus-issue.md")

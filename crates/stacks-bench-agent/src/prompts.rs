@@ -392,7 +392,9 @@ impl Prompt for MergePrompt {
 pub struct OptimizerPrompt {
     /// Per-target git worktree (the optimizer's working dir).
     pub worktree_dir: String,
-    /// Per-target output dir (implementation.md / abort.md / etc.).
+    /// Per-target output dir. Agent writes `optimizer-report.json` here;
+    /// coordinator renders companion `implementation.md` / `abort.md`
+    /// from that report post-validation.
     pub output_dir: String,
     /// JSON-serialized merged target.
     pub target_json: String,
@@ -408,40 +410,28 @@ pub struct OptimizerPrompt {
     pub domain_context_path: String,
     /// Absolute path to optimization-targets.schema.json.
     pub optimization_targets_schema_path: String,
-    /// Persistent stacks-bench data dir — the agent passes this to
-    /// `stacks-bench --db` when running the targeted-replay bench
-    /// inside its inner loop. Mirrors the coordinator's
-    /// `Settings::stacks_bench_data_dir`.
+    /// Absolute path to optimizer-report.schema.json. The agent
+    /// validates its `optimizer-report.json` output against this
+    /// schema before exit; mismatch is a hard validation failure that
+    /// the coordinator surfaces.
+    pub optimizer_report_schema_path: String,
+    /// Persistent stacks-bench data dir. Retained for the coordinator-owned
+    /// bench loop; the optimizer prompt itself must not run stacks-bench.
     pub stacks_bench_data_dir: String,
-    /// Chainstate source path (the `--source` arg to `stacks-bench
-    /// bench run`). Plumbed from `Settings::source_dir` so the agent
-    /// doesn't need to discover it from outside its sandbox.
+    /// Chainstate source path for coordinator-owned bench runs.
     pub bench_source_dir: String,
-    /// Network identifier (`--network` arg). Plumbed from
-    /// `Settings::stacks_bench_network`. Empty string if the coordinator
-    /// is letting stacks-bench auto-detect from the chainstate.
+    /// Network identifier for coordinator-owned bench runs.
     pub bench_network: String,
-    /// Optional `--warmup` value for full-range fallback benches.
-    /// Rendered as the integer or empty string; the agent's prompt
-    /// skips the flag when empty.
+    /// Optional warmup value for coordinator-owned bench runs.
     pub bench_warmup: String,
-    /// Optional `--filter` value for full-range fallback benches
-    /// (e.g. `contract-call`). Empty string when unset.
+    /// Optional filter value for coordinator-owned bench runs.
     pub bench_filter: String,
-    /// Optional `--shadow-dir-root` value for `stacks-bench bench run`.
-    /// Plumbed from `Settings::stacks_bench_shadow_dir`. Empty string
-    /// when unset (in which case the template omits the flag and
-    /// stacks-bench falls back to the source dir's parent). Required
-    /// when the source dir's parent isn't writable from the codex
-    /// sandbox (e.g. `/Volumes/Extern`); must be on the same filesystem
-    /// as `bench_source_dir`.
+    /// Optional shadow-dir root for coordinator-owned bench runs.
     pub bench_shadow_dir_root: String,
-    /// Max inner-loop attempts before giving up. Soft cap enforced by
-    /// the agent via the prompt; coordinator-side hard kill is
-    /// [`Settings::codex_exec_timeout_sec`].
+    /// Requested optimizer attempts. Currently coordinator-clamped to one;
+    /// retained for the future coordinator-owned multi-attempt loop.
     pub optimizer_attempts: String,
-    /// Wall-clock budget (minutes) the agent may spend on the inner
-    /// loop. Same soft-cap semantics as `optimizer_attempts`.
+    /// Wall-clock budget for future coordinator-owned optimizer loops.
     pub optimizer_budget_minutes: String,
 }
 
@@ -568,6 +558,7 @@ impl OptimizerPrompt {
             non_targets_path: "/tmp/lint/non-targets.md".into(),
             domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             optimization_targets_schema_path: "/tmp/lint/optimization-targets.schema.json".into(),
+            optimizer_report_schema_path: "/tmp/lint/optimizer-report.schema.json".into(),
             stacks_bench_data_dir: "/tmp/lint/data".into(),
             bench_source_dir: "/tmp/lint/chainstate".into(),
             bench_network: "mainnet".into(),

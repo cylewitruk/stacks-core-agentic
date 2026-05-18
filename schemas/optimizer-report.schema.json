@@ -1,0 +1,501 @@
+{
+  "$defs": {
+    "AbortedOutcomeTag": {
+      "description": "Status discriminator carried on aborted reports. Serializes as the\nliteral string `\"aborted\"`.",
+      "enum": [
+        "aborted"
+      ],
+      "type": "string"
+    },
+    "AbortedReport": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "properties": {
+            "reason": {
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failed_gate": {
+                "const": "nextest"
+              }
+            },
+            "required": [
+              "failed_gate"
+            ]
+          },
+          "then": {
+            "properties": {
+              "failing_tests": {
+                "items": {
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "failing_tests"
+            ]
+          }
+        }
+      ],
+      "description": "Body of an aborted report — no usable implementation produced. The\ncoordinator does not commit anything and cleans up the worktree.",
+      "properties": {
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "Carried verbatim from the merged target's `delivery_mode`."
+        },
+        "failed_gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailedGate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional: structural identifier for the gate that failed. Lets\ndownstream tooling bucket aborts by cause without parsing the\nfree-text `reason`."
+        },
+        "failing_tests": {
+          "description": "Optional: names of the specific tests that failed, when the\nabort cause was a test-suite failure. REQUIRED non-empty when\n`failed_gate == Some(FailedGate::Nextest)` — the whole point of\nsurfacing nextest aborts structurally is so next-session triage\ncan see which tests blocked this attempt.\n\nFormat: fully-qualified nextest test ids (e.g.\n`stackslib::chainstate::stacks::tests::test_block_validation`).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/AbortedOutcomeTag",
+          "description": "Status discriminator; literal `\"aborted\"`."
+        },
+        "reason": {
+          "description": "Operator-readable reason for the abort. Free text.",
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersionV2",
+          "description": "Constant: 2."
+        },
+        "session_id": {
+          "description": "Session id (matches the merge phase's session_id).",
+          "type": "string"
+        },
+        "target_id": {
+          "description": "Target id (matches the merged target's `id`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "target_id",
+        "outcome",
+        "delivery_mode",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "FailedGate": {
+      "description": "Structural identifier for which gate failed in an aborted run.\nBuckets aborts by cause for cross-session analytics.",
+      "oneOf": [
+        {
+          "const": "fmt",
+          "description": "`cargo fmt-stacks` reported drift.",
+          "type": "string"
+        },
+        {
+          "const": "clippy",
+          "description": "`cargo clippy-stacks` or `cargo clippy-stackslib` failed.",
+          "type": "string"
+        },
+        {
+          "const": "nextest",
+          "description": "`cargo nextest run` reported failures after retries. Requires\nnon-empty [`AbortedReport::failing_tests`].",
+          "type": "string"
+        },
+        {
+          "const": "release_build",
+          "description": "`cargo build --release -p stacks-bench` failed.",
+          "type": "string"
+        },
+        {
+          "const": "non_targets_match",
+          "description": "Target's `target_span` matched an entry in `non-targets.md`.",
+          "type": "string"
+        },
+        {
+          "const": "no_implementation_found",
+          "description": "Agent investigated but found no implementation worth pursuing\n(e.g. the hotspot was inherent CPU work with no structural handle).",
+          "type": "string"
+        },
+        {
+          "const": "parity_unprovable",
+          "description": "`normal_pr` agent determined parity in consensus-sensitive code\nwas unprovable and chose not to ship. Phase 2 will redirect this\nto the `consensus_review_needed` outcome.",
+          "type": "string"
+        },
+        {
+          "const": "timeout_hit",
+          "description": "One of the inner-loop steps exceeded its time budget (codex\ninvocation, nextest run, release build, etc.).",
+          "type": "string"
+        },
+        {
+          "const": "environmental_error",
+          "description": "Agent encountered an environmental error (sandbox denial, missing\ntool, etc.) it could not work around.",
+          "type": "string"
+        }
+      ]
+    },
+    "ImplementedOutcomeTag": {
+      "description": "Status discriminator carried on implemented reports. Serializes as\nthe literal string `\"implemented\"`.",
+      "enum": [
+        "implemented"
+      ],
+      "type": "string"
+    },
+    "ImplementedReport": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "parity": {
+                "properties": {
+                  "consensus_sensitive": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "consensus_sensitive"
+                ]
+              }
+            },
+            "required": [
+              "parity"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parity": {
+                "properties": {
+                  "evidence": {
+                    "items": {
+                      "minLength": 1,
+                      "pattern": "\\S"
+                    },
+                    "minItems": 1
+                  },
+                  "tests": {
+                    "items": {
+                      "minLength": 1,
+                      "pattern": "\\S"
+                    },
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "parity": {
+              "properties": {
+                "unproven_risk": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "test_summary": {
+              "properties": {
+                "failed": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "implementation_summary": {
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pr_title": {
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "test_summary": {
+              "properties": {
+                "log_path": {
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "test_summary": {
+              "properties": {
+                "duration_secs": {
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "normal_pr"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "clippy_clean": {
+                "const": true
+              }
+            },
+            "required": [
+              "clippy_clean"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_mode": {
+                "const": "consensus_issue"
+              }
+            },
+            "required": [
+              "delivery_mode"
+            ]
+          },
+          "then": false
+        }
+      ],
+      "description": "Body of an implemented report — all keep/abort gates passed for the\ntarget's delivery mode.",
+      "properties": {
+        "clippy_clean": {
+          "description": "Clippy outcome.\n\nFor `normal_pr`: REQUIRED `Some(true)` — clippy is the gate, and\n`implemented` is only allowed when clippy was clean. A `Some(false)`\nor `None` here on `normal_pr` is a validation error (use `aborted`\nwith `failed_gate=Clippy` if clippy actually failed).\n\nFor `consensus_poc_pr`: UNCONSTRAINED. Clippy isn't the gate\n(PoCs may intentionally introduce code clippy doesn't love yet),\nbut if the agent chose to run it the result is informative:\n- `None` — agent skipped clippy\n- `Some(true)` — agent ran clippy, was clean (bonus signal)\n- `Some(false)` — agent ran clippy, found issues; agent still chose to\n  ship the PoC because the scoped tests pass",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "Carried verbatim from the merged target's `delivery_mode`."
+        },
+        "dependency_changes": {
+          "description": "Optional: dependency version bumps applied as part of the change.\n`None` when no Cargo.toml versions changed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deviation_from_proposed_change": {
+          "description": "Optional: how the implementation diverged from the analyzer's\n`proposed_change`. `None` when the agent followed the proposal\nwithout material deviation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hard_fork_followup": {
+          "description": "Optional: deferred-to-hard-fork follow-on. Populated when the\n**full** throughput win requires a future cost recalibration,\nsemantics change, or wire-format tweak. Describes the opportunity\nfor reviewers and future analyzers; NOT implemented in this PR.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "implementation_summary": {
+          "description": "One-line summary of what was changed and why. Coordinator uses\nthis as the commit-message body and the PR-description lead.",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ImplementedOutcomeTag",
+          "description": "Status discriminator; literal `\"implemented\"`."
+        },
+        "parity": {
+          "$ref": "#/$defs/ParityReport",
+          "description": "Parity report. ALWAYS present on `implemented` — forces the agent\nto consciously evaluate \"did this land in consensus-sensitive\ncode?\" rather than communicating that via field presence/absence."
+        },
+        "pr_title": {
+          "description": "One-line PR title proposal (e.g. `\"perf: bypass generic Write in\nMARF seal hashing\"`). Coordinator uses this as the PR title;\ncoordinator may sanitize/truncate.",
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersionV2",
+          "description": "Constant: 2."
+        },
+        "session_id": {
+          "description": "Session id (matches the merge phase's session_id).",
+          "type": "string"
+        },
+        "target_id": {
+          "description": "Target id (matches the merged target's `id`).",
+          "type": "string"
+        },
+        "test_summary": {
+          "$ref": "#/$defs/TestSummary",
+          "description": "Test-suite outcome from the inner-loop gate."
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "target_id",
+        "outcome",
+        "delivery_mode",
+        "implementation_summary",
+        "test_summary",
+        "pr_title",
+        "parity"
+      ],
+      "type": "object"
+    },
+    "ParityReport": {
+      "additionalProperties": false,
+      "description": "Parity report. Always present on `implemented`; forces the agent to\nconsciously evaluate consensus-sensitivity rather than communicating\nit implicitly via field presence/absence.",
+      "properties": {
+        "consensus_sensitive": {
+          "description": "True iff the change touches consensus-sensitive code (Clarity VM,\nMARF, block validation, cost accounting). Forces explicit\nclassification — the agent says yes or no, never implicit.",
+          "type": "boolean"
+        },
+        "evidence": {
+          "description": "Concrete parity proofs: what stayed identical and how. Required\nnon-empty when `consensus_sensitive == true`. Example:\n`[\"MARF root hashes match across Immediate/Deferred/All on\nNode4/16/48/256\"]`. May be empty when `consensus_sensitive ==\nfalse`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tests": {
+          "description": "Test paths that demonstrate parity. Required non-empty when\n`consensus_sensitive == true`. Example:\n`[\"chainstate::index::tests::trie_hash_equivalence_node4_node16\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unproven_risk": {
+          "description": "Phase 2 readiness slot: when populated, parity could not be fully\nproven and the outcome should have been `consensus_review_needed`,\nnot `implemented`. ALWAYS `null` on `implemented` outcomes; the\nvalidator rejects non-null here on implemented reports.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "consensus_sensitive",
+        "evidence",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "SchemaVersionV2": {
+      "const": 2,
+      "type": "integer"
+    },
+    "TestFramework": {
+      "description": "Test framework discriminator. Single-variant for now; reserved for\nfuture expansion (e.g. if PoC-mode adds a custom harness).",
+      "oneOf": [
+        {
+          "const": "nextest",
+          "description": "`cargo nextest run`.",
+          "type": "string"
+        }
+      ]
+    },
+    "TestSummary": {
+      "additionalProperties": false,
+      "description": "Test-suite outcome captured during the inner-loop gate.",
+      "properties": {
+        "duration_secs": {
+          "description": "Wall-clock duration of the test run in seconds.",
+          "format": "double",
+          "type": "number"
+        },
+        "failed": {
+          "description": "Number of test cases that failed. Must be `0` on `implemented`\n(otherwise the agent would have emitted `aborted` with\n`failed_gate=nextest`). Kept for symmetry and for future\nflake-tolerance reporting.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "framework": {
+          "$ref": "#/$defs/TestFramework",
+          "description": "Test framework. Always `nextest` in the current pipeline."
+        },
+        "log_path": {
+          "description": "Path to the nextest log (relative to the per-target dir, or\nabsolute). Lets reviewers verify the test summary.",
+          "type": "string"
+        },
+        "passed": {
+          "description": "Number of test cases that passed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "framework",
+        "passed",
+        "failed",
+        "duration_secs",
+        "log_path"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ImplementedReport",
+      "description": "All gates passed; code is in the worktree, coordinator may commit\nand (for `normal_pr`) route to Phase 3 bench."
+    },
+    {
+      "$ref": "#/$defs/AbortedReport",
+      "description": "No usable implementation. Coordinator cleans up; no commit, no bench."
+    }
+  ],
+  "description": "Top-level shape of `optimizer-report.json`. Untagged: serde tries\neach variant in order, matching by the `outcome` discriminator.",
+  "title": "OptimizerReport"
+}

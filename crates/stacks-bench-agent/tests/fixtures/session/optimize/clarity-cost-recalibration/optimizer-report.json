@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "session_id": "20260507-104400",
+  "target_id": "clarity-cost-recalibration",
+  "outcome": "implemented",
+  "delivery_mode": "consensus_poc_pr",
+  "implementation_summary": "PoC: reduced Clarity LookupVariableSize cost weight for Epoch 3.4; scoped tests in clarity::costs::tests pass.",
+  "test_summary": {
+    "framework": "nextest",
+    "passed": 12,
+    "failed": 0,
+    "duration_secs": 8.5,
+    "log_path": "nextest.log"
+  },
+  "pr_title": "consensus: PoC — reduce LookupVariableSize cost weight for Epoch 3.4",
+  "parity": {
+    "consensus_sensitive": true,
+    "evidence": [
+      "PoC intentionally consensus-breaking; scoped tests demonstrate the new cost accounting"
+    ],
+    "tests": [
+      "clarity::costs::tests::lookup_variable_size_epoch_3_4"
+    ],
+    "unproven_risk": null
+  }
+}

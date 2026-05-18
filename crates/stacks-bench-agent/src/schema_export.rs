@@ -22,6 +22,7 @@ use serde_json::Value;
 
 use crate::models::analyze::Analysis;
 use crate::models::candidates::Candidates;
+use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::Summary;
 use crate::models::targets::OptimizationTargets;
 
@@ -42,6 +43,7 @@ pub fn generate_all() -> Result<Vec<SchemaEntry>> {
         entry::<Candidates>("candidates.schema.json")?,
         entry::<Analysis>("analysis.schema.json")?,
         entry::<OptimizationTargets>("optimization-targets.schema.json")?,
+        entry::<OptimizerReport>("optimizer-report.schema.json")?,
         entry::<Summary>("summary.schema.json")?,
     ])
 }

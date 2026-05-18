@@ -18,6 +18,16 @@ language.
 
 ### Rust
 
+### LLM Prompts
+
+When engineering LLM/agent prompts:
+
+- Be mindful of token usage; optimize wording to be clear and concise with high
+  signal density.
+- Avoid repeating what's already been stated in the document. If you find
+  yourself doing this, it may indicate that a structural refactor is necessary
+  to preserve density; if so, propose your suggestion(s) to the user.
+
 ## Documentation
 
 Follow these rules when writing any documentation, both in code and dedicated

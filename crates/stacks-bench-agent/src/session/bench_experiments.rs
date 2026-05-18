@@ -16,8 +16,13 @@
 //! Targets are skipped when:
 //! - `bench_eligible == false` (consensus-routing modes — see
 //!   [`crate::models::common::DeliveryMode`])
-//! - `optimize/<id>/abort.md` is present
-//! - `optimize/<id>/consensus-issue.md` is present (belt + suspenders)
+//! - `optimize/<id>/consensus-issue.md` is present (coordinator-written marker;
+//!   the optimizer is skipped for `consensus_issue` mode, so no typed report
+//!   exists for this branch)
+//! - `optimize/<id>/optimizer-report.json` is absent, fails schema / context
+//!   validation, or has `outcome=aborted`. Gating on the typed report (not the
+//!   rendered companion `abort.md`, which could be stale after a demotion) is
+//!   what makes "aborted" authoritative.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,10 +30,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 
 use crate::models::common::DeliveryMode;
+use crate::models::optimizer_report::OptimizerReport;
 use crate::models::targets::{MergedTarget, OptimizationTargets};
-use crate::session::SessionLayout;
 use crate::session::bench::{BenchClient, InvokeOptions, extract_run_id};
 use crate::session::cargo::{CargoRunner, worktree_release_bin};
+use crate::session::{SessionLayout, loader};
 
 /// Inputs to a bench-experiments phase.
 pub struct Inputs<'a> {
@@ -393,16 +399,29 @@ fn static_skip_reason(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<Opti
         .layout
         .experiment_dir(&target.id);
     if exp_dir
-        .join("abort.md")
-        .exists()
-    {
-        return Ok(Some("aborted".to_owned()));
-    }
-    if exp_dir
         .join("consensus-issue.md")
         .exists()
     {
         return Ok(Some("consensus-issue (no optimizer ran)".to_owned()));
+    }
+    // Gate on the typed optimizer report (authoritative), not the
+    // companion `abort.md` (could be stale after a demotion that
+    // rewrote the JSON but left an old markdown copy around). Missing
+    // report or `outcome=aborted` both block bench; a validation/
+    // context error blocks too — benching against an unparseable
+    // report would consume bench-lock for nothing.
+    match loader::read_optimizer_report_for_target(inputs.layout, &target.id, target.delivery_mode)
+    {
+        Ok(Some(OptimizerReport::Implemented(_))) => {}
+        Ok(Some(OptimizerReport::Aborted(_))) => {
+            return Ok(Some("aborted (optimizer report outcome=aborted)".to_owned()));
+        }
+        Ok(None) => {
+            return Ok(Some("aborted (no optimizer-report.json on disk)".to_owned()));
+        }
+        Err(e) => {
+            return Ok(Some(format!("aborted (optimizer-report error: {e:#})")));
+        }
     }
     Ok(None)
 }

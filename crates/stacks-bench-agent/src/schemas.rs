@@ -42,6 +42,7 @@ pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
         "optimization-targets.schema.json",
         include_str!("../../../schemas/optimization-targets.schema.json"),
     ),
+    ("optimizer-report.schema.json", include_str!("../../../schemas/optimizer-report.schema.json")),
     ("summary.schema.json", include_str!("../../../schemas/summary.schema.json")),
 ];
 

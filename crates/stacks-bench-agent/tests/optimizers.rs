@@ -18,25 +18,43 @@ use stacks_bench_agent::session::optimizers::{self, GitCheckoutManager, Inputs};
 use stacks_bench_agent::settings::Settings;
 use stacks_bench_agent::types::SessionId;
 
-/// Fake harness that writes either an `implementation.md` or `abort.md`
-/// per target depending on the target id's prefix. Real ports never
-/// invoke this fake against `consensus_issue` targets — those skip the
-/// harness entirely.
+/// Per-target outcome the FakeHarness should emit.
+#[derive(Debug, Clone, Copy)]
+enum FakeDecision {
+    /// Emit `outcome=implemented` with the given delivery_mode. The
+    /// harness also drops a `fake-edit.txt` inside the checkout so the
+    /// coordinator's `git status --porcelain` step sees a dirty tree.
+    Implemented(DeliveryMode),
+    /// Emit `outcome=aborted` with the given delivery_mode.
+    Aborted(DeliveryMode),
+}
+
+/// Fake harness that writes a typed `optimizer-report.json` per target
+/// based on the test-provided decision map. Replaces the marker-file
+/// contract (`implementation.md` / `abort.md`) the agent used to emit
+/// directly. Real ports never invoke this fake against `consensus_issue`
+/// targets — those skip the harness entirely.
 struct FakeHarness {
-    /// target_id → emitted marker name (`implementation.md` or `abort.md`).
-    decisions: Mutex<std::collections::BTreeMap<String, &'static str>>,
-    /// Records the rendered `${POC_TEST_SCOPE_EXPR}` value per invocation
-    /// so we can assert the bash join semantics.
+    /// target_id → typed outcome the fake will emit.
+    decisions: Mutex<std::collections::BTreeMap<String, FakeDecision>>,
     /// Rendered prompt captured per target id so tests can assert which
-    /// substitutions Askama produced (e.g., the joined POC scope).
+    /// substitutions MiniJinja produced (e.g., the joined POC scope).
     prompts: Mutex<std::collections::BTreeMap<String, String>>,
+    /// Session id stamped into every emitted report so the coordinator's
+    /// context-checking loader accepts it (mismatch with the test
+    /// fixture's session id would be flagged as a misbehaving agent).
+    session_id: String,
 }
 
 impl FakeHarness {
-    fn new(decisions: std::collections::BTreeMap<String, &'static str>) -> Self {
+    fn new(
+        decisions: std::collections::BTreeMap<String, FakeDecision>,
+        session_id: impl Into<String>,
+    ) -> Self {
         Self {
             decisions: Mutex::new(decisions),
             prompts: Mutex::new(Default::default()),
+            session_id: session_id.into(),
         }
     }
     fn prompt_for(&self, target_id: &str) -> Option<String> {
@@ -46,6 +64,60 @@ impl FakeHarness {
             .get(target_id)
             .cloned()
     }
+}
+
+/// Construct a valid `optimizer-report.json` body for the FakeHarness,
+/// keyed off the supplied decision. Matches the model's `validate()`
+/// invariants so the coordinator's parse-and-validate gate passes. The
+/// `session_id` MUST match what the test layout uses, or the
+/// coordinator's context-check will reject the report.
+fn fake_report_body(target_id: &str, session_id: &str, decision: FakeDecision) -> String {
+    use stacks_bench_agent::models::common::SchemaVersionV2;
+    use stacks_bench_agent::models::optimizer_report::{
+        AbortedOutcomeTag, AbortedReport, FailedGate, ImplementedOutcomeTag, ImplementedReport,
+        OptimizerReport, ParityReport, TestFramework, TestSummary,
+    };
+    let report = match decision {
+        FakeDecision::Implemented(mode) => OptimizerReport::Implemented(ImplementedReport {
+            schema_version: SchemaVersionV2,
+            session_id: session_id.to_owned(),
+            target_id: target_id.to_owned(),
+            outcome: ImplementedOutcomeTag::Implemented,
+            delivery_mode: mode,
+            implementation_summary: format!("fake implementation for {target_id}"),
+            deviation_from_proposed_change: None,
+            dependency_changes: None,
+            test_summary: TestSummary {
+                framework: TestFramework::Nextest,
+                passed: 1,
+                failed: 0,
+                duration_secs: 1.0,
+                log_path: "nextest.log".to_owned(),
+            },
+            // normal_pr requires Some(true); consensus_poc_pr accepts
+            // any value — emit Some(true) uniformly for simplicity.
+            clippy_clean: Some(true),
+            pr_title: format!("perf: fake {target_id}"),
+            parity: ParityReport {
+                consensus_sensitive: false,
+                evidence: vec![],
+                tests: vec![],
+                unproven_risk: None,
+            },
+            hard_fork_followup: None,
+        }),
+        FakeDecision::Aborted(mode) => OptimizerReport::Aborted(AbortedReport {
+            schema_version: SchemaVersionV2,
+            session_id: session_id.to_owned(),
+            target_id: target_id.to_owned(),
+            outcome: AbortedOutcomeTag::Aborted,
+            delivery_mode: mode,
+            reason: format!("fake abort for {target_id}"),
+            failed_gate: Some(FailedGate::NoImplementationFound),
+            failing_tests: None,
+        }),
+    };
+    serde_json::to_string_pretty(&report).expect("fake report serializable")
 }
 
 impl AgentHarness for FakeHarness {
@@ -81,21 +153,21 @@ impl AgentHarness for FakeHarness {
         std::fs::write(inputs.stderr_log, b"")?;
         std::fs::write(inputs.last_message, b"# done\n")?;
 
-        let marker = self
+        let decision = self
             .decisions
             .lock()
             .unwrap()
             .get(&target)
             .copied()
-            .unwrap_or("implementation.md");
-        std::fs::write(output_dir.join(marker), format!("# {marker} for {target}\n"))?;
-        // Layer 1B v2 pass-b.1: for kept attempts the coordinator
-        // commits after the agent exits, requiring `git status
-        // --porcelain` to report changes. Simulate the agent's source
-        // edit by dropping a marker file inside the checkout — `cwd`
-        // is the per-target clone path (mirrors what
-        // `optimizers::run_one` passes to codex).
-        if marker == "implementation.md" {
+            .unwrap_or(FakeDecision::Implemented(DeliveryMode::NormalPr));
+        std::fs::write(
+            output_dir.join("optimizer-report.json"),
+            fake_report_body(&target, &self.session_id, decision),
+        )?;
+        // For implemented outcomes the coordinator runs `git status
+        // --porcelain` after we exit and demotes if the tree is clean,
+        // so synthesize a real edit inside the checkout.
+        if matches!(decision, FakeDecision::Implemented(_)) {
             std::fs::write(
                 inputs
                     .cwd
@@ -317,9 +389,9 @@ async fn optimizers_routes_three_delivery_modes() {
     );
 
     let mut decisions = std::collections::BTreeMap::new();
-    decisions.insert("normal-tgt".to_owned(), "implementation.md");
-    decisions.insert("poc-tgt".to_owned(), "implementation.md");
-    let harness = Arc::new(FakeHarness::new(decisions));
+    decisions.insert("normal-tgt".to_owned(), FakeDecision::Implemented(DeliveryMode::NormalPr));
+    decisions.insert("poc-tgt".to_owned(), FakeDecision::Implemented(DeliveryMode::ConsensusPocPr));
+    let harness = Arc::new(FakeHarness::new(decisions, "20260507-104400"));
 
     let prompts_dir = tmp.path().join("prompts");
     stacks_bench_agent::prompts::seed_to(&prompts_dir).expect("seed prompts");
@@ -379,13 +451,22 @@ async fn optimizers_routes_three_delivery_modes() {
         "normal-tgt prompt unexpectedly contains a poc test scope"
     );
 
-    // implementation.md landed for normal + poc.
+    // optimizer-report.json landed for normal + poc, and the
+    // coordinator rendered the implementation.md companion view.
     for tid in ["normal-tgt", "poc-tgt"] {
         assert!(
             session
                 .experiment_dir(tid)
+                .join("optimizer-report.json")
+                .is_file(),
+            "{tid}: optimizer-report.json missing"
+        );
+        assert!(
+            session
+                .experiment_dir(tid)
                 .join("implementation.md")
-                .is_file()
+                .is_file(),
+            "{tid}: coordinator-rendered implementation.md missing"
         );
     }
 }
@@ -397,8 +478,8 @@ async fn optimizers_aborts_clear_implementation_marker() {
         stage_framework_and_session(&tmp, vec![target("tgt-a", DeliveryMode::NormalPr, None)]);
 
     let mut decisions = std::collections::BTreeMap::new();
-    decisions.insert("tgt-a".to_owned(), "abort.md");
-    let harness = Arc::new(FakeHarness::new(decisions));
+    decisions.insert("tgt-a".to_owned(), FakeDecision::Aborted(DeliveryMode::NormalPr));
+    let harness = Arc::new(FakeHarness::new(decisions, "20260507-104400"));
 
     let prompts_dir = tmp.path().join("prompts");
     stacks_bench_agent::prompts::seed_to(&prompts_dir).expect("seed prompts");
@@ -420,19 +501,26 @@ async fn optimizers_aborts_clear_implementation_marker() {
 
     assert_eq!(outputs.aborted, 1);
     assert_eq!(outputs.landed, 0);
+    let exp_dir = session.experiment_dir("tgt-a");
     assert!(
-        session
-            .experiment_dir("tgt-a")
+        exp_dir
+            .join("optimizer-report.json")
+            .is_file(),
+        "agent's typed aborted report missing"
+    );
+    assert!(
+        exp_dir
             .join("abort.md")
-            .is_file()
+            .is_file(),
+        "coordinator-rendered abort.md companion missing"
     );
 }
 
 /// `prune_aborted_experiments` walks the experiments tree and tears
-/// down the per-target checkout (clone) for every dir that has
-/// `abort.md` OR no marker (crashed mid-run). Dirs with
-/// `implementation.md` are left alone — their checkouts are what
-/// Phase 5 publish reads + pushes from.
+/// down the per-target checkout (clone) for every dir whose
+/// `optimizer-report.json` is missing OR `outcome=aborted` (crashed
+/// mid-run). Dirs with `outcome=implemented` are left alone — their
+/// checkouts are what Phase 5 publish reads + pushes from.
 ///
 /// With the clone-based model, teardown is a single `remove_checkout`
 /// per aborted target — the `agent/<session>/<target>` branch lives
@@ -467,18 +555,24 @@ async fn prune_aborted_experiments_drops_only_unmarked_checkouts() {
     let layout = SessionLayout::new(&sessions_root, id.clone());
     let experiments_dir = layout.optimize_dir();
     // Three experiments:
-    //   - tgt-kept   → implementation.md (preserve checkout)
-    //   - tgt-abort  → abort.md          (drop checkout)
-    //   - tgt-crash  → no marker         (drop checkout — crash equivalent)
-    for (target_id, marker) in [
-        ("tgt-kept", Some("implementation.md")),
-        ("tgt-abort", Some("abort.md")),
+    //   - tgt-kept   → outcome=implemented  (preserve checkout)
+    //   - tgt-abort  → outcome=aborted      (drop checkout)
+    //   - tgt-crash  → no report at all     (drop checkout — crash equivalent)
+    for (target_id, decision) in [
+        ("tgt-kept", Some(FakeDecision::Implemented(DeliveryMode::NormalPr))),
+        ("tgt-abort", Some(FakeDecision::Aborted(DeliveryMode::NormalPr))),
         ("tgt-crash", None),
     ] {
         let dir = experiments_dir.join(target_id);
         std::fs::create_dir_all(&dir).unwrap();
-        if let Some(m) = marker {
-            std::fs::write(dir.join(m), "x").unwrap();
+        if let Some(d) = decision {
+            // Use the session id the layout was constructed with so the
+            // context-checking loader's session_id check passes.
+            std::fs::write(
+                dir.join("optimizer-report.json"),
+                fake_report_body(target_id, "20260507-104400", d),
+            )
+            .unwrap();
         }
     }
 
