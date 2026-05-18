@@ -247,7 +247,14 @@ async fn run_pr_writer<H: AgentHarness>(
     // and reads diff context from the worktree. No framework path
     // needed — schemas/prompts aren't referenced from inside the
     // pr-writer template.
-    let add_dirs: Vec<PathBuf> = vec![worktree_dir.clone()];
+    let mut add_dirs: Vec<PathBuf> = vec![worktree_dir.clone()];
+    add_dirs.extend(
+        inputs
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
 
     inputs
         .harness
@@ -337,8 +344,16 @@ async fn run_issue_writer<H: AgentHarness>(
         .unwrap_or(false);
     // Issue-writer reads `consensus-issue.md` from cwd (the experiment
     // dir) and writes the rendered issue body alongside it. No extra
-    // add_dirs needed beyond cwd (which codex always grants).
-    let add_dirs: Vec<PathBuf> = vec![];
+    // add_dirs needed beyond cwd (which codex always grants); the
+    // operator-side extras still merge in.
+    let mut add_dirs: Vec<PathBuf> = vec![];
+    add_dirs.extend(
+        inputs
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
 
     inputs
         .harness

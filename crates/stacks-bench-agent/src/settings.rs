@@ -322,6 +322,23 @@ pub struct Settings {
     #[serde(default)]
     pub codex_exec_timeout_sec: Option<u64>,
 
+    /// Extra paths to grant write access to in the codex sandbox, on top
+    /// of the per-phase `add_dirs` (per-target output dir, schemas,
+    /// queries, etc.). Concatenated into the
+    /// `-c sandbox_workspace_write.writable_roots=[...]` TOML override
+    /// the harness emits.
+    ///
+    /// Why this exists: codex's `-c` config grammar **replaces** the
+    /// value at a key path rather than deep-merging arrays. So any
+    /// `writable_roots` the operator has in `~/.codex/config.toml`
+    /// (e.g. their sccache cache dir) would be silently dropped when we
+    /// emit our per-invoke override. List those paths here so the
+    /// harness can fold them back in.
+    ///
+    /// Empty list disables the extra grant.
+    #[serde(default)]
+    pub codex_extra_writable_roots: Vec<std::path::PathBuf>,
+
     /// Maximum number of inner-loop attempts the Phase 2 optimizer may
     /// burn on one merged target before giving up. Combined with
     /// [`Settings::optimizer_budget_minutes`] as "whichever exhausts
@@ -591,8 +608,57 @@ impl Settings {
         if !explicit_source {
             return Ok(Self::default());
         }
-        cfg.try_deserialize::<Settings>()
-            .with_context(|| format!("parsing {}", resolved.unwrap().display()))
+        let settings: Settings = cfg
+            .try_deserialize()
+            .with_context(|| {
+                format!(
+                    "parsing {}",
+                    resolved
+                        .as_ref()
+                        .unwrap()
+                        .display()
+                )
+            })?;
+        settings
+            .validate()
+            .with_context(|| {
+                format!(
+                    "validating settings loaded from {}",
+                    resolved
+                        .as_ref()
+                        .unwrap()
+                        .display(),
+                )
+            })?;
+        Ok(settings)
+    }
+
+    /// Reject settings shapes that are syntactically valid but
+    /// semantically dangerous. Runs after deserialization in
+    /// [`Settings::load`]; tests can call it directly on hand-built
+    /// instances.
+    ///
+    /// Current checks:
+    /// - [`Settings::codex_extra_writable_roots`] entries must be **absolute
+    ///   paths**. Relative paths grant sandbox access relative to whatever cwd
+    ///   the codex process happens to inherit, which is a footgun: the same
+    ///   config produces different grants depending on where `sbagent` was
+    ///   invoked from.
+    pub fn validate(&self) -> Result<()> {
+        for (i, path) in self
+            .codex_extra_writable_roots
+            .iter()
+            .enumerate()
+        {
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "codex_extra_writable_roots[{i}] = {:?} is a relative path; sandbox grants \
+                     must be absolute so they don't depend on the codex process's cwd",
+                    path.display(),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Apply the resolution order documented on [`Settings::load`] and
@@ -926,5 +992,64 @@ mod tests {
                 std::env::set_var("HOME", v);
             }
         }
+    }
+
+    #[test]
+    fn validate_accepts_absolute_writable_roots() {
+        let s = Settings {
+            codex_extra_writable_roots: vec![
+                PathBuf::from("/Users/op/Library/Caches/sccache"),
+                PathBuf::from("/var/cache/sbagent"),
+            ],
+            ..Settings::default()
+        };
+        s.validate()
+            .expect("absolute paths must pass validation");
+    }
+
+    #[test]
+    fn validate_rejects_relative_writable_root() {
+        let s = Settings {
+            codex_extra_writable_roots: vec![PathBuf::from("../shared-cache")],
+            ..Settings::default()
+        };
+        let err = s
+            .validate()
+            .expect_err("relative path must fail validation");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("codex_extra_writable_roots"), "msg: {msg}");
+        assert!(msg.contains("relative path"), "msg: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_relative_root_alongside_absolute() {
+        let s = Settings {
+            codex_extra_writable_roots: vec![
+                PathBuf::from("/var/cache/sbagent"),
+                PathBuf::from("relative/sneaky"),
+            ],
+            ..Settings::default()
+        };
+        let err = s
+            .validate()
+            .expect_err("any relative entry should fail");
+        assert!(format!("{err:#}").contains("[1]"), "should report the bad index");
+    }
+
+    #[test]
+    fn load_rejects_config_with_relative_writable_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"codex_extra_writable_roots = ["../shared-cache"]
+"#,
+        )
+        .unwrap();
+        let err = Settings::load(Some(&path)).expect_err("load must surface validate failures");
+        assert!(
+            format!("{err:#}").contains("relative path"),
+            "load should propagate the validate error: {err:#}",
+        );
     }
 }

@@ -201,7 +201,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
                 .display(),
         )
     })?;
-    let add_dirs: Vec<PathBuf> = vec![
+    let mut add_dirs: Vec<PathBuf> = vec![
         // Persistent stacks-bench db + stacks-core checkout (agent reads
         // these directly).
         inputs
@@ -237,6 +237,13 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             .memory_dir
             .clone(),
     ];
+    add_dirs.extend(
+        inputs
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
     let triage_dir = layout.triage_dir();
     let invoke_outputs = inputs
         .harness

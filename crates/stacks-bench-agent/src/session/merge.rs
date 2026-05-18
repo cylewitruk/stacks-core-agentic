@@ -211,7 +211,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // into the prompt as absolute paths). The schema file is under
     // `<operator>/.sbagent/schemas/`; bucket-anchors.md is under
     // `<operator>/.sbagent/context/`.
-    let add_dirs: Vec<PathBuf> = vec![
+    let mut add_dirs: Vec<PathBuf> = vec![
         inputs
             .framework
             .schemas_dir
@@ -222,6 +222,13 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             .clone(),
         prompts_dir.to_path_buf(),
     ];
+    add_dirs.extend(
+        inputs
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
 
     // Stamp pre-invocation modification times so a stale targets file can't
     // pass freshness checks (mirrors the bash `mktemp` marker).

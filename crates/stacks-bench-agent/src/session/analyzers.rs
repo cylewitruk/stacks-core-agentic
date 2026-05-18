@@ -253,7 +253,7 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         .settings
         .codex_dangerously_bypass_sandbox
         .unwrap_or(false);
-    let add_dirs: Vec<PathBuf> = vec![
+    let mut add_dirs: Vec<PathBuf> = vec![
         state
             .framework
             .require_base()?
@@ -284,6 +284,13 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             .join("triage")
             .join("queries"),
     ];
+    add_dirs.extend(
+        state
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
 
     let invoke_outputs = state
         .harness

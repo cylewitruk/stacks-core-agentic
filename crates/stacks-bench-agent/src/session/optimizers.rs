@@ -923,7 +923,7 @@ where
     // for no reason and would also fail outright if the configured
     // shadow dir isn't mounted. Pass-b.2 surfaces shadow-dir-root
     // coordinator-side only.
-    let add_dirs: Vec<PathBuf> = vec![
+    let mut add_dirs: Vec<PathBuf> = vec![
         state
             .framework
             .context_dir
@@ -935,6 +935,13 @@ where
         prompts_dir.to_path_buf(),
         exp_dir.clone(),
     ];
+    add_dirs.extend(
+        state
+            .settings
+            .codex_extra_writable_roots
+            .iter()
+            .cloned(),
+    );
 
     let git_env = optimizer_git_env(&state.settings);
     let invoke_outputs = state
