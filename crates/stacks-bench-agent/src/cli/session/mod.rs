@@ -19,6 +19,7 @@ pub mod bench;
 pub mod bench_range;
 pub mod finalize;
 pub mod optimize;
+pub mod publish;
 pub mod run;
 pub mod tail;
 pub mod triage;
@@ -68,6 +69,10 @@ pub enum SessionCommand {
     /// serialized under the bench lock.
     Bench(bench::BenchArgs),
 
+    /// Phase 5: generate per-target publish artifacts and push branches /
+    /// open PRs / open issues. With `--dry-run`, generate only.
+    Publish(publish::PublishArgs),
+
     /// Run the full pipeline (Phase 0 → Phase 5).
     Run(run::RunSessionArgs),
 }
@@ -108,6 +113,9 @@ pub async fn run(args: SessionArgs, ctx: &CliContext) -> Result<()> {
         }
         SessionCommand::Bench(a) => {
             bench::run(a, ctx, &require_session_id(session_id, "bench")?).await
+        }
+        SessionCommand::Publish(a) => {
+            publish::run(a, ctx, &require_session_id(session_id, "publish")?).await
         }
         SessionCommand::Run(a) => {
             let id = session_id.unwrap_or_else(SessionId::mint_now);
