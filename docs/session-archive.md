@@ -9,10 +9,10 @@ disk** and **what every future reader of the bot's work can find**.
 
 Each archive run produces two git objects in the operator repo:
 
-| Where                          | What it holds                                          | Lifecycle                  |
-| ------------------------------ | ------------------------------------------------------ | -------------------------- |
-| `session/<id>` branch          | The full `sessions/<id>/` evidence bundle (`git add -f` bypasses main's `/sessions/` ignore). | **Write-once**. Never re-pushed. |
-| `sessions.jsonl` on `main`     | One append-only line per session — the terminal index record. | Append-only.               |
+| Where | What it holds | Lifecycle |
+| --- | --- | --- |
+| `session/<id>` branch | The full `sessions/<id>/` evidence bundle (`git add -f` bypasses main's `/sessions/` ignore). | **Write-once**. Never re-pushed. |
+| `sessions.jsonl` on `main` | One append-only line per session — the terminal index record. | Append-only. |
 
 The ledger line is a [`SessionRecord`](../crates/stacks-bench-agent/src/models/session_record.rs).
 Its JSON Schema is committed at
@@ -91,7 +91,7 @@ default workspace-based layout (set `agent_workspace_root` and let
 Operator must set:
 
 | Setting | Purpose | Default when unset |
-| ------- | ------- | ------------------ |
+| --- | --- | --- |
 | `operator_repo_root` | Absolute path to the operator git repo (holds `sessions.jsonl` + archive branches). | `sessions_root.parent()` ONLY when `sessions_root` was set explicitly (legacy layout). Otherwise `None` — `sbagent session archive` requires the setting to be explicit and bails with a clear error if missing. |
 | `agent_workspace_root` | Workspace path that holds session bulk + the transient archive worktree. Required by archive (the archive worktree must live outside the operator repo). | None — when also unset, `sessions_root` falls back to `<cwd>/sessions/` (legacy layout) and archive refuses to run. |
 
@@ -121,13 +121,13 @@ mv /path/to/operator/sessions/* /var/tmp/sbagent-workspaces/sessions/
 These are documented limitations of the v1 record, slated for
 follow-up:
 
-| Field                    | v1 value                                  | v2 plan                                                |
-| ------------------------ | ----------------------------------------- | ------------------------------------------------------ |
-| `started_at`             | Derived from session id's `YYYYMMDD-HHMMSS` prefix. | Pulled from a per-session manifest written by orchestrator. |
-| `finished_at`            | Latest mtime under `sessions/<id>/`.     | Same manifest source.                                  |
-| `phase_durations_secs`   | Empty `{}`.                               | Populated when phase-timing instrumentation lands.    |
-| `targets[].head_sha`     | `None`.                                   | Populated by publish-feedback integration.             |
-| `targets[].pr_url`       | `None`.                                   | Populated by publish push outputs.                     |
+| Field | v1 value | v2 plan |
+| --- | --- | --- |
+| `started_at` | Derived from session id's `YYYYMMDD-HHMMSS` prefix. | Pulled from a per-session manifest written by orchestrator. |
+| `finished_at` | Latest mtime under `sessions/<id>/`. | Same manifest source. |
+| `phase_durations_secs` | Empty `{}`. | Populated when phase-timing instrumentation lands. |
+| `targets[].head_sha` | `None`. | Populated by publish-feedback integration. |
+| `targets[].pr_url` | `None`. | Populated by publish push outputs. |
 | `bench.baseline_total_us` / `candidate_total_us` | `0`. | Aggregated across per-run `bench-run.json` files. |
 
 None of these are load-bearing for the ledger's primary use case
