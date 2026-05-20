@@ -15,5 +15,6 @@ pub mod analyze;
 pub mod candidates;
 pub mod common;
 pub mod optimizer_report;
+pub mod session_record;
 pub mod summary;
 pub mod targets;

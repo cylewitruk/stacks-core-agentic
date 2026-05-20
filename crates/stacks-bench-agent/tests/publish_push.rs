@@ -243,6 +243,7 @@ fn stage(tmp: &tempfile::TempDir, id: &SessionId) -> (Layout, SessionLayout) {
         base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
+        operator_repo_root: None,
     };
     (layout, session_layout)
 }
@@ -547,6 +548,7 @@ async fn push_resolves_checkouts_through_agent_workspace_root_when_set() {
         base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: Some(workspace_root.clone()),
+        operator_repo_root: None,
     };
 
     let token = write_token(&tmp);

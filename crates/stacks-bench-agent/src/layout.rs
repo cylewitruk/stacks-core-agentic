@@ -133,6 +133,15 @@ pub struct Layout {
     /// at `<sessions_root>/<id>/results`. Equivalent to bash
     /// `$OPT_SESSIONS_ROOT`.
     pub sessions_root: PathBuf,
+    /// Operator git repository root (holds `sessions/`, `repos/`, the
+    /// `sessions.jsonl` ledger, and `session/<id>` archive branches).
+    /// `None` here is *not* an error at startup; only `sbagent session
+    /// archive` (and the `--archive` flag on `session run`) require it.
+    /// Callers that need it use [`Layout::require_operator_repo_root`].
+    /// Resolution: explicit [`Settings::operator_repo_root`] → parent of
+    /// `sessions_root` (the conventional `<operator>/sessions/` layout)
+    /// → `None`.
+    pub operator_repo_root: Option<PathBuf>,
     /// Persistent stacks-bench app-data dir, owned by the `stacks-bench`
     /// binary. Defaults to `<framework>/data/stacks-bench`. SQLite db
     /// lives below `<dir>/appdata/stacks-bench.db`. Equivalent to bash
@@ -180,6 +189,20 @@ impl Layout {
         )
     }
 
+    /// Resolve [`Layout::operator_repo_root`] or return a clear error.
+    /// Required by `sbagent session archive` (and `session run
+    /// --archive`); not required by any other command.
+    pub fn require_operator_repo_root(&self) -> Result<&Path> {
+        self.operator_repo_root
+            .as_deref()
+            .context(
+                "`operator_repo_root` not set in settings and could not be auto-derived (no \
+                 parent of `sessions_root`). The archive flow needs this — the git repo that will \
+                 hold `sessions.jsonl` on `main` and `session/<id>` write-once branches. Set \
+                 `operator_repo_root` in config.toml to the absolute path of your operator repo.",
+            )
+    }
+
     /// Resolve [`Layout::framework`] or return a clear error. Use this
     /// only in tool-developer paths (e.g. `sbagent schema export`'s
     /// default `--out`, or the typed-model-vs-committed-schema drift
@@ -222,12 +245,61 @@ impl Layout {
         let writable_anchor = framework
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // Resolve `agent_workspace_root` up front; it informs both the
+        // sessions-root default (now) and the optimizer-checkouts dir
+        // (downstream). When unset, we still fall back to the legacy
+        // cwd / framework-relative `sessions` path so existing
+        // operators don't break — but the new-and-recommended layout
+        // is `<agent_workspace_root>/sessions/<id>/`, which keeps
+        // session bulk OUT of the operator git repo so the `session/<id>`
+        // archive branch's tracked files don't get wiped from the
+        // working tree on every branch switch.
+        let agent_workspace_root = settings
+            .agent_workspace_root
+            .clone()
+            .map(absolutize)
+            .transpose()?;
+        // Distinguish "operator set sessions_root explicitly" from
+        // "we defaulted it" — only the explicit case feeds the
+        // operator_repo_root parent fallback below.
+        let sessions_root_explicit = settings
+            .sessions_root
+            .is_some();
         let sessions_root = absolutize(
             settings
                 .sessions_root
                 .clone()
+                .or_else(|| {
+                    agent_workspace_root
+                        .as_deref()
+                        .map(|w| w.join("sessions"))
+                })
                 .unwrap_or_else(|| writable_anchor.join("sessions")),
         )?;
+        // Operator repo root: explicit setting wins; otherwise fall
+        // back to `sessions_root.parent()` ONLY when sessions_root
+        // was set explicitly (legacy `<operator>/sessions/` layout —
+        // parent lands on the operator). When sessions_root was
+        // defaulted to `<agent_workspace_root>/sessions/` (new
+        // workspace layout) the parent lands on the workspace, NOT
+        // the operator, and would silently target the wrong dir;
+        // leave operator_repo_root as `None` so
+        // `require_operator_repo_root` surfaces a clear config
+        // error.
+        let operator_repo_root = settings
+            .operator_repo_root
+            .clone()
+            .map(absolutize)
+            .transpose()?
+            .or_else(|| {
+                if sessions_root_explicit {
+                    sessions_root
+                        .parent()
+                        .map(Path::to_path_buf)
+                } else {
+                    None
+                }
+            });
         let stacks_bench_data_dir = absolutize(
             settings
                 .stacks_bench_data_dir
@@ -268,11 +340,9 @@ impl Layout {
             .clone()
             .map(absolutize)
             .transpose()?;
-        let agent_workspace_root = settings
-            .agent_workspace_root
-            .clone()
-            .map(absolutize)
-            .transpose()?;
+        // `agent_workspace_root` is already resolved above (see the
+        // sessions-root block). Re-bind for clarity at the
+        // construction site below.
         // Schemas dir resolution (operator's on-disk bundle mirror):
         // explicit setting wins; otherwise derive a sibling of
         // `prompt_overrides_dir` (so `.sbagent/prompts` ↔ `.sbagent/schemas`
@@ -356,6 +426,7 @@ impl Layout {
             base,
             stacks_bench_shadow_dir,
             agent_workspace_root,
+            operator_repo_root,
         })
     }
 
@@ -583,5 +654,116 @@ mod tests {
             .expect("set");
         assert!(root.is_absolute(), "agent_workspace_root must be absolutized, got {root:?}");
         assert!(root.ends_with("relative/ws"), "preserves trailing segments, got {root:?}");
+    }
+
+    /// Explicit `operator_repo_root` wins over the sessions-parent
+    /// fallback. Required because split layouts (e.g. operator repo
+    /// containing `data/` and `sessions/` at the same level as the repo
+    /// root) need an unambiguous source of truth.
+    #[test]
+    fn operator_repo_root_uses_explicit_setting_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let framework = tmp.path().join("framework");
+        std::fs::create_dir_all(framework.join("prompts")).unwrap();
+        std::fs::create_dir_all(framework.join("schemas")).unwrap();
+        let sessions = tmp.path().join("ses");
+        let explicit = tmp.path().join("ops-repo");
+        let settings = Settings {
+            framework_root: Some(framework),
+            sessions_root: Some(sessions.clone()),
+            operator_repo_root: Some(explicit.clone()),
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        let resolved = layout
+            .operator_repo_root
+            .as_deref()
+            .expect("set");
+        assert_eq!(resolved, explicit);
+        // Did NOT fall back to sessions_root.parent().
+        assert_ne!(resolved, sessions.parent().unwrap());
+    }
+
+    /// The sessions-parent fallback for `operator_repo_root` fires
+    /// ONLY when `sessions_root` was set explicitly (legacy layout
+    /// — parent lands on the operator). When `sessions_root` was
+    /// defaulted to `<agent_workspace_root>/sessions/`, the parent
+    /// would land on the workspace (not the operator) and silently
+    /// target the wrong repo. We require an explicit
+    /// `operator_repo_root` in that case.
+    #[test]
+    fn operator_repo_root_does_not_derive_from_defaulted_workspace_sessions() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let framework = tmp.path().join("framework");
+        std::fs::create_dir_all(framework.join("prompts")).unwrap();
+        std::fs::create_dir_all(framework.join("schemas")).unwrap();
+        let workspace = tmp.path().join("ws");
+        let settings = Settings {
+            framework_root: Some(framework),
+            sessions_root: None, // defaulted from agent_workspace_root
+            agent_workspace_root: Some(workspace),
+            operator_repo_root: None,
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        assert!(
+            layout
+                .operator_repo_root
+                .is_none(),
+            "with defaulted sessions_root, operator_repo_root must be None (workspace path is NOT \
+             the operator); got {:?}",
+            layout.operator_repo_root,
+        );
+    }
+
+    /// When unset, `operator_repo_root` falls back to the parent of
+    /// `sessions_root` — the conventional `<operator>/sessions/`
+    /// layout.
+    #[test]
+    fn operator_repo_root_falls_back_to_sessions_parent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let framework = tmp.path().join("framework");
+        std::fs::create_dir_all(framework.join("prompts")).unwrap();
+        std::fs::create_dir_all(framework.join("schemas")).unwrap();
+        let operator = tmp.path().join("ops-repo");
+        let sessions = operator.join("sessions");
+        let settings = Settings {
+            framework_root: Some(framework),
+            sessions_root: Some(sessions),
+            operator_repo_root: None,
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        assert_eq!(
+            layout
+                .operator_repo_root
+                .as_deref(),
+            Some(operator.as_path())
+        );
+    }
+
+    /// `require_operator_repo_root` errors clearly when unresolved.
+    #[test]
+    fn require_operator_repo_root_surfaces_clear_error() {
+        let layout = Layout {
+            framework: None,
+            schemas_dir: PathBuf::from("/x"),
+            queries_dir: PathBuf::from("/x"),
+            context_dir: PathBuf::from("/x"),
+            memory_dir: PathBuf::from("/x"),
+            sessions_root: PathBuf::from("/x"),
+            stacks_bench_data_dir: PathBuf::from("/x"),
+            bench_lock: PathBuf::from("/x"),
+            test_lock: PathBuf::from("/x"),
+            base: None,
+            stacks_bench_shadow_dir: None,
+            agent_workspace_root: None,
+            operator_repo_root: None,
+        };
+        let err = layout
+            .require_operator_repo_root()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("operator_repo_root"), "got: {err}");
     }
 }

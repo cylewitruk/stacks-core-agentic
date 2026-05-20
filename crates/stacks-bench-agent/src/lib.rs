@@ -6,6 +6,7 @@
 //! everything testable lives here.
 
 pub mod analyzed_rejections;
+pub mod build_info;
 pub mod cli;
 pub mod context;
 pub mod git;

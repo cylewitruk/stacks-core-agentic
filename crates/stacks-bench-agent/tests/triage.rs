@@ -179,6 +179,7 @@ fn stage_framework(tmp: &tempfile::TempDir) -> Layout {
         ),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
+        operator_repo_root: None,
     }
 }
 

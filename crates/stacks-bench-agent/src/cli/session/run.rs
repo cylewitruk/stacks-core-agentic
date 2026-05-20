@@ -65,6 +65,14 @@ pub struct RunSessionArgs {
     #[clap(long)]
     pub publish_accepted_prs: bool,
 
+    /// Run `session archive` at the end of the pipeline: commit
+    /// `sessions/<id>/` to a `session/<id>` write-once branch and
+    /// append one line to `sessions.jsonl` on the tracking branch.
+    /// Without `--archive`, the session's bulk stays in the operator's
+    /// local working tree and is never committed.
+    #[clap(long)]
+    pub archive: bool,
+
     /// Block-range overrides applied to Phase 0 (baseline + rerun)
     /// AND Phase 3 (per-target experiment benches). The two phases
     /// share one resolved range — candidate selection during
@@ -362,6 +370,18 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
         })
         .await
         .context("Phase 5: publish push")?;
+    }
+
+    // Phase 6 (optional): archive the session.
+    if args.archive {
+        let outputs = crate::session::archive::archive(&crate::session::archive::ArchiveInputs {
+            layout: &layout,
+            framework: &ctx.layout,
+            settings: &ctx.settings,
+            dry_run: false,
+        })
+        .context("Phase 6: archive")?;
+        crate::session::archive::print_outputs(&outputs);
     }
 
     // Session-end sweep: tear down per-target clones for aborted

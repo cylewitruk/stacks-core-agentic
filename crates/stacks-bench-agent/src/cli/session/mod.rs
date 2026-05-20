@@ -14,6 +14,7 @@ use crate::cli::CliContext;
 use crate::types::SessionId;
 
 pub mod analysis;
+pub mod archive;
 pub mod baseline;
 pub mod bench;
 pub mod bench_range;
@@ -73,6 +74,11 @@ pub enum SessionCommand {
     /// open PRs / open issues. With `--dry-run`, generate only.
     Publish(publish::PublishArgs),
 
+    /// Archive a completed session: commit `sessions/<id>/` to a write-once
+    /// `session/<id>` branch and append one line to `sessions.jsonl` on the
+    /// tracking branch. With `--dry-run`, commit locally without pushing.
+    Archive(archive::ArchiveArgs),
+
     /// Run the full pipeline (Phase 0 → Phase 5).
     Run(run::RunSessionArgs),
 }
@@ -116,6 +122,9 @@ pub async fn run(args: SessionArgs, ctx: &CliContext) -> Result<()> {
         }
         SessionCommand::Publish(a) => {
             publish::run(a, ctx, &require_session_id(session_id, "publish")?).await
+        }
+        SessionCommand::Archive(a) => {
+            archive::run(a, ctx, &require_session_id(session_id, "archive")?).await
         }
         SessionCommand::Run(a) => {
             let id = session_id.unwrap_or_else(SessionId::mint_now);

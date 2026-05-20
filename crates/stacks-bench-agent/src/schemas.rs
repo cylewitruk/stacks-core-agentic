@@ -44,6 +44,7 @@ pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
     ),
     ("optimizer-report.schema.json", include_str!("../../../schemas/optimizer-report.schema.json")),
     ("summary.schema.json", include_str!("../../../schemas/summary.schema.json")),
+    ("session-record.schema.json", include_str!("../../../schemas/session-record.schema.json")),
 ];
 
 /// Result of a [`seed_to`] call. Same shape as

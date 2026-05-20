@@ -436,6 +436,7 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
         base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
+        operator_repo_root: None,
     };
     (layout, session)
 }

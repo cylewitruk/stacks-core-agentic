@@ -1,0 +1,407 @@
+{
+  "$defs": {
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    },
+    "SessionRange": {
+      "additionalProperties": false,
+      "description": "Range arguments passed to `stacks-bench bench run` (baseline + every\nper-target run). Mirrors [`crate::session::bench_experiments::BenchRange`]\nwithout the borrow-of-settings concerns.",
+      "properties": {
+        "count": {
+          "description": "Number of blocks to measure. Same `None` semantics as\n[`SessionRange::start_at`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "filter": {
+          "description": "`--filter` argument, `None` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "network": {
+          "description": "Stacks network (`mainnet` / `testnet` / `mocknet`). Resolved\nagainst settings at session start.",
+          "type": "string"
+        },
+        "start_at": {
+          "description": "Block index to start at. `None` when every target used\ntargeted-replay mode (no full-range fallback path).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "warmup": {
+          "description": "Warmup blocks (or `None` to defer to stacks-bench's default).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "network"
+      ],
+      "type": "object"
+    },
+    "SessionRecordKind": {
+      "description": "Discriminator for ledger lines. Single variant today; left open so\nfuture event kinds (e.g. post-completion observations from a future\n`sbagent maintain`) can live in a sibling `maintain.jsonl` with the\nsame enum shape.",
+      "oneOf": [
+        {
+          "const": "session_completed",
+          "description": "A bot session reached its terminal state (succeeded / failed /\naborted) and produced an archive branch.",
+          "type": "string"
+        }
+      ]
+    },
+    "SessionStatus": {
+      "description": "Terminal status of a session as a whole. Independent of per-target\nstatuses — a session can `succeed` with all targets rejected.",
+      "oneOf": [
+        {
+          "const": "succeeded",
+          "description": "Pipeline ran to completion. Per-target outcomes recorded in\n[`SessionRecord::targets`].",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "A phase failed and the session was aborted by the framework.\n[`SessionRecord::failure_phase`] + [`SessionRecord::failure_reason`]\nare populated.",
+          "type": "string"
+        },
+        {
+          "const": "aborted",
+          "description": "Operator (or a hard preflight) aborted the session before it\ncould complete a phase. Distinct from `failed`: not a framework\nbug, just an operator-driven stop.",
+          "type": "string"
+        }
+      ]
+    },
+    "TargetBench": {
+      "additionalProperties": false,
+      "description": "Per-target bench fields. Materialized only when bench actually\nran for the target.",
+      "properties": {
+        "baseline_run_ids": {
+          "description": "Baseline run ids used for the comparison (the session's\nbaseline + rerun typically).",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "baseline_total_us": {
+          "description": "Sum of `total_duration_us` over the baseline runs.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "candidate_run_ids": {
+          "description": "Run ids produced by this target's bench invocation.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "candidate_total_us": {
+          "description": "Sum of `total_duration_us` over the candidate runs.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "improvement_pct": {
+          "description": "Signed percent improvement (positive = faster). Same metric\nsummary.md reports.",
+          "format": "double",
+          "type": "number"
+        },
+        "passes_noise_floor": {
+          "description": "Whether [`TargetBench::improvement_pct`] cleared the session's\nnoise floor.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "baseline_run_ids",
+        "candidate_run_ids",
+        "baseline_total_us",
+        "candidate_total_us",
+        "improvement_pct",
+        "passes_noise_floor"
+      ],
+      "type": "object"
+    },
+    "TargetRecord": {
+      "additionalProperties": false,
+      "description": "One target row inside a session record.",
+      "properties": {
+        "bench": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TargetBench"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bench measurements, when this target reached the bench phase.\n`None` for `consensus_issue` mode (no bench by design),\n`consensus_poc_pr` targets that landed on tests alone, and any\ntarget aborted before bench."
+        },
+        "bucket": {
+          "description": "Coarse bucket (e.g. `block_processing`, `tx_latency`). Free\nstring here — typed as enum elsewhere\n([`crate::models::common::Bucket`]) but writing as string keeps\nthe ledger forward-compatible with future buckets.",
+          "type": "string"
+        },
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "How this target was delivered (or would have been, on non-\naccept)."
+        },
+        "family_id": {
+          "description": "Family that fed this target (i.e. the analyzer that proposed\nthe change).",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "head_sha": {
+          "description": "Head commit sha of the per-target branch (i.e. the PR head).\n`None` on non-accepted targets that never produced a branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Canonical kebab-case target id.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "issue_url": {
+          "description": "URL of the opened issue. `None` outside `consensus_issue`\nmode.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr_url": {
+          "description": "URL of the opened PR. `None` until publish pushes it; remains\n`None` for `consensus_issue` mode and for `--dry-run` archive\nflows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason_code": {
+          "description": "Short stable enum code (e.g. `no_signal`, `consensus_break`,\n`noise_floor`, `merge_conflict`). Free-form today; tighten to\nan enum once stable codes settle.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TargetStatus",
+          "description": "Terminal status. See [`TargetStatus`] for the four legal\nvalues; cross-checked against [`TargetRecord::status_stage`]\nin [`TargetRecord::validate`]."
+        },
+        "status_stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TargetStatusStage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stage at which a non-accepted target was settled. `None` iff\n`status == accepted`. Distinguishes \"optimizer agent gave up\"\nfrom \"merge pruned\" from \"bench measured no win\"."
+        }
+      },
+      "required": [
+        "id",
+        "family_id",
+        "bucket",
+        "delivery_mode",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TargetStatus": {
+      "description": "Terminal status of a single target inside the session. Wider than\n[`crate::models::summary::ExperimentStatus`] because the ledger\ncaptures targets that never reached benchmarking (i.e. they got\naborted at the optimizer or merge stage and never produced a\nsummary row).",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "Bench measured a real improvement (NormalPr) or the PoC PR\nlanded (ConsensusPocPr) or the issue routing marker was\nproduced (ConsensusIssue).",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "NormalPr: bench did not show improvement above the noise\nfloor. Not applicable to consensus modes.",
+          "type": "string"
+        },
+        {
+          "const": "aborted",
+          "description": "Target was dropped before producing a publishable artifact\n(e.g. `optimizer-report.json` declared `outcome: \"aborted\"`, or\nthe merge phase pruned it). [`TargetRecord::status_stage`]\nnames where.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Pipeline error stopped this target — distinct from aborted in\nthat the framework (not the agent) decided the target couldn't\nproceed.",
+          "type": "string"
+        }
+      ]
+    },
+    "TargetStatusStage": {
+      "description": "Stage where a non-accepted target's status was settled. `None` on\naccepted targets.",
+      "oneOf": [
+        {
+          "const": "optimizer",
+          "description": "Optimizer agent declared abort (in `optimizer-report.json`).",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "Merge phase pruned the target (e.g. all proposed changes\nrejected as not actionable).",
+          "type": "string"
+        },
+        {
+          "const": "bench",
+          "description": "Reached bench but `bench-run.json` reported `success=false` or\nthe candidate did not pass the noise floor.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One ledger line. Append-only; once written, never edited.",
+  "properties": {
+    "artifact_branch": {
+      "description": "Name of the write-once branch holding the full bulk:\n`session/<id>`.",
+      "type": "string"
+    },
+    "artifact_sha": {
+      "description": "Commit sha at the tip of [`SessionRecord::artifact_branch`] at\narchive time. Permanent audit anchor — combined with the\nbranch being write-once, this lets a reader verify integrity\nlong after the fact.",
+      "type": "string"
+    },
+    "artifact_url": {
+      "description": "Browsable URL to the archive branch tree on the remote host.\n`None` when the operator repo has no GitHub-style remote\nconfigured (purely local archive).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "baseline_run_ids": {
+      "description": "Run ids written by the baseline phase (typically a single\n`[run_id]`, plus a rerun for noise floor).",
+      "items": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "failure_phase": {
+      "description": "Phase that failed, for non-success outcomes.\nE.g. `\"baseline\"`, `\"triage\"`, `\"optimize\"`, `\"bench\"`.\n`None` on `succeeded`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "failure_reason": {
+      "description": "Short stable reason code or one-line explanation.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "finished_at": {
+      "description": "ISO 8601 UTC timestamp of session end. For aborted/failed\nsessions, the time the framework recorded the terminal state.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Session id (e.g. `20260518-190321-nextest-flags-smoke`).",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/SessionRecordKind",
+      "description": "Discriminator — currently always `session_completed`."
+    },
+    "phase_durations_secs": {
+      "additionalProperties": {
+        "format": "double",
+        "type": "number"
+      },
+      "description": "Wallclock seconds per phase. Keys: `baseline`, `triage`,\n`analysis`, `merge`, `optimize`, `bench`, `finalize`,\n`publish`. Values are `f64` so sub-second phases (validate,\nschema-emit) round-trip cleanly. Stored in a `BTreeMap` so the\nserialized JSON is deterministic.",
+      "type": "object"
+    },
+    "range": {
+      "$ref": "#/$defs/SessionRange",
+      "description": "Range parameters passed to the baseline + every bench run in\nthis session. Captured here so the ledger can answer \"did this\nsession test enough blocks?\" without traversing the archive\nbranch."
+    },
+    "sbagent_git_sha": {
+      "description": "HEAD sha of the sbagent workspace at build time. `None` when\nthe binary was built outside a git checkout.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sbagent_version": {
+      "description": "`Cargo.toml` version of the sbagent binary that produced this\nsession.",
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    },
+    "stacks_core_base_sha": {
+      "description": "HEAD sha of the stacks-core base checkout at session start.\n`None` only if the session ran without a configured base\n(which today is a configuration error for any phase past\nbaseline, but the schema allows it for future read-only\nsession kinds).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "started_at": {
+      "description": "ISO 8601 UTC timestamp of session start.",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/SessionStatus",
+      "description": "Session-level outcome."
+    },
+    "targets": {
+      "description": "One row per target the session touched. Ordered by target id.",
+      "items": {
+        "$ref": "#/$defs/TargetRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "id",
+    "artifact_branch",
+    "artifact_sha",
+    "started_at",
+    "finished_at",
+    "status",
+    "sbagent_version",
+    "range",
+    "baseline_run_ids",
+    "phase_durations_secs",
+    "targets"
+  ],
+  "title": "SessionRecord",
+  "type": "object"
+}

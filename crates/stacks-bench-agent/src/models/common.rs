@@ -182,6 +182,12 @@ pub struct LensDispositionEntry {
 /// Schema version sentinel: every v2 artifact file carries `schema_version: 2`.
 pub const SCHEMA_VERSION_V2: u32 = 2;
 
+/// Schema version sentinel for v1 artifacts. Currently only the
+/// `sessions.jsonl` ledger record uses v1 — it's a fresh model added
+/// after the v2 in-session contracts settled, so its versioning is
+/// independent of the rest.
+pub const SCHEMA_VERSION_V1: u32 = 1;
+
 /// Kebab-case identifier regex applied to family ids, target ids, and
 /// fix signatures. Matches `^[a-z0-9][a-z0-9-]*$` — same pattern the
 /// hand-written v2 schemas enforced.
@@ -337,6 +343,56 @@ impl JsonSchema for SchemaVersionV2 {
         schemars::json_schema!({
             "type": "integer",
             "const": SCHEMA_VERSION_V2
+        })
+    }
+}
+
+/// V1 counterpart to [`SchemaVersionV2`]. Serializes as the integer
+/// literal `1`; emits `{"const": 1}` in JSON Schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersionV1;
+
+impl SchemaVersionV1 {
+    /// Return the underlying integer constant (always `1`).
+    pub const fn get(self) -> u32 {
+        SCHEMA_VERSION_V1
+    }
+}
+
+impl Default for SchemaVersionV1 {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Serialize for SchemaVersionV1 {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u32(SCHEMA_VERSION_V1)
+    }
+}
+
+impl<'de> Deserialize<'de> for SchemaVersionV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = u32::deserialize(d)?;
+        if v == SCHEMA_VERSION_V1 {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "expected schema_version={SCHEMA_VERSION_V1}, got {v}"
+            )))
+        }
+    }
+}
+
+impl JsonSchema for SchemaVersionV1 {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("SchemaVersionV1")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "integer",
+            "const": SCHEMA_VERSION_V1
         })
     }
 }

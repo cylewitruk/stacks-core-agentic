@@ -307,6 +307,168 @@ pub fn stage_and_commit(
     Ok(CommitOutcome::Committed)
 }
 
+/// `stage_and_commit` variant that uses `git add --force`. Two
+/// behaviors differ from the gitignore-respecting helper above:
+///
+/// 1. Paths matching `.gitignore` are still staged — required for the archive
+///    flow on `session/<id>` branches, where `main`'s `.gitignore` excludes
+///    `/sessions/` but the bulk is exactly what must be committed.
+/// 2. Paths are NOT existence-filtered (the caller passes whole directories
+///    whose contents are too numerous to enumerate; a missing entry should
+///    surface as a `git add` error rather than silently no-op).
+///
+/// Same `CommitOutcome` semantics as [`stage_and_commit`].
+pub fn stage_force_and_commit(
+    dir: &Path,
+    paths: &[&str],
+    commit_msg: &str,
+    env: &[(String, String)],
+) -> Result<CommitOutcome> {
+    if !paths.is_empty() {
+        let mut args_v: Vec<&str> = vec!["add", "-f", "--"];
+        args_v.extend(paths.iter().copied());
+        run_git_envs(dir, &args_v, env).with_context(|| format!("git add -f -- {paths:?}"))?;
+    }
+    let porcelain =
+        run_git_output(dir, &["status", "--porcelain"]).context("git status --porcelain")?;
+    let any_staged = porcelain.lines().any(|line| {
+        let bytes = line.as_bytes();
+        bytes.len() >= 2 && bytes[0] != b' ' && bytes[0] != b'?'
+    });
+    if !any_staged {
+        return Ok(CommitOutcome::NothingToCommit);
+    }
+    run_git_envs(dir, &["commit", "-m", commit_msg], env)
+        .with_context(|| format!("git commit -m {commit_msg:?}"))?;
+    Ok(CommitOutcome::Committed)
+}
+
+/// `git fetch <remote> <branch>` followed by `git rebase
+/// <remote>/<branch>`. Used by the archive flow's main-branch path:
+/// before appending to `sessions.jsonl`, pull-rebase to absorb any
+/// concurrent writes from a peer.
+///
+/// Unauthenticated — suitable for public remotes, `file://` remotes
+/// in tests, or when the operator's git already has credentials
+/// cached out-of-band. For private HTTPS / non-public-fork
+/// operators, use [`pull_rebase_with_auth`] which threads a PAT
+/// extraheader through the `fetch`.
+pub fn pull_rebase(dir: &Path, remote: &str, branch: &str) -> Result<()> {
+    run_git(dir, &["fetch", remote, branch])
+        .with_context(|| format!("git fetch {remote} {branch}"))?;
+    let upstream = format!("{remote}/{branch}");
+    run_git(dir, &["rebase", &upstream]).with_context(|| format!("git rebase {upstream}"))
+}
+
+/// Authenticated counterpart to [`pull_rebase`]. Same shape, but the
+/// `git fetch` step rides on the PAT-via-extraheader env mechanism
+/// so private remotes work. The `rebase` step is purely local and
+/// doesn't need auth.
+///
+/// Caller is responsible for gating against
+/// [`validate_auth_url`] on the resolved remote URL before invoking.
+#[allow(clippy::too_many_arguments)]
+pub fn pull_rebase_with_auth(
+    dir: &Path,
+    remote: &str,
+    branch: &str,
+    token: &str,
+    base_env: &[(String, String)],
+    auth_username: &str,
+    auth_url_prefix: &str,
+) -> Result<()> {
+    let (key, value) = auth_header_config_entries(token, auth_username, auth_url_prefix);
+    let env = merge_git_config_entry(base_env, &key, &value);
+    run_git_envs(dir, &["fetch", remote, branch], &env)
+        .with_context(|| format!("git fetch {remote} {branch} (authenticated)"))?;
+    let upstream = format!("{remote}/{branch}");
+    run_git(dir, &["rebase", &upstream]).with_context(|| format!("git rebase {upstream}"))
+}
+
+/// `git push -u <remote> <branch>` with PAT injection, and on
+/// `non-fast-forward` rejection, pull-rebase + retry up to
+/// `max_retries` times. Used by archive to land both the
+/// `session/<id>` branch (push, idempotent) and `main` (append +
+/// push, race-tolerant). Returns the underlying push error after
+/// exhausting retries.
+///
+/// When `max_retries == 0`, behaves identically to [`push_with_pat`]
+/// — single attempt, no rebase loop. Useful for callers (e.g.
+/// `session/<id>` archive branches, which are write-once) that
+/// shouldn't ever experience a push race.
+#[allow(clippy::too_many_arguments)]
+pub fn push_or_retry(
+    target_dir: &Path,
+    remote: &str,
+    branch: &str,
+    token: &str,
+    base_env: &[(String, String)],
+    auth_username: &str,
+    auth_url_prefix: &str,
+    max_retries: usize,
+) -> Result<()> {
+    let mut attempt = 0_usize;
+    loop {
+        match push_with_pat(
+            target_dir,
+            remote,
+            branch,
+            token,
+            base_env,
+            auth_username,
+            auth_url_prefix,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt >= max_retries {
+                    return Err(e);
+                }
+                attempt += 1;
+                // The retry fetch needs the SAME PAT as the push —
+                // otherwise the fetch step in pull_rebase would fail
+                // on any private operator repo.
+                pull_rebase_with_auth(
+                    target_dir,
+                    remote,
+                    branch,
+                    token,
+                    base_env,
+                    auth_username,
+                    auth_url_prefix,
+                )
+                .with_context(|| format!("retry attempt {attempt}: pull --rebase"))?;
+            }
+        }
+    }
+}
+
+/// Check whether `branch` exists locally (i.e. `refs/heads/<branch>`
+/// resolves). Cheap idempotency check used by the archive flow before
+/// creating the `session/<id>` branch.
+pub fn branch_exists(dir: &Path, branch: &str) -> bool {
+    run_git_check(dir, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+}
+
+/// Create `branch` pointing at `base_ref` and check it out. When
+/// `branch` already exists, just check it out — supports idempotent
+/// re-runs of the archive flow without requiring callers to do their
+/// own branch-existence dance.
+pub fn checkout_or_create_branch(dir: &Path, branch: &str, base_ref: &str) -> Result<()> {
+    if branch_exists(dir, branch) {
+        run_git(dir, &["checkout", branch])
+    } else {
+        run_git(dir, &["checkout", "-b", branch, base_ref])
+    }
+}
+
+/// Return the currently checked-out branch name. Errors when HEAD is
+/// detached (no symbolic ref). Used by archive to save the
+/// operator's branch context before switching, and restore it after.
+pub fn current_branch(dir: &Path) -> Result<String> {
+    run_git_output(dir, &["symbolic-ref", "--short", "HEAD"])
+        .context("git symbolic-ref --short HEAD (operator repo has detached HEAD?)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +590,179 @@ mod tests {
 
         let outcome = stage_and_commit(dir, &["hello.txt"], "noop", &[]).unwrap();
         assert_eq!(outcome, CommitOutcome::NothingToCommit);
+    }
+
+    /// `branch_exists` true for the current branch, false for an
+    /// unknown name. Establishes baseline for `checkout_or_create_branch`.
+    #[test]
+    fn branch_exists_resolves_local_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
+        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
+        run_git(dir, &["config", "user.name", "t"]).unwrap();
+        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(dir.join("seed"), "x").unwrap();
+        run_git(dir, &["add", "seed"]).unwrap();
+        run_git(dir, &["commit", "-q", "-m", "seed"]).unwrap();
+
+        assert!(branch_exists(dir, "main"));
+        assert!(!branch_exists(dir, "session/missing"));
+    }
+
+    /// `checkout_or_create_branch` creates the branch on first call
+    /// and just checks out on the second — idempotent for archive
+    /// re-runs.
+    #[test]
+    fn checkout_or_create_branch_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
+        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
+        run_git(dir, &["config", "user.name", "t"]).unwrap();
+        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(dir.join("seed"), "x").unwrap();
+        run_git(dir, &["add", "seed"]).unwrap();
+        run_git(dir, &["commit", "-q", "-m", "seed"]).unwrap();
+
+        // First call: branch doesn't exist → created.
+        checkout_or_create_branch(dir, "session/20260518", "main").unwrap();
+        assert_eq!(current_branch(dir).unwrap(), "session/20260518");
+
+        // Back to main, then second call to the same target: existing → just checkout.
+        run_git(dir, &["checkout", "main"]).unwrap();
+        checkout_or_create_branch(dir, "session/20260518", "main").unwrap();
+        assert_eq!(current_branch(dir).unwrap(), "session/20260518");
+    }
+
+    /// `stage_force_and_commit` bypasses `.gitignore`. This is the
+    /// load-bearing behavior the archive flow depends on — `main`
+    /// ignores `/sessions/`, but the `session/<id>` branch must commit
+    /// the bulk anyway.
+    #[test]
+    fn stage_force_and_commit_bypasses_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
+        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
+        run_git(dir, &["config", "user.name", "t"]).unwrap();
+        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(dir.join(".gitignore"), "/sessions/\n").unwrap();
+        run_git(dir, &["add", ".gitignore"]).unwrap();
+        run_git(dir, &["commit", "-q", "-m", "ignore sessions"]).unwrap();
+
+        let session_dir = dir
+            .join("sessions")
+            .join("20260518");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(session_dir.join("results.json"), "{}").unwrap();
+
+        // Sanity: ignored under main's gitignore.
+        let stat = run_git_output(dir, &["status", "--porcelain"]).unwrap();
+        assert!(!stat.contains("sessions/"), "should be ignored: {stat:?}");
+
+        let outcome =
+            stage_force_and_commit(dir, &["sessions/20260518/"], "archive smoke", &[]).unwrap();
+        assert_eq!(outcome, CommitOutcome::Committed);
+
+        let head_files =
+            run_git_output(dir, &["show", "--name-only", "--pretty=format:", "HEAD"]).unwrap();
+        assert!(head_files.contains("sessions/20260518/results.json"), "{head_files}");
+    }
+
+    /// `pull_rebase_with_auth` against a local file:// remote
+    /// fast-forwards just like its unauthenticated counterpart.
+    /// The extraheader IS injected into the env here (this path uses
+    /// `auth_header_config_entries` + `merge_git_config_entry`, not
+    /// the protocol-gated `build_auth_header_env`), but git's URL
+    /// scoping (`http.https://github.com/.extraheader`) means the
+    /// header never gets applied to the `file://` fetch — git skips
+    /// it silently. This test pins that the env-machinery path
+    /// works end-to-end without a real PAT or network.
+    #[test]
+    fn pull_rebase_with_auth_fast_forwards_against_local_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote_dir = tmp.path().join("remote");
+        std::fs::create_dir_all(&remote_dir).unwrap();
+        run_git(&remote_dir, &["init", "-q", "--bare", "-b", "main"]).unwrap();
+
+        let work_a = tmp.path().join("work-a");
+        std::fs::create_dir_all(&work_a).unwrap();
+        run_git(&work_a, &["init", "-q", "-b", "main"]).unwrap();
+        run_git(&work_a, &["config", "user.email", "t@t"]).unwrap();
+        run_git(&work_a, &["config", "user.name", "t"]).unwrap();
+        run_git(&work_a, &["config", "commit.gpgsign", "false"]).unwrap();
+        run_git(&work_a, &["remote", "add", "origin", remote_dir.to_str().unwrap()]).unwrap();
+        std::fs::write(work_a.join("a"), "1").unwrap();
+        run_git(&work_a, &["add", "a"]).unwrap();
+        run_git(&work_a, &["commit", "-q", "-m", "a"]).unwrap();
+        run_git(&work_a, &["push", "-u", "origin", "main"]).unwrap();
+
+        let work_b = tmp.path().join("work-b");
+        run_git(tmp.path(), &["clone", "-q", remote_dir.to_str().unwrap(), "work-b"]).unwrap();
+        run_git(&work_b, &["config", "user.email", "t@t"]).unwrap();
+        run_git(&work_b, &["config", "user.name", "t"]).unwrap();
+        run_git(&work_b, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(work_b.join("b"), "2").unwrap();
+        run_git(&work_b, &["add", "b"]).unwrap();
+        run_git(&work_b, &["commit", "-q", "-m", "b"]).unwrap();
+        run_git(&work_b, &["push", "origin", "main"]).unwrap();
+
+        // Authenticated pull-rebase with a fake token: works because
+        // file:// is a non-HTTPS protocol and the extraheader simply
+        // isn't propagated for those URLs. Without the auth path's
+        // env machinery in place, the fetch step would still need to
+        // succeed — and this test verifies it does.
+        pull_rebase_with_auth(
+            &work_a,
+            "origin",
+            "main",
+            "fake-token",
+            &[],
+            "x-access-token",
+            "https://github.com/",
+        )
+        .unwrap();
+        assert!(work_a.join("b").exists(), "rebase should have brought in peer's `b`");
+    }
+
+    /// `pull_rebase` against a local file:// remote fast-forwards
+    /// when local is behind. Tests the path without involving a
+    /// real network or PAT.
+    #[test]
+    fn pull_rebase_fast_forwards_against_local_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote_dir = tmp.path().join("remote");
+        run_git(&remote_dir, &[]).ok(); // create_dir_all via git init below
+        std::fs::create_dir_all(&remote_dir).unwrap();
+        run_git(&remote_dir, &["init", "-q", "--bare", "-b", "main"]).unwrap();
+
+        let work_a = tmp.path().join("work-a");
+        std::fs::create_dir_all(&work_a).unwrap();
+        run_git(&work_a, &["init", "-q", "-b", "main"]).unwrap();
+        run_git(&work_a, &["config", "user.email", "t@t"]).unwrap();
+        run_git(&work_a, &["config", "user.name", "t"]).unwrap();
+        run_git(&work_a, &["config", "commit.gpgsign", "false"]).unwrap();
+        run_git(&work_a, &["remote", "add", "origin", remote_dir.to_str().unwrap()]).unwrap();
+        std::fs::write(work_a.join("a"), "1").unwrap();
+        run_git(&work_a, &["add", "a"]).unwrap();
+        run_git(&work_a, &["commit", "-q", "-m", "a"]).unwrap();
+        run_git(&work_a, &["push", "-u", "origin", "main"]).unwrap();
+
+        // Peer adds a second commit.
+        let work_b = tmp.path().join("work-b");
+        run_git(tmp.path(), &["clone", "-q", remote_dir.to_str().unwrap(), "work-b"]).unwrap();
+        run_git(&work_b, &["config", "user.email", "t@t"]).unwrap();
+        run_git(&work_b, &["config", "user.name", "t"]).unwrap();
+        run_git(&work_b, &["config", "commit.gpgsign", "false"]).unwrap();
+        std::fs::write(work_b.join("b"), "2").unwrap();
+        run_git(&work_b, &["add", "b"]).unwrap();
+        run_git(&work_b, &["commit", "-q", "-m", "b"]).unwrap();
+        run_git(&work_b, &["push", "origin", "main"]).unwrap();
+
+        // work-a is now behind. pull_rebase should fast-forward it.
+        pull_rebase(&work_a, "origin", "main").unwrap();
+        assert!(work_a.join("b").exists(), "rebase should have brought in peer's `b`");
     }
 
     /// `stage_and_commit` on a dirty tree (new files matching the

@@ -43,6 +43,18 @@ pub struct Settings {
     #[serde(default)]
     pub sessions_root: Option<PathBuf>,
 
+    /// Absolute path to the operator's git repository root — the place
+    /// that holds `sessions/`, `repos/`, and (after archive lands) the
+    /// `sessions.jsonl` ledger on `main` plus `session/<id>` write-once
+    /// branches. Required by `sbagent session archive` so the command
+    /// fails fast at config load if misconfigured instead of at archive
+    /// time. Defaults to `sessions_root.parent()` when unset — convenient
+    /// for the conventional `<operator>/sessions/` layout, but operators
+    /// with split layouts should set it explicitly. Validated by
+    /// [`Settings::validate`] to be absolute when set.
+    #[serde(default)]
+    pub operator_repo_root: Option<PathBuf>,
+
     /// Persistent stacks-bench app-data directory. When unset, defaults to
     /// `<framework_root>/data/stacks-bench`.
     #[serde(default)]
@@ -658,6 +670,15 @@ impl Settings {
                 );
             }
         }
+        if let Some(p) = &self.operator_repo_root
+            && !p.is_absolute()
+        {
+            anyhow::bail!(
+                "operator_repo_root = {:?} is a relative path; the archive flow runs git from \
+                 absolute paths so its behavior doesn't depend on the caller's cwd",
+                p.display(),
+            );
+        }
         Ok(())
     }
 
@@ -1034,6 +1055,30 @@ mod tests {
             .validate()
             .expect_err("any relative entry should fail");
         assert!(format!("{err:#}").contains("[1]"), "should report the bad index");
+    }
+
+    #[test]
+    fn validate_rejects_relative_operator_repo_root() {
+        let s = Settings {
+            operator_repo_root: Some(PathBuf::from("relative/ops")),
+            ..Settings::default()
+        };
+        let err = s
+            .validate()
+            .expect_err("relative operator_repo_root must fail validation");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("operator_repo_root"), "msg: {msg}");
+        assert!(msg.contains("relative path"), "msg: {msg}");
+    }
+
+    #[test]
+    fn validate_accepts_absolute_operator_repo_root() {
+        let s = Settings {
+            operator_repo_root: Some(PathBuf::from("/Users/op/ops-repo")),
+            ..Settings::default()
+        };
+        s.validate()
+            .expect("absolute operator_repo_root must pass validation");
     }
 
     #[test]

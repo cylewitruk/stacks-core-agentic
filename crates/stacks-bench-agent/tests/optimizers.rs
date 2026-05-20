@@ -285,6 +285,7 @@ fn stage_framework_and_session(
         ),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
+        operator_repo_root: None,
     };
 
     let id: SessionId = "20260507-104400"
