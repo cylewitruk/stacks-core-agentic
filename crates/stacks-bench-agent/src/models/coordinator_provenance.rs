@@ -10,9 +10,11 @@
 //! `Experiment` for the audit trail). Cleared by
 //! `clear_optimizer_artifacts` on re-run.
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{DeliveryMode, SchemaVersionV1};
 
 /// Coordinator-observed git facts captured at the moment of the
@@ -52,52 +54,15 @@ pub struct CoordinatorProvenance {
 }
 
 impl CoordinatorProvenance {
-    /// Validate cross-field invariants beyond what serde + schemars
-    /// already enforce. Called eagerly on read so dangling/garbled
-    /// sidecars don't reach the resume gate.
-    pub fn validate(&self) -> Result<(), String> {
-        if self
-            .session_id
-            .trim()
-            .is_empty()
-        {
-            return Err("session_id must be non-empty".into());
-        }
-        if self
-            .target_id
-            .trim()
-            .is_empty()
-        {
-            return Err("target_id must be non-empty".into());
-        }
-        Self::validate_sha("base_sha", &self.base_sha)?;
-        Self::validate_sha("head_sha", &self.head_sha)?;
-        if self.base_sha == self.head_sha {
-            return Err(format!(
-                "base_sha == head_sha ({}); coordinator must observe a HEAD that advanced past \
-                 the base after the agent's commit",
-                self.base_sha
-            ));
-        }
-        if self
-            .commit_message
-            .trim()
-            .is_empty()
-        {
-            return Err("commit_message must be non-empty".into());
-        }
-        Ok(())
-    }
-
-    fn validate_sha(field: &str, sha: &str) -> Result<(), String> {
+    fn validate_sha(field: &str, sha: &str) -> Result<()> {
         if sha.len() != 40 {
-            return Err(format!("{field}: expected 40-char hex SHA, got {} chars", sha.len()));
+            bail!("{field}: expected 40-char hex SHA, got {} chars", sha.len());
         }
         if !sha
             .chars()
             .all(|c| c.is_ascii_hexdigit())
         {
-            return Err(format!("{field}: contains non-hex characters"));
+            bail!("{field}: contains non-hex characters");
         }
         Ok(())
     }
@@ -115,27 +80,67 @@ impl CoordinatorProvenance {
         expected_session_id: &str,
         expected_target_id: &str,
         expected_delivery_mode: DeliveryMode,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if self.session_id != expected_session_id {
-            return Err(format!(
+            bail!(
                 "coordinator-provenance.json for {expected_target_id}: session_id={:?} does not \
                  match expected session_id={expected_session_id:?}",
                 self.session_id,
-            ));
+            );
         }
         if self.target_id != expected_target_id {
-            return Err(format!(
+            bail!(
                 "coordinator-provenance.json: target_id={:?} does not match expected \
                  target_id={expected_target_id:?} (sidecar from the wrong target dir?)",
                 self.target_id,
-            ));
+            );
         }
         if self.delivery_mode != expected_delivery_mode {
-            return Err(format!(
+            bail!(
                 "coordinator-provenance.json for {expected_target_id}: delivery_mode={:?} does \
                  not match expected delivery_mode={:?}",
-                self.delivery_mode, expected_delivery_mode,
-            ));
+                self.delivery_mode,
+                expected_delivery_mode,
+            );
+        }
+        Ok(())
+    }
+}
+
+impl ValidateModel for CoordinatorProvenance {
+    /// Validate cross-field invariants beyond what serde + schemars
+    /// already enforce. Called eagerly on read so dangling/garbled
+    /// sidecars don't reach the resume gate.
+    fn validate_model(&self) -> Result<()> {
+        if self
+            .session_id
+            .trim()
+            .is_empty()
+        {
+            bail!("session_id must be non-empty");
+        }
+        if self
+            .target_id
+            .trim()
+            .is_empty()
+        {
+            bail!("target_id must be non-empty");
+        }
+        Self::validate_sha("base_sha", &self.base_sha)?;
+        Self::validate_sha("head_sha", &self.head_sha)?;
+        if self.base_sha == self.head_sha {
+            bail!(
+                "base_sha == head_sha ({}); coordinator must observe a HEAD that advanced past \
+                 the base after the agent's commit",
+                self.base_sha
+            );
+        }
+        if self
+            .commit_message
+            .trim()
+            .is_empty()
+        {
+            bail!("commit_message must be non-empty");
         }
         Ok(())
     }
@@ -182,9 +187,13 @@ mod tests {
         let mut p = sample();
         p.base_sha = "abc".to_owned();
         let err = p
-            .validate()
+            .validate_model()
             .expect_err("short sha");
-        assert!(err.contains("40-char hex"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("40-char hex"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -192,9 +201,13 @@ mod tests {
         let mut p = sample();
         p.head_sha = "zzzz3704c259da4102b5f195617760003ac89c18".to_owned();
         let err = p
-            .validate()
+            .validate_model()
             .expect_err("non-hex sha");
-        assert!(err.contains("non-hex"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("non-hex"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -202,9 +215,13 @@ mod tests {
         let mut p = sample();
         p.head_sha = p.base_sha.clone();
         let err = p
-            .validate()
+            .validate_model()
             .expect_err("base==head");
-        assert!(err.contains("base_sha == head_sha"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("base_sha == head_sha"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -212,15 +229,19 @@ mod tests {
         let mut p = sample();
         p.session_id = "   ".to_owned();
         let err = p
-            .validate()
+            .validate_model()
             .expect_err("blank session");
-        assert!(err.contains("session_id"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("session_id"),
+            "{err}"
+        );
     }
 
     #[test]
     fn validate_accepts_correct_shape() {
         sample()
-            .validate()
+            .validate_model()
             .expect("sample should validate clean");
     }
 
@@ -244,7 +265,11 @@ mod tests {
                 DeliveryMode::NormalPr,
             )
             .expect_err("session mismatch");
-        assert!(err.contains("session_id"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("session_id"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -252,7 +277,11 @@ mod tests {
         let err = sample()
             .validate_context("20260521-051649", "wrong-target", DeliveryMode::NormalPr)
             .expect_err("target mismatch");
-        assert!(err.contains("target_id"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("target_id"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -264,6 +293,10 @@ mod tests {
                 DeliveryMode::ConsensusPocPr,
             )
             .expect_err("delivery mode mismatch");
-        assert!(err.contains("delivery_mode"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("delivery_mode"),
+            "{err}"
+        );
     }
 }

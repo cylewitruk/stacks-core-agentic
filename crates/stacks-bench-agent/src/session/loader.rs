@@ -5,8 +5,8 @@
 //! artifacts whose invariants gate downstream side effects —
 //! `optimization-targets.json` (drives bench invocations) and
 //! `analysis/*/analysis.json` (drives optimizer/merge) — run the model's
-//! `validate()` inline so a hand-staged or corrupt file fails at load before
-//! any bench gets invoked. Loaders for read-only/reporting artifacts
+//! `validate_model()` inline so a hand-staged or corrupt file fails at load
+//! before any bench gets invoked. Loaders for read-only/reporting artifacts
 //! (`candidates.json`, `summary.json`) leave validation to the caller.
 
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ use std::{fs, io};
 
 use anyhow::{Context as _, Result};
 
+use crate::models::ValidateModel;
 use crate::models::analyze::Analysis;
 use crate::models::candidates::Candidates;
 use crate::models::common::DeliveryMode;
@@ -29,20 +30,22 @@ pub fn read_candidates(layout: &SessionLayout) -> Result<Candidates> {
 }
 
 /// Read, parse, and **validate** `optimization-targets.json`. Validation
-/// covers the per-target cross-field rules in [`MergedTarget::validate`]
-/// (consensus routing, convergence count, hash forms, `verification_replay`
-/// bounds). A hand-staged recipe with an out-of-range `repetitions` or
-/// `warmup` fails here, before any bench is invoked.
+/// covers the per-target cross-field rules in
+/// [`MergedTarget::validate_model`] (consensus routing, convergence
+/// count, hash forms, `verification_replay` bounds). A hand-staged
+/// recipe with an out-of-range `repetitions` or `warmup` fails here,
+/// before any bench is invoked.
 pub fn read_optimization_targets(layout: &SessionLayout) -> Result<OptimizationTargets> {
     let doc: OptimizationTargets = parse_json(&layout.optimization_targets_json())?;
-    doc.validate().map_err(|e| {
-        anyhow::anyhow!(
-            "validating {}: {e}",
-            layout
-                .optimization_targets_json()
-                .display(),
-        )
-    })?;
+    doc.validate_model()
+        .with_context(|| {
+            format!(
+                "validating {}",
+                layout
+                    .optimization_targets_json()
+                    .display()
+            )
+        })?;
     Ok(doc)
 }
 
@@ -53,11 +56,11 @@ pub fn read_summary(layout: &SessionLayout) -> Result<Summary> {
 
 /// Read, parse, and **structurally validate** the per-target
 /// `optimize/<target-id>/optimizer-report.json`. Validation covers the
-/// six [`crate::models::optimizer_report::ImplementedReport::validate`]
+/// six [`crate::models::optimizer_report::ImplementedReport::validate_model`]
 /// invariants (consensus-sensitive parity proofs, unproven_risk null on
 /// implemented, test failed=0, non-blank free-text, finite/non-negative
 /// duration, clippy_clean by delivery_mode) and the two
-/// [`crate::models::optimizer_report::AbortedReport::validate`]
+/// [`crate::models::optimizer_report::AbortedReport::validate_model`]
 /// invariants (non-blank reason, nextest-implies-failing_tests).
 ///
 /// Returns `Ok(None)` when the file is missing — the agent never wrote
@@ -87,8 +90,8 @@ pub fn read_optimizer_report(
     }
     let report: OptimizerReport = parse_json(&path)?;
     report
-        .validate()
-        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+        .validate_model()
+        .with_context(|| format!("validating {}", path.display()))?;
     Ok(Some(report))
 }
 
@@ -179,8 +182,8 @@ pub fn read_all_analyses(layout: &SessionLayout) -> Result<BTreeMap<String, Anal
             ));
         }
         analysis
-            .validate()
-            .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+            .validate_model()
+            .with_context(|| format!("validating {}", path.display()))?;
         out.insert(family_id, analysis);
     }
     Ok(out)

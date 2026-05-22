@@ -12,6 +12,7 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use stacks_bench_agent::models::ValidateModel;
 use stacks_bench_agent::models::analyze::Analysis;
 use stacks_bench_agent::models::candidates::Candidates;
 use stacks_bench_agent::models::targets::OptimizationTargets;
@@ -43,7 +44,7 @@ fn candidates_round_trip() {
     let path = fixture_session().join("triage/candidates.json");
     let candidates: Candidates = roundtrip(&path);
     candidates
-        .validate()
+        .validate_model()
         .expect("candidates validate");
     assert_eq!(candidates.candidates.len(), 3);
 }
@@ -53,7 +54,7 @@ fn optimization_targets_round_trip() {
     let path = fixture_session().join("merge/optimization-targets.json");
     let targets: OptimizationTargets = roundtrip(&path);
     targets
-        .validate()
+        .validate_model()
         .expect("optimization-targets validate");
     assert_eq!(targets.targets.len(), 3);
     // Coverage on the merged_from references should match the fixture.
@@ -79,7 +80,7 @@ fn analyses_round_trip() {
         }
         let analysis: Analysis = roundtrip(&path);
         analysis
-            .validate()
+            .validate_model()
             .unwrap_or_else(|e| panic!("validate {}: {e}", path.display()));
         count += 1;
     }

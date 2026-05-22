@@ -13,3 +13,4 @@ data/run/
 # at the repo root and pass it via `-c config.toml`. Resolution no
 # longer auto-loads cwd, but ignore in case anyone leaves one here.
 /config.toml
+.sbagent

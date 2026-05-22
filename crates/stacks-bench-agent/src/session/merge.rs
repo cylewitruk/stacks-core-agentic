@@ -30,6 +30,7 @@ use crate::layout::Layout;
 use crate::models::analyze::{AcceptedAnalysis, Analysis};
 use crate::models::common::{BreakageClass, Bucket};
 use crate::models::targets::OptimizationTargets;
+use crate::models::{ToJson, ValidateModel};
 use crate::prompts;
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
@@ -70,8 +71,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let analyses_map =
         loader::read_all_analyses(layout).context("loading analysis/*/analysis.json")?;
     for (fid, a) in &analyses_map {
-        a.validate()
-            .map_err(|e| anyhow::anyhow!("analysis/{fid}/analysis.json failed validation: {e}"))?;
+        a.validate_model()
+            .with_context(|| format!("analysis/{fid}/analysis.json failed validation"))?;
     }
 
     // Filter to accepted, preserving deterministic order (BTreeMap iteration).
@@ -100,10 +101,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         };
         fs::create_dir_all(layout.merge_dir())
             .with_context(|| format!("creating {}", layout.merge_dir().display()))?;
-        fs::write(
-            layout.optimization_targets_json(),
-            serde_json::to_string_pretty(&empty)? + "\n",
-        )?;
+        fs::write(layout.optimization_targets_json(), empty.to_json_pretty()? + "\n")?;
         fs::write(
             layout.merge_final_message(),
             "# Merge phase: no-op\n\nNo accepted analyses; emitted empty targets list and empty \
@@ -120,7 +118,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     }
 
     // Render the merge prompt with the accepted-analyses array inlined.
-    let accepted_json = serde_json::to_string_pretty(&accepted)
+    let accepted_json = accepted
+        .to_json_pretty()
         .context("serializing accepted analyses for merge prompt")?;
     let merge_model = inputs
         .settings
@@ -307,8 +306,8 @@ pub fn validate_merge_output(
     accepted: &[&AcceptedAnalysis],
 ) -> Result<()> {
     targets
-        .validate()
-        .map_err(|e| anyhow::anyhow!("merge output validation: {e}"))?;
+        .validate_model()
+        .context("merge output validation")?;
 
     // Reference set of every analyzer-emitted target by (family_id, target_index).
     let mut expected_pairs: BTreeSet<(String, usize)> = BTreeSet::new();

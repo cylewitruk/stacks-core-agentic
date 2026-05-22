@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
+use crate::models::ValidateModel;
 use crate::prompts;
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
@@ -283,8 +284,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let candidates = loader::read_candidates(layout)
         .context("parsing candidates.json (does it match the v2 schema?)")?;
     candidates
-        .validate()
-        .map_err(|e| anyhow::anyhow!("candidates.json failed cross-field validation: {e}"))?;
+        .validate_model()
+        .context("candidates.json failed cross-field validation")?;
 
     // 6. Generate the human-readable `candidates.md` view from the validated JSON.
     //    The agent no longer writes this file; the JSON is the contract, markdown

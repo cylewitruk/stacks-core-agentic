@@ -44,6 +44,7 @@ use crate::models::session_record::{
     TargetStatus, TargetStatusStage,
 };
 use crate::models::summary::{Experiment, ExperimentStatus, Summary};
+use crate::models::{FromJson, ToJson};
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
 
@@ -508,7 +509,7 @@ fn ledger_contains_id(path: &Path, id: &str) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        let Ok(rec): Result<SessionRecord, _> = serde_json::from_str(line) else {
+        let Ok(rec) = SessionRecord::from_json(line) else {
             continue;
         };
         if rec.id == id {
@@ -523,7 +524,9 @@ fn ledger_contains_id(path: &Path, id: &str) -> Result<bool> {
 /// staging + committing.
 fn append_ledger(path: &Path, record: &SessionRecord) -> Result<()> {
     use std::io::Write as _;
-    let line = serde_json::to_string(record).context("serializing SessionRecord")?;
+    let line = record
+        .to_json()
+        .context("serializing SessionRecord")?;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1062,7 +1065,7 @@ mod tests {
             phase_durations_secs: BTreeMap::new(),
             targets: vec![],
         };
-        let line = serde_json::to_string(&rec).unwrap();
+        let line = rec.to_json().unwrap();
         writeln!(f, "{line}").unwrap();
         drop(f);
 

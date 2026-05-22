@@ -4,9 +4,11 @@
 //! `schemas/candidates.schema.json` is regenerated from these types via
 //! `sbagent schema export`.
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{
     Bucket, FamilyKind, HEX_HASH_PATTERN, KEBAB_PATTERN, SchemaVersionV2, SelectionLens,
 };
@@ -48,16 +50,16 @@ pub struct Candidates {
     pub lens_coverage: LensCoverage,
 }
 
-impl Candidates {
+impl ValidateModel for Candidates {
     /// Cross-field validation: every candidate's `representative_ids`
     /// shape matches its declared `kind`, and `lens_coverage` tallies
     /// agree with the per-lens distribution of `candidates[]`. Serde
     /// already enforces required fields + `deny_unknown_fields` per
     /// variant.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         for c in &self.candidates {
             if c.id.is_empty() {
-                return Err("candidate id is empty".to_owned());
+                bail!("candidate id is empty");
             }
             c.validate_kind_consistency()?;
         }
@@ -77,12 +79,14 @@ impl Candidates {
             || lc.tenure_throughput != throughput
             || lc.commit_time != commit
         {
-            return Err(format!(
+            bail!(
                 "lens_coverage tallies disagree with per-lens candidate counts: reported \
                  {{tx_latency: {}, tenure_throughput: {}, commit_time: {}}} vs actual \
                  {{tx_latency: {latency}, tenure_throughput: {throughput}, commit_time: {commit}}}",
-                lc.tx_latency, lc.tenure_throughput, lc.commit_time,
-            ));
+                lc.tx_latency,
+                lc.tenure_throughput,
+                lc.commit_time,
+            );
         }
         Ok(())
     }
@@ -118,17 +122,17 @@ pub struct Candidate {
 
 impl Candidate {
     /// Cross-field check: `representative_ids` shape must match `kind`.
-    fn validate_kind_consistency(&self) -> Result<(), String> {
+    fn validate_kind_consistency(&self) -> Result<()> {
         match (self.kind, &self.representative_ids) {
             (FamilyKind::TxFamily, RepresentativeIds::Tx { .. })
             | (FamilyKind::BlockFamily, RepresentativeIds::Block { .. })
             | (FamilyKind::ContractFamily, RepresentativeIds::Contract { .. }) => Ok(()),
-            (kind, ids) => Err(format!(
+            (kind, ids) => bail!(
                 "candidate `{}`: kind={:?} does not match representative_ids variant {:?}",
                 self.id,
                 kind,
                 ids.discriminator()
-            )),
+            ),
         }
     }
 }

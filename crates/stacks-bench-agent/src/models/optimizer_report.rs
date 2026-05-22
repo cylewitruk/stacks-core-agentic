@@ -18,9 +18,11 @@
 //! `ExperimentStatus` captures whether the experiment *won* after
 //! bench/evaluation.
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{DeliveryMode, SchemaVersionV2};
 
 /// True iff `s` is non-empty after trimming. Centralized so every
@@ -73,14 +75,16 @@ impl OptimizerReport {
     pub fn is_implemented(&self) -> bool {
         matches!(self, Self::Implemented(_))
     }
+}
 
+impl ValidateModel for OptimizerReport {
     /// Cross-field validation. Mirrors the schema invariants emitted by
     /// [`crate::schema_export::transform`] so Rust-side callers can fail
     /// fast without round-tripping through a schema validator.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         match self {
-            Self::Implemented(r) => r.validate(),
-            Self::Aborted(r) => r.validate(),
+            Self::Implemented(r) => r.validate_model(),
+            Self::Aborted(r) => r.validate_model(),
         }
     }
 }
@@ -154,9 +158,9 @@ pub struct ImplementedReport {
     pub hard_fork_followup: Option<String>,
 }
 
-impl ImplementedReport {
+impl ValidateModel for ImplementedReport {
     /// Cross-field validation per the schema's allOf chain.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         // Invariant 1: consensus_sensitive=true requires
         // non-blank (trim-aware) evidence + tests — an array of `[""]`
         // shouldn't satisfy parity. Centralized via [`has_non_blank`].
@@ -165,18 +169,18 @@ impl ImplementedReport {
             .consensus_sensitive
         {
             if !has_non_blank(&self.parity.evidence) {
-                return Err(format!(
+                bail!(
                     "implemented report `{}`: parity.consensus_sensitive=true requires at least \
                      one non-blank parity.evidence entry",
                     self.target_id
-                ));
+                );
             }
             if !has_non_blank(&self.parity.tests) {
-                return Err(format!(
+                bail!(
                     "implemented report `{}`: parity.consensus_sensitive=true requires at least \
                      one non-blank parity.tests entry",
                     self.target_id
-                ));
+                );
             }
         }
         // Invariant 2: implemented must not carry unproven_risk — that
@@ -187,44 +191,42 @@ impl ImplementedReport {
             .unproven_risk
             .is_some()
         {
-            return Err(format!(
+            bail!(
                 "implemented report `{}`: parity.unproven_risk must be null on `implemented` (use \
                  consensus_review_needed outcome instead — Phase 2)",
                 self.target_id
-            ));
+            );
         }
         // Invariant 3: test_summary.failed must be 0 on implemented
         // (otherwise the agent would have emitted aborted with
         // failed_gate=Nextest + a failing_tests list).
         if self.test_summary.failed != 0 {
-            return Err(format!(
+            bail!(
                 "implemented report `{}`: test_summary.failed must be 0 on `implemented` (got {}; \
                  emit `aborted` with failed_gate=nextest + failing_tests list if tests actually \
                  failed)",
-                self.target_id, self.test_summary.failed
-            ));
+                self.target_id,
+                self.test_summary.failed
+            );
         }
         // Invariant 4: free-text fields must be non-blank. Mirrors the
         // AbortedReport.reason check and protects against empty-string
         // / whitespace-only agent output that would otherwise serialize
         // valid but render useless.
         if !is_non_blank(&self.implementation_summary) {
-            return Err(format!(
+            bail!(
                 "implemented report `{}`: implementation_summary must be non-blank",
                 self.target_id
-            ));
+            );
         }
         if !is_non_blank(&self.pr_title) {
-            return Err(format!(
-                "implemented report `{}`: pr_title must be non-blank",
-                self.target_id
-            ));
+            bail!("implemented report `{}`: pr_title must be non-blank", self.target_id);
         }
         if !is_non_blank(&self.test_summary.log_path) {
-            return Err(format!(
+            bail!(
                 "implemented report `{}`: test_summary.log_path must be non-blank",
                 self.target_id
-            ));
+            );
         }
         // Invariant 5: test_summary.duration_secs must be finite and
         // non-negative. NaN/Inf can't come from JSON but Rust-side
@@ -239,41 +241,35 @@ impl ImplementedReport {
                 .duration_secs
                 < 0.0
         {
-            return Err(format!(
+            bail!(
                 "implemented report `{}`: test_summary.duration_secs must be finite and >= 0 (got \
                  {})",
                 self.target_id,
                 self.test_summary
                     .duration_secs
-            ));
+            );
         }
         // Invariant 6: clippy_clean must be Some(true) for normal_pr.
         // consensus_poc_pr is unconstrained (clippy isn't the gate).
         // consensus_issue never produces an implemented report.
         match (self.delivery_mode, self.clippy_clean) {
             (DeliveryMode::NormalPr, Some(true)) => {}
-            (DeliveryMode::NormalPr, Some(false)) => {
-                return Err(format!(
-                    "implemented report `{}`: normal_pr requires clippy_clean=true (if clippy \
-                     failed, emit `aborted` with failed_gate=clippy)",
-                    self.target_id
-                ));
-            }
-            (DeliveryMode::NormalPr, None) => {
-                return Err(format!(
-                    "implemented report `{}`: normal_pr requires clippy_clean to be set",
-                    self.target_id
-                ));
-            }
+            (DeliveryMode::NormalPr, Some(false)) => bail!(
+                "implemented report `{}`: normal_pr requires clippy_clean=true (if clippy failed, \
+                 emit `aborted` with failed_gate=clippy)",
+                self.target_id
+            ),
+            (DeliveryMode::NormalPr, None) => bail!(
+                "implemented report `{}`: normal_pr requires clippy_clean to be set",
+                self.target_id
+            ),
             // consensus_poc_pr: any value (or omission) is acceptable.
             (DeliveryMode::ConsensusPocPr, _) => {}
-            (DeliveryMode::ConsensusIssue, _) => {
-                return Err(format!(
-                    "implemented report `{}`: consensus_issue mode never produces an implemented \
-                     report (coordinator skips the optimizer for those targets)",
-                    self.target_id
-                ));
-            }
+            (DeliveryMode::ConsensusIssue, _) => bail!(
+                "implemented report `{}`: consensus_issue mode never produces an implemented \
+                 report (coordinator skips the optimizer for those targets)",
+                self.target_id
+            ),
         }
         Ok(())
     }
@@ -324,11 +320,11 @@ pub struct AbortedReport {
     pub failing_tests: Option<Vec<String>>,
 }
 
-impl AbortedReport {
+impl ValidateModel for AbortedReport {
     /// Cross-field validation.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         if !is_non_blank(&self.reason) {
-            return Err(format!("aborted report `{}`: reason must be non-blank", self.target_id));
+            bail!("aborted report `{}`: reason must be non-blank", self.target_id);
         }
         // Invariant: failed_gate=Nextest requires at least one non-blank
         // failing_tests entry. An array of `[""]` or omission both fail
@@ -340,12 +336,12 @@ impl AbortedReport {
                 .map(has_non_blank)
                 .unwrap_or(false);
             if !has_real {
-                return Err(format!(
+                bail!(
                     "aborted report `{}`: failed_gate=nextest requires at least one non-blank \
                      failing_tests entry (so next-session triage knows which tests blocked this \
                      attempt)",
                     self.target_id
-                ));
+                );
             }
         }
         Ok(())
@@ -503,14 +499,14 @@ mod tests {
     #[test]
     fn implemented_baseline_validates() {
         baseline_implemented_normal()
-            .validate()
+            .validate_model()
             .expect("baseline implemented should validate");
     }
 
     #[test]
     fn aborted_baseline_validates() {
         baseline_aborted()
-            .validate()
+            .validate_model()
             .expect("baseline aborted should validate");
     }
 
@@ -520,7 +516,10 @@ mod tests {
     fn implemented_rejects_consensus_sensitive_without_evidence() {
         let mut r = baseline_implemented_normal();
         r.parity.evidence.clear();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("parity.evidence"), "{err}");
     }
 
@@ -528,7 +527,10 @@ mod tests {
     fn implemented_rejects_consensus_sensitive_with_only_blank_evidence() {
         let mut r = baseline_implemented_normal();
         r.parity.evidence = vec!["".to_owned(), "   ".to_owned(), "\t\n".to_owned()];
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("parity.evidence"), "{err}");
     }
 
@@ -536,7 +538,10 @@ mod tests {
     fn implemented_rejects_consensus_sensitive_without_tests() {
         let mut r = baseline_implemented_normal();
         r.parity.tests.clear();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("parity.tests"), "{err}");
     }
 
@@ -546,7 +551,7 @@ mod tests {
         r.parity.consensus_sensitive = false;
         r.parity.evidence.clear();
         r.parity.tests.clear();
-        r.validate()
+        r.validate_model()
             .expect("consensus_sensitive=false permits empty evidence/tests");
     }
 
@@ -554,7 +559,10 @@ mod tests {
     fn implemented_rejects_unproven_risk_set() {
         let mut r = baseline_implemented_normal();
         r.parity.unproven_risk = Some("ordering may drift on N > 8".to_owned());
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("unproven_risk"), "{err}");
     }
 
@@ -562,7 +570,10 @@ mod tests {
     fn implemented_rejects_nonzero_failed_tests() {
         let mut r = baseline_implemented_normal();
         r.test_summary.failed = 3;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("test_summary.failed"), "{err}");
     }
 
@@ -570,7 +581,10 @@ mod tests {
     fn implemented_rejects_blank_implementation_summary() {
         let mut r = baseline_implemented_normal();
         r.implementation_summary = "   ".to_owned();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("implementation_summary"), "{err}");
     }
 
@@ -578,7 +592,10 @@ mod tests {
     fn implemented_rejects_blank_pr_title() {
         let mut r = baseline_implemented_normal();
         r.pr_title = "".to_owned();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("pr_title"), "{err}");
     }
 
@@ -586,7 +603,10 @@ mod tests {
     fn implemented_rejects_blank_log_path() {
         let mut r = baseline_implemented_normal();
         r.test_summary.log_path = "\t".to_owned();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("log_path"), "{err}");
     }
 
@@ -594,7 +614,10 @@ mod tests {
     fn implemented_rejects_negative_duration() {
         let mut r = baseline_implemented_normal();
         r.test_summary.duration_secs = -1.0;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("duration_secs"), "{err}");
     }
 
@@ -602,7 +625,10 @@ mod tests {
     fn implemented_rejects_non_finite_duration() {
         let mut r = baseline_implemented_normal();
         r.test_summary.duration_secs = f64::NAN;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("duration_secs"), "{err}");
     }
 
@@ -610,10 +636,16 @@ mod tests {
     fn implemented_normal_pr_requires_clippy_clean_true() {
         let mut r = baseline_implemented_normal();
         r.clippy_clean = Some(false);
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("clippy_clean=true"), "{err}");
         r.clippy_clean = None;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("clippy_clean to be set"), "{err}");
     }
 
@@ -627,7 +659,7 @@ mod tests {
         r.parity.tests.clear();
         for value in [None, Some(true), Some(false)] {
             r.clippy_clean = value;
-            r.validate()
+            r.validate_model()
                 .unwrap_or_else(|e| {
                     panic!("PoC + clippy_clean={value:?} should validate; got {e}")
                 });
@@ -638,7 +670,10 @@ mod tests {
     fn implemented_consensus_issue_is_rejected_unconditionally() {
         let mut r = baseline_implemented_normal();
         r.delivery_mode = DeliveryMode::ConsensusIssue;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("consensus_issue"), "{err}");
     }
 
@@ -648,7 +683,10 @@ mod tests {
     fn aborted_rejects_blank_reason() {
         let mut r = baseline_aborted();
         r.reason = "   ".to_owned();
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("reason"), "{err}");
     }
 
@@ -658,19 +696,28 @@ mod tests {
         r.failed_gate = Some(FailedGate::Nextest);
         // None → reject
         r.failing_tests = None;
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("failing_tests"), "{err}");
         // Empty vec → reject
         r.failing_tests = Some(vec![]);
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("failing_tests"), "{err}");
         // Only-blank entries → reject
         r.failing_tests = Some(vec!["".to_owned(), "   ".to_owned()]);
-        let err = r.validate().unwrap_err();
+        let err = r
+            .validate_model()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("failing_tests"), "{err}");
         // At least one real entry → accept
         r.failing_tests = Some(vec!["".to_owned(), "stackslib::tests::a".to_owned()]);
-        r.validate()
+        r.validate_model()
             .expect("nextest + non-blank entry should validate");
     }
 
@@ -689,7 +736,7 @@ mod tests {
             let mut r = baseline_aborted();
             r.failed_gate = Some(gate);
             r.failing_tests = None;
-            r.validate()
+            r.validate_model()
                 .unwrap_or_else(|e| panic!("{gate:?} should not require failing_tests; got {e}"));
         }
     }
@@ -724,7 +771,7 @@ mod tests {
         r.test_summary.failed = 1;
         let wrapped = OptimizerReport::Implemented(r);
         wrapped
-            .validate()
+            .validate_model()
             .expect_err("top-level validate should fail on bad implemented");
     }
 }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::models::ValidateModel;
 use crate::models::analyze::Analysis;
 use crate::models::common::DeliveryMode;
 use crate::session::{SessionLayout, loader};
@@ -83,10 +84,10 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     if is_non_empty_file(&layout.candidates_json()) {
         match loader::read_candidates(layout) {
             Ok(candidates) => {
-                if let Err(e) = candidates.validate() {
+                if let Err(e) = candidates.validate_model() {
                     report
                         .missing
-                        .push(format!("candidates.json failed validation: {e}"));
+                        .push(format!("candidates.json failed validation: {e:#}"));
                 }
                 for c in &candidates.candidates {
                     let path = layout.analysis_json(&c.id);
@@ -107,10 +108,10 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     if is_non_empty_file(&layout.optimization_targets_json()) {
         match loader::read_optimization_targets(layout) {
             Ok(targets) => {
-                if let Err(e) = targets.validate() {
+                if let Err(e) = targets.validate_model() {
                     report
                         .missing
-                        .push(format!("optimization-targets.json failed validation: {e}"));
+                        .push(format!("optimization-targets.json failed validation: {e:#}"));
                 }
                 for t in &targets.targets {
                     match t.delivery_mode {
@@ -164,9 +165,9 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
                         // Per-analysis cross-field validation. Bad analyses are
                         // reported as `<path> failed validation: <reason>`.
                         for (fid, a) in &analyses {
-                            if let Err(e) = a.validate() {
+                            if let Err(e) = a.validate_model() {
                                 report.missing.push(format!(
-                                    "analysis/{fid}/analysis.json failed validation: {e}"
+                                    "analysis/{fid}/analysis.json failed validation: {e:#}"
                                 ));
                             }
                         }

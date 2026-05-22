@@ -16,6 +16,7 @@ use anyhow::Result;
 use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
+use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::bench::BenchClient;
 use stacks_bench_agent::session::finalize::{FinalizeInputs, finalize};
@@ -176,10 +177,7 @@ impl AgentHarness for ChainHarness {
                     },
                     hard_fork_followup: None,
                 });
-                std::fs::write(
-                    output_dir.join("optimizer-report.json"),
-                    serde_json::to_string_pretty(&report)?,
-                )?;
+                std::fs::write(output_dir.join("optimizer-report.json"), report.to_json_pretty()?)?;
                 // Coordinator commits after the agent exits, requiring
                 // `git status --porcelain` to show changes. Simulate
                 // the agent's source edit so the coordinator commit

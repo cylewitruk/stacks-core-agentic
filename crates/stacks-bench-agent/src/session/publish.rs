@@ -33,6 +33,7 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
+use crate::models::ToJson;
 use crate::models::common::DeliveryMode;
 use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::{ExperimentStatus, Summary};
@@ -178,7 +179,7 @@ async fn run_pr_writer<H: AgentHarness>(
             target.id
         ),
     }
-    let target_json = serde_json::to_string_pretty(target)?;
+    let target_json = target.to_json_pretty()?;
     let summary = loader::read_summary(inputs.layout).ok();
     let experiment_json = summary
         .as_ref()
@@ -187,7 +188,7 @@ async fn run_pr_writer<H: AgentHarness>(
                 .iter()
                 .find(|e| e.target_id == target.id)
         })
-        .map(serde_json::to_string_pretty)
+        .map(|e| e.to_json_pretty())
         .transpose()?
         .unwrap_or_else(|| "{}".to_owned());
 
@@ -299,7 +300,7 @@ async fn run_issue_writer<H: AgentHarness>(
     if !is_non_empty_file(&exp_dir.join("consensus-issue.md")) {
         bail!("missing consensus-issue.md for {}", target.id);
     }
-    let target_json = serde_json::to_string_pretty(target)?;
+    let target_json = target.to_json_pretty()?;
 
     clear_publish_artifacts(&exp_dir);
 

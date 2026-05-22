@@ -1,8 +1,10 @@
 //! `summary.json` — final per-session machine-readable summary.
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{
     BreakageClass, DeliveryMode, KEBAB_PATTERN, LensDispositionEntry, SchemaVersionV2,
 };
@@ -42,7 +44,7 @@ pub struct Experiment {
     /// Carried from `optimization-targets.json`.
     pub delivery_mode: DeliveryMode,
     /// Outcome of this target. Valid values depend on `delivery_mode`; see
-    /// [`Experiment::validate`] for the seven legal combinations.
+    /// [`Experiment::validate_model`] for the seven legal combinations.
     pub status: ExperimentStatus,
     /// Run ids associated with this experiment (only set for `NormalPr`
     /// targets that reached benchmarking).
@@ -81,9 +83,9 @@ pub struct Experiment {
     pub reason: Option<String>,
 }
 
-impl Experiment {
+impl ValidateModel for Experiment {
     /// Cross-field check: `status` must be valid for the given `delivery_mode`.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         let ok = matches!(
             (self.delivery_mode, self.status),
             (
@@ -98,10 +100,12 @@ impl Experiment {
             )
         );
         if !ok {
-            return Err(format!(
+            bail!(
                 "experiment `{}`: status={:?} invalid for delivery_mode={:?}",
-                self.target_id, self.status, self.delivery_mode
-            ));
+                self.target_id,
+                self.status,
+                self.delivery_mode
+            );
         }
         Ok(())
     }

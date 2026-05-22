@@ -29,6 +29,7 @@ use anyhow::{Context as _, Result, bail};
 use serde_json::Value;
 
 use crate::analyzed_rejections::now_utc_iso8601;
+use crate::models::ToJson;
 use crate::session::SessionLayout;
 use crate::session::bench::{BenchClient, InvokeOptions, extract_run_id};
 use crate::settings::Settings;
@@ -158,8 +159,9 @@ pub fn archive_baseline_binary(inputs: &ArchiveBinaryInputs<'_>) -> Result<Archi
     let manifest_path = inputs
         .layout
         .baseline_bin_manifest_path();
-    let json =
-        serde_json::to_string_pretty(&manifest).context("serializing baseline binary manifest")?;
+    let json = manifest
+        .to_json_pretty()
+        .context("serializing baseline binary manifest")?;
     fs::write(&manifest_path, format!("{json}\n"))
         .with_context(|| format!("writing {}", manifest_path.display()))?;
 

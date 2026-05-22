@@ -215,7 +215,7 @@
         },
         "status": {
           "$ref": "#/$defs/TargetStatus",
-          "description": "Terminal status. See [`TargetStatus`] for the four legal\nvalues; cross-checked against [`TargetRecord::status_stage`]\nin [`TargetRecord::validate`]."
+          "description": "Terminal status. See [`TargetStatus`] for the four legal\nvalues; cross-checked against [`TargetRecord::status_stage`]\nin [`TargetRecord::validate_model`]."
         },
         "status_stage": {
           "anyOf": [

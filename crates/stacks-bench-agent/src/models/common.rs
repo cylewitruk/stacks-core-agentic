@@ -5,8 +5,11 @@
 //! the three-axis improvement vector, the hotspot record, and the lens
 //! disposition propagated from analysis through merge into summary.
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::models::ValidateModel;
 
 /// Selection lens — the value-axis triage promoted a candidate on, and that
 /// the analyzer must dispose of explicitly. Carries through verbatim into
@@ -256,7 +259,7 @@ pub struct VerificationReplay {
     pub rationale: String,
 }
 
-impl VerificationReplay {
+impl ValidateModel for VerificationReplay {
     /// Cross-field validation: at least one of `txids` / `blocks` must
     /// be present and non-empty when this recipe is emitted at all (the
     /// recipe is itself optional in carrying structs; absence is the
@@ -266,7 +269,7 @@ impl VerificationReplay {
     /// Rust-side too because the loader doesn't run JSON Schema
     /// validation on load — without these checks a hand-staged recipe
     /// with `repetitions: 99999` would flow to stacks-bench unchecked.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         let any_txid = self
             .txids
             .as_ref()
@@ -276,20 +279,21 @@ impl VerificationReplay {
             .as_ref()
             .is_some_and(|v| !v.is_empty());
         if !any_txid && !any_block {
-            return Err("verification_replay: at least one of `txids` / `blocks` must be \
-                        non-empty (omit the field entirely to fall back to full-range bench)"
-                .to_owned());
+            bail!(
+                "verification_replay: at least one of `txids` / `blocks` must be non-empty (omit \
+                 the field entirely to fall back to full-range bench)"
+            );
         }
         if !(1..=200).contains(&self.repetitions) {
-            return Err(format!(
+            bail!(
                 "verification_replay.repetitions = {} is out of range [1, 200]",
                 self.repetitions
-            ));
+            );
         }
         if let Some(w) = self.warmup
             && w > 200
         {
-            return Err(format!("verification_replay.warmup = {w} is out of range [0, 200]",));
+            bail!("verification_replay.warmup = {w} is out of range [0, 200]");
         }
         Ok(())
     }
@@ -414,7 +418,7 @@ mod tests {
     #[test]
     fn verification_replay_valid_baseline() {
         vr_template()
-            .validate()
+            .validate_model()
             .expect("baseline recipe is valid");
     }
 
@@ -426,9 +430,13 @@ mod tests {
             ..vr_template()
         };
         let e = vr
-            .validate()
+            .validate_model()
             .expect_err("must reject");
-        assert!(e.contains("at least one of `txids` / `blocks`"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("at least one of `txids` / `blocks`"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -438,9 +446,13 @@ mod tests {
             ..vr_template()
         };
         let e = vr
-            .validate()
+            .validate_model()
             .expect_err("must reject");
-        assert!(e.contains("repetitions"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("repetitions"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -450,9 +462,13 @@ mod tests {
             ..vr_template()
         };
         let e = vr
-            .validate()
+            .validate_model()
             .expect_err("must reject");
-        assert!(e.contains("repetitions"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("repetitions"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -462,9 +478,13 @@ mod tests {
             ..vr_template()
         };
         let e = vr
-            .validate()
+            .validate_model()
             .expect_err("must reject");
-        assert!(e.contains("warmup"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("warmup"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -473,7 +493,7 @@ mod tests {
             warmup: Some(0),
             ..vr_template()
         };
-        vr.validate()
+        vr.validate_model()
             .expect("warmup = 0 is valid");
     }
 }

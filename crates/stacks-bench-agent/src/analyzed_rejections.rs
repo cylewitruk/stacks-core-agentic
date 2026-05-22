@@ -32,6 +32,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::models::{FromJson, ToJson};
+
 /// Outcome class recorded on a ledger entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -273,7 +275,7 @@ fn load_all_locked(memory_dir: &Path) -> Result<Vec<Record>> {
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<Record>(trimmed) {
+        match Record::from_json(trimmed) {
             Ok(r) => out.push(r),
             Err(e) => {
                 tracing::warn!(
@@ -333,7 +335,9 @@ fn append_locked(memory_dir: &Path, record: &Record) -> Result<()> {
         .append(true)
         .open(&path)
         .with_context(|| format!("opening {} for append", path.display()))?;
-    let line = serde_json::to_string(record).context("serializing analyzed-rejection record")?;
+    let line = record
+        .to_json()
+        .context("serializing analyzed-rejection record")?;
     writeln!(file, "{line}").with_context(|| format!("writing to {}", path.display()))?;
     file.flush()
         .with_context(|| format!("flushing {}", path.display()))?;
@@ -362,7 +366,9 @@ fn rewrite_locked(memory_dir: &Path, records: &[Record]) -> Result<()> {
             .open(&tmp_path)
             .with_context(|| format!("opening {} for rewrite", tmp_path.display()))?;
         for r in records {
-            let line = serde_json::to_string(r).context("serializing record during rewrite")?;
+            let line = r
+                .to_json()
+                .context("serializing record during rewrite")?;
             writeln!(tmp, "{line}")
                 .with_context(|| format!("writing to {}", tmp_path.display()))?;
         }

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
+use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::bench::BenchClient;
 use stacks_bench_agent::session::finalize::{FinalizeInputs, finalize};
@@ -203,7 +204,9 @@ fn finalize_propagates_coordinator_provenance_into_experiment() {
             .join("optimize")
             .join("marf-read-cache-rollback-wrapper")
             .join("coordinator-provenance.json"),
-        serde_json::to_string_pretty(&provenance).unwrap(),
+        provenance
+            .to_json_pretty()
+            .unwrap(),
     )
     .unwrap();
 

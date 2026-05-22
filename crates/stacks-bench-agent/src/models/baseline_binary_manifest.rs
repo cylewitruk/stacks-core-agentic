@@ -10,6 +10,8 @@ use anyhow::{Context as _, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::{FromJsonValidated, ValidateModel};
+
 /// Provenance for the archived `stacks-bench` binary. Written by
 /// Phase 0a, consumed by every later phase that needs to confirm the
 /// binary's source identity (preflight resume gate compares
@@ -46,14 +48,13 @@ impl BaselineBinaryManifest {
     pub fn read(path: &Path) -> Result<Self> {
         let raw =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let m: Self =
-            serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-        m.validate()
-            .with_context(|| format!("validating {}", path.display()))?;
-        Ok(m)
+        Self::from_json_validated(&raw)
+            .with_context(|| format!("parsing/validating {}", path.display()))
     }
+}
 
-    fn validate(&self) -> Result<()> {
+impl ValidateModel for BaselineBinaryManifest {
+    fn validate_model(&self) -> Result<()> {
         if self.source_sha.len() != 40
             || !self
                 .source_sha

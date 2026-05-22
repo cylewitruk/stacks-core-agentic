@@ -9,9 +9,11 @@
 
 use std::collections::BTreeMap;
 
+use anyhow::{Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{DeliveryMode, KEBAB_PATTERN, SchemaVersionV1};
 
 /// Discriminator for ledger lines. Single variant today; left open so
@@ -201,7 +203,7 @@ pub struct TargetRecord {
     pub delivery_mode: DeliveryMode,
     /// Terminal status. See [`TargetStatus`] for the four legal
     /// values; cross-checked against [`TargetRecord::status_stage`]
-    /// in [`TargetRecord::validate`].
+    /// in [`TargetRecord::validate_model`].
     pub status: TargetStatus,
     /// Stage at which a non-accepted target was settled. `None` iff
     /// `status == accepted`. Distinguishes "optimizer agent gave up"
@@ -234,20 +236,19 @@ pub struct TargetRecord {
     pub bench: Option<TargetBench>,
 }
 
-impl TargetRecord {
+impl ValidateModel for TargetRecord {
     /// Cross-field check: `status_stage` must be `None` iff `status`
     /// is `accepted`. Run before appending the record so a malformed
     /// row never reaches the ledger.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         match (self.status, &self.status_stage) {
             (TargetStatus::Accepted, None) => Ok(()),
             (TargetStatus::Accepted, Some(_)) => {
-                Err(format!("target `{}`: status_stage must be None when status=accepted", self.id))
+                bail!("target `{}`: status_stage must be None when status=accepted", self.id)
             }
-            (_, None) => Err(format!(
-                "target `{}`: status_stage required when status={:?}",
-                self.id, self.status
-            )),
+            (_, None) => {
+                bail!("target `{}`: status_stage required when status={:?}", self.id, self.status)
+            }
             (_, Some(_)) => Ok(()),
         }
     }
@@ -302,35 +303,35 @@ mod tests {
     #[test]
     fn accepted_target_rejects_status_stage() {
         let t = make_target("a", TargetStatus::Accepted, Some(TargetStatusStage::Bench));
-        assert!(t.validate().is_err());
+        assert!(t.validate_model().is_err());
     }
 
     #[test]
     fn non_accepted_target_requires_status_stage() {
         let t = make_target("a", TargetStatus::Rejected, None);
-        assert!(t.validate().is_err());
+        assert!(t.validate_model().is_err());
     }
 
     #[test]
     fn valid_target_combinations_pass() {
         assert!(
             make_target("a", TargetStatus::Accepted, None)
-                .validate()
+                .validate_model()
                 .is_ok()
         );
         assert!(
             make_target("a", TargetStatus::Rejected, Some(TargetStatusStage::Bench))
-                .validate()
+                .validate_model()
                 .is_ok()
         );
         assert!(
             make_target("a", TargetStatus::Aborted, Some(TargetStatusStage::Optimizer))
-                .validate()
+                .validate_model()
                 .is_ok()
         );
         assert!(
             make_target("a", TargetStatus::Failed, Some(TargetStatusStage::Merge))
-                .validate()
+                .validate_model()
                 .is_ok()
         );
     }

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
+use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::models::common::{
     BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV2,
 };
@@ -117,7 +118,9 @@ fn fake_report_body(target_id: &str, session_id: &str, decision: FakeDecision) -
             failing_tests: None,
         }),
     };
-    serde_json::to_string_pretty(&report).expect("fake report serializable")
+    report
+        .to_json_pretty()
+        .expect("fake report serializable")
 }
 
 impl AgentHarness for FakeHarness {
@@ -290,7 +293,9 @@ fn stage_framework_and_session(
     };
     std::fs::write(
         session.optimization_targets_json(),
-        serde_json::to_string_pretty(&targets_doc).unwrap(),
+        targets_doc
+            .to_json_pretty()
+            .unwrap(),
     )
     .unwrap();
 

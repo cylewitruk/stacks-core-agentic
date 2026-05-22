@@ -323,7 +323,7 @@
           }
         }
       ],
-      "description": "One concrete optimization target emitted by an analyzer.\n\nConsensus-routing fields (`breakage_class`, `poc_implementable`,\n`poc_test_scope`, `consensus_writeup`) are conditionally required based\non `consensus_breaking` + `breakage_class`; see [`AnalyzerTarget::validate`]\nfor the cross-field rules.",
+      "description": "One concrete optimization target emitted by an analyzer.\n\nConsensus-routing fields (`breakage_class`, `poc_implementable`,\n`poc_test_scope`, `consensus_writeup`) are conditionally required based\non `consensus_breaking` + `breakage_class`; see\n[`AnalyzerTarget::validate_model`] for the cross-field rules.",
       "properties": {
         "breakage_class": {
           "anyOf": [

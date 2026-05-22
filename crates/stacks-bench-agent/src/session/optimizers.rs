@@ -35,6 +35,7 @@ use crate::models::optimizer_report::{
     AbortedOutcomeTag, AbortedReport, FailedGate, ImplementedReport, OptimizerReport,
 };
 use crate::models::targets::MergedTarget;
+use crate::models::{FromJsonValidated, ToJson, ValidateModel};
 use crate::prompts;
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
@@ -518,7 +519,8 @@ where
     for target in &targets.targets {
         let task = OptimizerTaskInputs {
             target: target.clone(),
-            target_json: serde_json::to_string(target)
+            target_json: target
+                .to_json()
                 .context("serializing single-target slice for the optimizer prompt")?,
             framework: inputs.framework.clone(),
             settings: inputs.settings.clone(),
@@ -1123,9 +1125,10 @@ fn write_coordinator_provenance(
         commit_message: commit_message.to_owned(),
     };
     provenance
-        .validate()
-        .map_err(|e| anyhow::anyhow!("coordinator-provenance.json validation: {e}"))?;
-    let json = serde_json::to_string_pretty(&provenance)
+        .validate_model()
+        .context("coordinator-provenance.json validation")?;
+    let json = provenance
+        .to_json_pretty()
         .context("serializing coordinator-provenance.json")?;
     let path = exp_dir.join("coordinator-provenance.json");
     std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
@@ -1276,10 +1279,8 @@ fn read_coordinator_provenance(
     }
     let raw =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let p: crate::models::coordinator_provenance::CoordinatorProvenance =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    p.validate()
-        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    let p = crate::models::coordinator_provenance::CoordinatorProvenance::from_json_validated(&raw)
+        .with_context(|| format!("parsing/validating {}", path.display()))?;
     Ok(Some(p))
 }
 
@@ -1294,11 +1295,8 @@ fn read_optimizer_report(exp_dir: &Path) -> Result<Option<OptimizerReport>> {
     }
     let raw =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let report: OptimizerReport =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    report
-        .validate()
-        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    let report = OptimizerReport::from_json_validated(&raw)
+        .with_context(|| format!("parsing/validating {}", path.display()))?;
     Ok(Some(report))
 }
 
@@ -1381,8 +1379,9 @@ fn demote_implemented_to_aborted(
         failed_gate: Some(failed_gate),
         failing_tests: None,
     };
-    let json =
-        serde_json::to_string_pretty(&new_report).context("serializing demoted aborted report")?;
+    let json = new_report
+        .to_json_pretty()
+        .context("serializing demoted aborted report")?;
     std::fs::write(&report_path, json + "\n").with_context(|| {
         format!("writing demoted optimizer-report.json at {}", report_path.display())
     })?;
@@ -1404,8 +1403,9 @@ fn demote_implemented_to_aborted(
 /// Dense header + fenced JSON dump. The JSON is authoritative; the
 /// markdown is operator sugar.
 fn render_implementation_md(r: &ImplementedReport) -> String {
-    let json =
-        serde_json::to_string_pretty(r).expect("ImplementedReport always serializable as JSON");
+    let json = r
+        .to_json_pretty()
+        .expect("ImplementedReport always serializable as JSON");
     format!(
         "# Implementation report — `{target}`\n\n_Coordinator-rendered companion view of \
          `optimizer-report.json`. The JSON is authoritative; this file regenerates from it on \
@@ -1421,7 +1421,9 @@ fn render_implementation_md(r: &ImplementedReport) -> String {
 /// Coordinator-rendered companion view of an `aborted` report. Dense
 /// header + fenced JSON dump.
 fn render_abort_md(r: &AbortedReport) -> String {
-    let json = serde_json::to_string_pretty(r).expect("AbortedReport always serializable as JSON");
+    let json = r
+        .to_json_pretty()
+        .expect("AbortedReport always serializable as JSON");
     let gate = r
         .failed_gate
         .map(|g| format!("`{g:?}`"))
@@ -1574,6 +1576,7 @@ const CONSENSUS_ISSUE_MARKER: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::FromJson;
 
     /// `optimizer_git_env` should emit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
     /// for the bot identity, plus `GIT_CONFIG_COUNT` +
@@ -1730,7 +1733,9 @@ mod tests {
             },
             hard_fork_followup: None,
         });
-        let json = serde_json::to_string_pretty(&report).unwrap();
+        let json = report
+            .to_json_pretty()
+            .unwrap();
         std::fs::write(exp_dir.join("optimizer-report.json"), json).unwrap();
     }
 
@@ -1782,7 +1787,7 @@ mod tests {
             "original implemented report should be preserved at .demoted"
         );
         let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
-        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        let parsed = OptimizerReport::from_json(&live).unwrap();
         assert!(matches!(parsed, OptimizerReport::Aborted(_)), "live report must be aborted");
         // Companion abort.md rendered; stale implementation.md removed.
         let abort = std::fs::read_to_string(exp_dir.join("abort.md")).unwrap();
@@ -1837,7 +1842,7 @@ mod tests {
         assert_eq!(outcome, DemotionOutcome::HeadAdvanced);
         // Report still implemented; no demoted copy, no abort.md.
         let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
-        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        let parsed = OptimizerReport::from_json(&live).unwrap();
         assert!(matches!(parsed, OptimizerReport::Implemented(_)));
         assert!(
             !exp_dir
@@ -1920,7 +1925,7 @@ mod tests {
         // Typed report still implemented; companion implementation.md
         // rendered; no demoted copy, no abort.md.
         let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
-        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        let parsed = OptimizerReport::from_json(&live).unwrap();
         assert!(matches!(parsed, OptimizerReport::Implemented(_)));
         assert!(
             exp_dir
@@ -1941,11 +1946,11 @@ mod tests {
         // Coordinator-provenance sidecar landed with the correct SHAs.
         let provenance_raw = std::fs::read_to_string(exp_dir.join("coordinator-provenance.json"))
             .expect("coordinator-provenance.json must be written post-commit");
-        let provenance: crate::models::coordinator_provenance::CoordinatorProvenance =
-            serde_json::from_str(&provenance_raw).expect("provenance parses");
-        provenance
-            .validate()
-            .expect("provenance validates");
+        let provenance =
+            crate::models::coordinator_provenance::CoordinatorProvenance::from_json_validated(
+                &provenance_raw,
+            )
+            .expect("provenance parses + validates");
         assert_eq!(provenance.session_id, "20260517-000000");
         assert_eq!(provenance.target_id, "tgt");
         assert_eq!(provenance.delivery_mode, DeliveryMode::NormalPr);
@@ -1986,7 +1991,7 @@ mod tests {
 
         // Demoted: live report rewritten as aborted; original preserved.
         let live = std::fs::read_to_string(exp_dir.join("optimizer-report.json")).unwrap();
-        let parsed: OptimizerReport = serde_json::from_str(&live).unwrap();
+        let parsed = OptimizerReport::from_json(&live).unwrap();
         let aborted = match parsed {
             OptimizerReport::Aborted(r) => r,
             other => panic!("live report must be aborted; got {other:?}"),
@@ -2089,7 +2094,9 @@ mod tests {
         });
         std::fs::write(
             exp_dir.join("optimizer-report.json"),
-            serde_json::to_string_pretty(&report).unwrap(),
+            report
+                .to_json_pretty()
+                .unwrap(),
         )
         .unwrap();
 
@@ -2302,11 +2309,8 @@ mod tests {
             head_sha: TEST_HEAD_SHA.to_owned(),
             commit_message: format!("perf: optimize {target_id}"),
         };
-        std::fs::write(
-            exp_dir.join("coordinator-provenance.json"),
-            serde_json::to_string_pretty(&p).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(exp_dir.join("coordinator-provenance.json"), p.to_json_pretty().unwrap())
+            .unwrap();
     }
 
     /// No report on disk → not complete; falls through to the
@@ -2350,7 +2354,9 @@ mod tests {
         std::fs::write(
             tmp.path()
                 .join("optimizer-report.json"),
-            serde_json::to_string_pretty(&report).unwrap(),
+            report
+                .to_json_pretty()
+                .unwrap(),
         )
         .unwrap();
         let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);

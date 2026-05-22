@@ -23,6 +23,7 @@ use crate::models::summary::{
     OutcomeCounts, Summary,
 };
 use crate::models::targets::{MergedTarget, OptimizationTargets};
+use crate::models::{FromJsonValidated, ToJson};
 use crate::session::bench::BenchClient;
 use crate::session::{SessionLayout, loader, render};
 
@@ -57,7 +58,7 @@ pub fn finalize(inputs: &FinalizeInputs<'_>) -> Result<Summary> {
                 .display()
         )
     })?;
-    let json = serde_json::to_string_pretty(&summary)?;
+    let json = summary.to_json_pretty()?;
     fs::write(inputs.layout.summary_json(), json + "\n").with_context(|| {
         format!(
             "writing {}",
@@ -425,17 +426,15 @@ fn load_coordinator_provenance(
             return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
         }
     };
-    let p: crate::models::coordinator_provenance::CoordinatorProvenance =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    p.validate()
-        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    let p = crate::models::coordinator_provenance::CoordinatorProvenance::from_json_validated(&raw)
+        .with_context(|| format!("parsing/validating {}", path.display()))?;
     // Context cross-check: catches a sidecar that parses + validates
     // but belongs to a different target / session / delivery mode.
     // Without this a stale sidecar (e.g. copied from another session's
     // exp_dir during operator recovery) could leak the wrong head_sha
     // into summary.json.
     p.validate_context(inputs.layout.id.as_str(), &target.id, target.delivery_mode)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        .with_context(|| path.display().to_string())?;
     Ok(Some(p))
 }
 
@@ -455,7 +454,7 @@ fn aggregate_counts(experiments: &[Experiment]) -> OutcomeCounts {
                 ci.routed_to_issue += 1
             }
             (DeliveryMode::ConsensusIssue, ExperimentStatus::Aborted) => ci.aborted += 1,
-            // Other combinations are invalid per Experiment::validate().
+            // Other combinations are invalid per Experiment::validate_model().
             _ => {}
         }
     }

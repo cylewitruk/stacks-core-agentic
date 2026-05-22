@@ -16,6 +16,7 @@ use tokio::task::JoinSet;
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::analyze::Analysis;
+use crate::models::{FromJson, ToJson};
 use crate::prompts;
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
@@ -80,7 +81,8 @@ where
     for candidate in &candidates.candidates {
         let task_inputs = AnalyzerTaskInputs {
             family_id: candidate.id.clone(),
-            family_json: serde_json::to_string(candidate)
+            family_json: candidate
+                .to_json()
                 .context("serializing single-family slice for the analyzer prompt")?,
             session_id: inputs
                 .layout
@@ -331,7 +333,7 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         );
     }
     let raw = std::fs::read_to_string(&analysis_path)?;
-    let analysis: Analysis = serde_json::from_str(&raw)
+    let analysis = Analysis::from_json(&raw)
         .with_context(|| format!("parsing {}", analysis_path.display()))?;
 
     // Ledger append hook. If the analyzer concluded the family is
@@ -391,8 +393,8 @@ fn maybe_append_rejection<H: AgentHarness + 'static>(
     };
     // Parse the original candidate to extract lens, kind, suspected_spans,
     // contract_function.
-    let candidate: crate::models::candidates::Candidate =
-        serde_json::from_str(&state.family_json).context("re-parsing candidate JSON for ledger")?;
+    let candidate = crate::models::candidates::Candidate::from_json(&state.family_json)
+        .context("re-parsing candidate JSON for ledger")?;
     let lens = match candidate.selection_lens {
         crate::models::common::SelectionLens::TxLatency => "tx_latency",
         crate::models::common::SelectionLens::TenureThroughput => "tenure_throughput",

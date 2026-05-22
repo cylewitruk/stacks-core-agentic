@@ -6,9 +6,11 @@
 //! disposition on an accepted analysis means the signal was real but
 //! unfixable; `rejected` means the signal itself was wrong.
 
+use anyhow::{Context as _, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::models::ValidateModel;
 use crate::models::common::{
     BreakageClass, Bucket, Hotspot, ImprovementVector, KEBAB_PATTERN, LensDispositionStatus, Risk,
     SchemaVersionV2, SelectionLens, VerificationReplay,
@@ -42,17 +44,18 @@ impl Analysis {
     pub fn is_accepted(&self) -> bool {
         matches!(self, Self::Accepted(_))
     }
+}
 
+impl ValidateModel for Analysis {
     /// Cross-field validation. Run by callers that need stronger checks than
     /// serde's structural validation. In particular:
     /// - `lens_disposition.lens` must equal `selection_lens`;
     /// - `lens_disposition.status == NotActionable` requires `reason`;
     /// - `lens_disposition.status == Addressed` requires non-empty targets;
-    /// - per-target consensus-field consistency (see
-    ///   [`AnalyzerTarget::validate`]).
-    pub fn validate(&self) -> Result<(), String> {
+    /// - per-target consensus-field consistency (see [`AnalyzerTarget`]).
+    fn validate_model(&self) -> Result<()> {
         match self {
-            Self::Accepted(a) => a.validate(),
+            Self::Accepted(a) => a.validate_model(),
             Self::Rejected(_) => Ok(()),
         }
     }
@@ -83,14 +86,16 @@ pub struct AcceptedAnalysis {
     pub global_materiality_note: Option<String>,
 }
 
-impl AcceptedAnalysis {
+impl ValidateModel for AcceptedAnalysis {
     /// Cross-field validation per the schema's allOf chain.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         if self.lens_disposition.lens != self.selection_lens {
-            return Err(format!(
+            bail!(
                 "analysis `{}`: lens_disposition.lens ({:?}) must equal selection_lens ({:?})",
-                self.family_id, self.lens_disposition.lens, self.selection_lens
-            ));
+                self.family_id,
+                self.lens_disposition.lens,
+                self.selection_lens
+            );
         }
         if self.lens_disposition.status == LensDispositionStatus::NotActionable
             && self
@@ -98,26 +103,26 @@ impl AcceptedAnalysis {
                 .reason
                 .is_none()
         {
-            return Err(format!(
+            bail!(
                 "analysis `{}`: lens_disposition.status=not_actionable requires `reason`",
                 self.family_id
-            ));
+            );
         }
         if self.lens_disposition.status == LensDispositionStatus::Addressed
             && self.targets.is_empty()
         {
-            return Err(format!(
+            bail!(
                 "analysis `{}`: lens_disposition.status=addressed requires at least one target",
                 self.family_id
-            ));
+            );
         }
         for (i, t) in self
             .targets
             .iter()
             .enumerate()
         {
-            t.validate()
-                .map_err(|e| format!("analysis `{}` target[{}]: {}", self.family_id, i, e))?;
+            t.validate_model()
+                .with_context(|| format!("analysis `{}` target[{i}]", self.family_id))?;
         }
         Ok(())
     }
@@ -173,8 +178,8 @@ pub struct LensDisposition {
 ///
 /// Consensus-routing fields (`breakage_class`, `poc_implementable`,
 /// `poc_test_scope`, `consensus_writeup`) are conditionally required based
-/// on `consensus_breaking` + `breakage_class`; see [`AnalyzerTarget::validate`]
-/// for the cross-field rules.
+/// on `consensus_breaking` + `breakage_class`; see
+/// [`AnalyzerTarget::validate_model`] for the cross-field rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnalyzerTarget {
@@ -224,69 +229,66 @@ pub struct AnalyzerTarget {
     pub consensus_writeup: Option<String>,
 }
 
-impl AnalyzerTarget {
+impl ValidateModel for AnalyzerTarget {
     /// Cross-field validation per the schema's consensus-routing allOf chain,
     /// plus a sanity check on `verification_replay` (must have at least one
     /// non-empty section when present — otherwise it's a misleading recipe
     /// that would silently fall back to full-range bench).
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate_model(&self) -> Result<()> {
         if let Some(vr) = &self.verification_replay {
-            vr.validate()
-                .map_err(|e| format!("verification_replay: {e}"))?;
+            vr.validate_model()
+                .context("verification_replay")?;
         }
         if self.consensus_breaking {
             if self.breakage_class.is_none() {
-                return Err("consensus_breaking=true requires breakage_class".to_owned());
+                bail!("consensus_breaking=true requires breakage_class");
             }
             if self
                 .poc_implementable
                 .is_none()
             {
-                return Err("consensus_breaking=true requires poc_implementable".to_owned());
+                bail!("consensus_breaking=true requires poc_implementable");
             }
             if self
                 .consensus_writeup
                 .is_none()
             {
-                return Err("consensus_breaking=true requires consensus_writeup".to_owned());
+                bail!("consensus_breaking=true requires consensus_writeup");
             }
             if self.breakage_class == Some(BreakageClass::BlockValidation)
                 && self.poc_implementable != Some(false)
             {
-                return Err("breakage_class=block_validation forces poc_implementable=false \
-                            (bench harness does not exercise validation path)"
-                    .to_owned());
+                bail!(
+                    "breakage_class=block_validation forces poc_implementable=false (bench \
+                     harness does not exercise validation path)"
+                );
             }
             if self.poc_implementable == Some(true) {
                 match &self.poc_test_scope {
                     Some(s) if !s.is_empty() => {}
-                    _ => {
-                        return Err(
-                            "poc_implementable=true requires non-empty poc_test_scope".to_owned()
-                        );
-                    }
+                    _ => bail!("poc_implementable=true requires non-empty poc_test_scope"),
                 }
             } else if self.poc_test_scope.is_some() {
-                return Err("poc_test_scope is allowed only when poc_implementable=true".to_owned());
+                bail!("poc_test_scope is allowed only when poc_implementable=true");
             }
         } else {
             if self.breakage_class.is_some() {
-                return Err("non-consensus target must not carry breakage_class".to_owned());
+                bail!("non-consensus target must not carry breakage_class");
             }
             if self
                 .poc_implementable
                 .is_some()
             {
-                return Err("non-consensus target must not carry poc_implementable".to_owned());
+                bail!("non-consensus target must not carry poc_implementable");
             }
             if self.poc_test_scope.is_some() {
-                return Err("non-consensus target must not carry poc_test_scope".to_owned());
+                bail!("non-consensus target must not carry poc_test_scope");
             }
             if self
                 .consensus_writeup
                 .is_some()
             {
-                return Err("non-consensus target must not carry consensus_writeup".to_owned());
+                bail!("non-consensus target must not carry consensus_writeup");
             }
         }
         Ok(())

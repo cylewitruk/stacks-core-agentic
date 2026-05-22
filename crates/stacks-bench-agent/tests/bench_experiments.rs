@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
+use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::models::common::{
     Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV2, VerificationReplay,
 };
@@ -144,7 +145,9 @@ fn write_implemented_report(layout: &SessionLayout, target_id: &str) {
     });
     std::fs::write(
         exp.join("optimizer-report.json"),
-        serde_json::to_string_pretty(&report).unwrap(),
+        report
+            .to_json_pretty()
+            .unwrap(),
     )
     .unwrap();
 }
@@ -410,7 +413,9 @@ fn bench_experiments_skips_targets_with_aborted_optimizer_report() {
     });
     std::fs::write(
         exp.join("optimizer-report.json"),
-        serde_json::to_string_pretty(&report).unwrap(),
+        report
+            .to_json_pretty()
+            .unwrap(),
     )
     .unwrap();
 
