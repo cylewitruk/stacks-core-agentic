@@ -8,8 +8,10 @@
       "Bash(just fmt)",
       "Bash(just build)",
       "WebFetch(domain:developers.openai.com)",
-      "Bash(sbagent *)"
-      
+      "Bash(sbagent *)",
+      "Bash(find /Users/cylwit/Code/github.com/cylewitruk/stacks-bench-agentic-operator/sessions/20260521-051649/results -type f '\\(' -name *.json -o -name *.md -o -name stderr.log '\\)')",
+      "Bash(xargs stat -f \"%Sm %N\")",
+      "Bash(cargo +nightly fmt --all)"
     ]
   }
 }

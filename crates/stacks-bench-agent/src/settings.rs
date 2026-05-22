@@ -248,10 +248,11 @@ pub struct Settings {
     /// conventional `.sbagent/prompts` + `.sbagent/context` layout
     /// works without a config change.
     ///
-    /// Operator-tunable: `sbagent sync` rewrites only with
-    /// `--force-tunables` (or the legacy `--force-prompts`),
-    /// `sbagent check` warns (not fails) on drift between the on-disk
-    /// copy and the running binary's bundle.
+    /// Operator-tunable: `sbagent sync` refreshes by default; pass
+    /// `--keep-tunables` to preserve operator edits. `sbagent check`
+    /// warns (not fails) on drift between the on-disk copy and the
+    /// running binary's bundle, except for the load-bearing
+    /// `optimizer.md` prompt which fails on drift.
     #[serde(default)]
     pub context_overrides_dir: Option<PathBuf>,
 

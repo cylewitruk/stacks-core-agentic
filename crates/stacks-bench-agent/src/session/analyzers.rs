@@ -434,25 +434,7 @@ fn maybe_append_rejection<H: AgentHarness + 'static>(
         .framework
         .require_base()
         .ok()
-        .and_then(|base| {
-            std::process::Command::new("git")
-                .args(["-C"])
-                .arg(base)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .ok()
-                .and_then(|out| {
-                    if out.status.success() {
-                        Some(
-                            String::from_utf8_lossy(&out.stdout)
-                                .trim()
-                                .to_owned(),
-                        )
-                    } else {
-                        None
-                    }
-                })
-        });
+        .and_then(crate::git::rev_parse_head_optional);
 
     let fingerprint = compute_fingerprint(&FingerprintInputs {
         lens,

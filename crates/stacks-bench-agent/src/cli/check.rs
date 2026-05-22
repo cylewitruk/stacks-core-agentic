@@ -74,7 +74,10 @@ pub struct CheckArgs {
 const REQUIRED_TOOLS: &[&str] = &["cargo", "git", "sqlite3", CodexHarness::COMMAND];
 
 /// Run all preflight checks. Each check appends to `findings`; on any
-/// finding the command bails with the aggregated list.
+/// hard finding the command bails with the aggregated list. Soft
+/// findings (`Warn`-severity preflight outcomes, plus the still-
+/// informational `note:` lines from prompt/context drift) surface to
+/// stderr but don't trigger non-zero exit.
 pub async fn run(args: CheckArgs, ctx: &CliContext) -> Result<()> {
     let mut findings: Vec<String> = Vec::new();
 
@@ -83,12 +86,31 @@ pub async fn run(args: CheckArgs, ctx: &CliContext) -> Result<()> {
     if !args.skip_schema_drift {
         check_bundle_schema_drift(ctx, &mut findings);
         check_bundle_query_drift(ctx, &mut findings);
-        check_bundle_prompt_drift(ctx);
+        // Prompt drift now flows through `session::preflight` so the
+        // load-bearing `optimizer.md` drift escalates to a hard
+        // finding (matching the session-start gate). Other prompt
+        // drift remains soft (analyzer/triage/merge-analyses are
+        // operator-tunable).
         check_bundle_context_drift(ctx);
         check_context_bundle_consistency(&mut findings);
         if ctx.layout.framework.is_some() {
             check_typed_model_schema_drift(ctx, &mut findings);
         }
+    }
+    // Session-start preflight checks: installed-binary drift,
+    // load-bearing prompt drift, submodule reachability. Calling
+    // `sbagent check` from CI / a deploy script catches the same
+    // drift modes that would abort `sbagent session run` later.
+    match crate::session::preflight::collect_findings(ctx) {
+        Ok(pf) => {
+            for f in &pf {
+                eprintln!("preflight {f}");
+                if f.severity == crate::session::preflight::Severity::Fail {
+                    findings.push(format!("preflight [{}] {}", f.check, f.message));
+                }
+            }
+        }
+        Err(e) => findings.push(format!("preflight checks failed to run: {e:#}")),
     }
     if args.with_publish {
         preflight::collect_publish_findings(ctx, &mut findings).await;
@@ -302,55 +324,12 @@ fn check_bundle_query_drift(ctx: &CliContext, findings: &mut Vec<String>) {
     }
 }
 
-/// Compare operator's on-disk prompt templates against the embedded
-/// bundle. **Warns only** (operator edits are legitimate — the
-/// autoresearch `program.md` model). The warning surfaces on stderr
-/// so an operator who picked up a new sbagent version sees that their
-/// prompt tunes may now lag the new bundled defaults; they decide
-/// whether to merge or `sbagent sync --force-tunables`.
-fn check_bundle_prompt_drift(ctx: &CliContext) {
-    let dir = match ctx
-        .settings
-        .prompt_overrides_dir
-        .as_deref()
-    {
-        Some(d) => d,
-        None => return,
-    };
-    let drifts = match crate::prompts::drift(dir) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("note: prompt bundle drift check failed: {e:#}");
-            return;
-        }
-    };
-    if drifts.is_empty() {
-        return;
-    }
-    eprintln!(
-        "note: {} prompt template(s) under {} differ from the binary's bundled defaults (operator \
-         edits are legitimate; run `sbagent sync --force-tunables` to reset):",
-        drifts.len(),
-        dir.display(),
-    );
-    for d in &drifts {
-        eprintln!(
-            "  - {}: {}",
-            d.file_name(),
-            match d {
-                crate::prompts::DriftEntry::Missing { .. } => "missing on disk",
-                crate::prompts::DriftEntry::Differs { .. } => "differs from bundle",
-            }
-        );
-    }
-}
-
 /// Compare operator's on-disk context docs against the embedded bundle.
-/// Same warn-only contract as [`check_bundle_prompt_drift`]: context
-/// docs are operator-tunable (the bot's "brainstem"), so drift is
-/// informational — operator who upgrades sbagent sees that their tunes
-/// may lag the new defaults and decides whether to merge or
-/// `sbagent sync --force-tunables`.
+/// Warn-only contract (context docs are operator-tunable — the bot's
+/// "brainstem" — so drift is informational). An operator who upgrades
+/// sbagent sees that their tunes may lag the new defaults and decides
+/// whether to merge manually or just run `sbagent sync` (which
+/// refreshes by default; pass `--keep-tunables` to preserve edits).
 fn check_bundle_context_drift(ctx: &CliContext) {
     let dir = &ctx.layout.context_dir;
     let drifts = match crate::context::drift(dir) {
@@ -365,7 +344,8 @@ fn check_bundle_context_drift(ctx: &CliContext) {
     }
     eprintln!(
         "note: {} context file(s) under {} differ from the binary's bundled defaults (operator \
-         edits are legitimate; run `sbagent sync --force-tunables` to reset):",
+         edits are legitimate; run `sbagent sync` to refresh from the bundle, or `sbagent sync \
+         --keep-tunables` to preserve your edits):",
         drifts.len(),
         dir.display(),
     );

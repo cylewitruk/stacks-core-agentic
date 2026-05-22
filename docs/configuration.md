@@ -70,12 +70,14 @@ config keys are unset. With `prompt_overrides_dir = ".sbagent/prompts"`
 Prompts, JSON schemas, and SQL queries are all embedded in the
 `sbagent` binary via `include_str!`. They get to disk in two ways:
 
-- **`sbagent init`** seeds `.sbagent/{prompts,schemas,queries}/`
+- **`sbagent init`** seeds `.sbagent/{prompts,schemas,queries,context}/`
   with don't-replace semantics. Re-runs are no-ops.
-- **`sbagent sync`** (after an `sbagent` upgrade): rewrites schemas +
-  queries unconditionally, leaves prompts alone. `--force-prompts`
-  also clobbers prompt edits (use sparingly — that's where operator
-  tunes live).
+- **`sbagent sync`** (after an `sbagent` upgrade): rewrites ALL bundles
+  (schemas, queries, prompts, context) unconditionally — the bundled
+  versions are the contract surface. Pass `--keep-tunables` to preserve
+  operator-edited prompts + context docs while still refreshing schemas
+  and queries. The legacy `--force-tunables` / `--force-prompts` flags
+  are accepted as deprecated no-op aliases for one release.
 
 `sbagent check` enforces the contract:
 
@@ -83,10 +85,11 @@ Prompts, JSON schemas, and SQL queries are all embedded in the
   agent output against the wrong contract otherwise).
 - Queries drift on disk vs bundle → **fail** (stale column ordering
   silently breaks the typed candidates/analysis pipeline).
-- Prompts drift on disk vs bundle → **warn** (operator edits are
-  legitimate tuning; an operator who upgrades the binary sees a
-  one-line stderr notice and decides whether to merge or
-  `sbagent sync --force-prompts`).
+- Prompts drift on disk vs bundle → **fail** for the load-bearing
+  `optimizer.md` (orchestrator's typed-report gate depends on bundled
+  contract); **warn** for analyzer/triage/merge-analyses (still
+  operator-tunable). Fix with `sbagent sync` (or `sbagent sync
+  --keep-tunables` to preserve other tunes).
 
 ## Forge-agnostic auth
 

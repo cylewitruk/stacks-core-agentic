@@ -73,9 +73,11 @@ pub enum Command {
     /// Per-session commands (validate, finalize, baseline, triage, ...).
     Session(session::SessionArgs),
 
-    /// Refresh the operator's on-disk bundle (`.sbagent/schemas/`
-    /// always; `.sbagent/prompts/` with `--force-prompts`) from the
-    /// running binary's embedded defaults.
+    /// Refresh the operator's on-disk bundle from the running
+    /// binary's embedded defaults. By default rewrites ALL bundles
+    /// (`.sbagent/{schemas,queries,prompts,context}/`); pass
+    /// `--keep-tunables` to preserve operator-edited prompts +
+    /// context docs (still refreshes schemas + queries).
     Sync(sync::SyncArgs),
 }
 

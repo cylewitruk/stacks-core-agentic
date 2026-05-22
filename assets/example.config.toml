@@ -37,15 +37,18 @@ base = "repos/stacks-core"
 # --- Bundles (prompts + JSON Schemas + SQL queries) ----------------------
 # Prompts, schemas, AND the triage/analyzer SQL bundle are all embedded
 # in the `sbagent` binary at compile time. `sbagent init` writes them
-# to `<operator>/.sbagent/{prompts,schemas,queries}/` and `sbagent sync`
-# refreshes them after upgrading the binary:
-#   - `sbagent sync`               → always overwrites schemas + queries,
-#                                    leaves prompts
-#   - `sbagent sync --force-prompts` → also overwrites prompt templates
-# `sbagent check` fails on schemas / queries drift (stale on-disk copies
-# silently break agent validation or input ordering) and warns on prompt
-# drift (operator edits are legitimate tuning, per the autoresearch
-# `program.md` model).
+# to `<operator>/.sbagent/{prompts,schemas,queries,context}/` and
+# `sbagent sync` refreshes them after upgrading the binary:
+#   - `sbagent sync`                 → overwrites ALL bundles (schemas,
+#                                      queries, prompts, context) — the
+#                                      bundled versions are the contract
+#                                      surface.
+#   - `sbagent sync --keep-tunables` → preserves operator-edited prompts +
+#                                      context docs (still refreshes schemas
+#                                      + queries).
+# `sbagent check` fails on schemas / queries drift and on
+# load-bearing `optimizer.md` drift (it carries the orchestrator's
+# typed-report contract); warns on other prompt drift.
 #
 # `schemas_dir` + `queries_dir` default to siblings of
 # `prompt_overrides_dir`. With `prompt_overrides_dir = ".sbagent/prompts"`,

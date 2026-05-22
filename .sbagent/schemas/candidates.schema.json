@@ -259,6 +259,73 @@
       },
       "type": "object"
     },
+    "LensCoverage": {
+      "additionalProperties": false,
+      "description": "Per-lens slate coverage summary on [`Candidates`].",
+      "properties": {
+        "commit_time": {
+          "description": "Number of accepted candidates whose\n`selection_lens == \"commit_time\"`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redistribution_notes": {
+          "description": "Optional notes on redistribution or honest-omission decisions\n(e.g. \"throughput contributed 0; no contracts above 5% of any\nClarity-budget axis\"). Skipped from output when empty.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tenure_throughput": {
+          "description": "Number of accepted candidates whose\n`selection_lens == \"tenure_throughput\"`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tx_latency": {
+          "description": "Number of accepted candidates whose\n`selection_lens == \"tx_latency\"`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "weights_applied": {
+          "description": "Operator weights applied (the `stacks_bench_axis_weights`\nsetting passed to triage, verbatim — comma-separated triple\n`tx_latency,tenure_throughput,commit_time`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tx_latency",
+        "tenure_throughput",
+        "commit_time",
+        "weights_applied"
+      ],
+      "type": "object"
+    },
+    "RejectedFamily": {
+      "additionalProperties": false,
+      "description": "One entry in [`Candidates::rejected_families`] — a family the\ntriage agent considered during counter-search and rejected with a\ncode-level reason.",
+      "properties": {
+        "family_id": {
+          "description": "Stable kebab-case family identifier describing what was\nconsidered (e.g. `serialization-clarity-values`,\n`hashing-keccak-do-fold`). Same naming convention as accepted\ncandidates' `id`.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "lens": {
+          "$ref": "#/$defs/SelectionLens",
+          "description": "The lens the family would have been promoted on if accepted."
+        },
+        "reason": {
+          "description": "One-line code-level rejection reason. Examples: \"below noise\nfloor in absolute terms\", \"dominated by 1-2 outlier\nrepresentatives\", \"already addressed by an existing cache\",\n\"cross-epoch Clarity-cost aggregate only\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "family_id",
+        "lens",
+        "reason"
+      ],
+      "type": "object"
+    },
     "RepresentativeIds": {
       "anyOf": [
         {
@@ -375,10 +442,21 @@
       },
       "type": "array"
     },
+    "lens_coverage": {
+      "$ref": "#/$defs/LensCoverage",
+      "description": "Per-lens slate coverage report: how many candidates each\nvalue-axis lens contributed, plus the operator weights and any\nredistribution notes. Replaces the agent's\n\"Per-lens slate coverage\" final-message section with a typed\nsummary that downstream consumers can read without scraping\nmarkdown."
+    },
     "noise_floor_pct": {
       "description": "Per-host noise floor expressed as a percentage.",
       "format": "double",
       "type": "number"
+    },
+    "rejected_families": {
+      "description": "Counter-search audit: workload families the triage agent considered\nduring its counter-search step but did NOT promote, each with a\none-line code-level rejection reason. The audit lives here as a\ntyped field rather than in the agent's final-message narrative so\nit survives parse-time validation (serde catches missing entries)\nand downstream tooling can render the audit programmatically.\n\nMay be empty when the slate was dominated by a single clear\nwinner and no alternatives needed rejecting — but a non-empty\ncandidates list with empty `rejected_families` is a smell\n(suggests counter-search was skipped).",
+      "items": {
+        "$ref": "#/$defs/RejectedFamily"
+      },
+      "type": "array"
     },
     "schema_version": {
       "$ref": "#/$defs/SchemaVersionV2",
@@ -395,7 +473,9 @@
     "baseline_run_id",
     "baseline_rerun_id",
     "noise_floor_pct",
-    "candidates"
+    "candidates",
+    "rejected_families",
+    "lens_coverage"
   ],
   "title": "Candidates",
   "type": "object"

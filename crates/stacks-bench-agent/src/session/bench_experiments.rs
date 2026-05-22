@@ -222,10 +222,16 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
         let run_dir = exp_dir.join(format!("run-{n}"));
         fs::create_dir_all(&run_dir).with_context(|| format!("creating {}", run_dir.display()))?;
         let bench_name = format!("{}-{}", target.id, phase.bench_name_suffix);
-        // Candidate bench: capture only stacks-bench-generated spans and skip
-        // profiler key-value records. Finalize reads only `total_duration_us`
-        // from these runs; the full profiler tree + k-v records would just
-        // bloat the persistent SQLite DB and the post-bench stage/merge.
+        // Candidate bench: same profiler-flag set as the Phase 1.8 baseline
+        // calibration this candidate's `improvement_pct` will be compared
+        // against. Pass 1c invariant — flag symmetry within a comparison.
+        // Asymmetric profiling (e.g. lean candidate vs rich baseline) lets
+        // profile overhead bias the comparison; see
+        // [calibration.rs](super::calibration) for the matching baseline
+        // arg construction. When measurement profiles land (roadmap), this
+        // flag set comes from the profile descriptor rather than being
+        // hard-coded; the invariant is "same profile flags on both sides
+        // of a comparison."
         let mut args: Vec<&str> = vec![
             "bench",
             "run",
@@ -235,8 +241,6 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
             inputs.range.network,
             "--name",
             &bench_name,
-            "--bench-spans-only",
-            "--no-profiler-kv",
         ];
         if let Some(sd) = shadow_str.as_deref() {
             args.push("--shadow-dir-root");
@@ -278,7 +282,10 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
 /// the prefix — they want raw 64-hex. This is the single boundary
 /// where the prefix gets stripped; the rest of the system keeps the
 /// prefixed form.
-fn strip_hex_prefix(s: &str) -> String {
+///
+/// Public so `session::calibration` (Phase 1.8) can share the same
+/// stripping convention as Phase 3 candidate bench.
+pub fn strip_hex_prefix(s: &str) -> String {
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s)
@@ -469,5 +476,6 @@ pub fn stacks_bench_for(binary: &Path, data_dir: &Path, cargo_cwd: &Path) -> Box
         release_bin: Some(PathBuf::from(binary)),
         data_dir: data_dir.to_path_buf(),
         cargo_cwd: cargo_cwd.to_path_buf(),
+        strict: false,
     })
 }

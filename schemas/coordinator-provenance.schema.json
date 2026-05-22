@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Coordinator-observed git facts captured at the moment of the\nper-target commit. All four scalar fields are required; the\ncoordinator can always compute them, and absence breaks the\naudit-trail invariant the file exists to provide.",
+  "properties": {
+    "base_sha": {
+      "description": "Parent of `head_sha`. The base the agent's commit was applied\non top of in the per-target clone. Resume gate compares this\nto `<session>/baseline/bin/manifest.json.source_sha`; mismatch\nindicates the per-target branch was built against a different\nsource than Phase 0a archived, and the apples-to-apples\ninvariant doesn't hold.",
+      "type": "string"
+    },
+    "commit_message": {
+      "description": "Coordinator-supplied commit message. Today always\n`perf: optimize <target_id>`. Recorded for audit completeness.",
+      "type": "string"
+    },
+    "delivery_mode": {
+      "$ref": "#/$defs/DeliveryMode",
+      "description": "Delivery mode the coordinator committed under. Carried for the\nsame defense-in-depth reason `optimizer-report.json` carries it:\ncatches mode-drift between agent emission and coordinator\nobservation. Always `normal_pr` or `consensus_poc_pr` because\n`consensus_issue` skips the coordinator commit entirely."
+    },
+    "head_sha": {
+      "description": "The commit the coordinator produced — agent's changes applied\non top of `base_sha`. Quoted by finalize / Phase 5 PR-writer so\nreviewers can resolve \"what code was actually benchmarked.\"",
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1"
+    },
+    "session_id": {
+      "description": "Session id this provenance belongs to. Must match the parent\nsession's id; resume gate cross-checks.",
+      "type": "string"
+    },
+    "target_id": {
+      "description": "Target id this provenance belongs to. Must match the parent\n`optimize/<target_id>/` directory; resume gate cross-checks.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "target_id",
+    "delivery_mode",
+    "base_sha",
+    "head_sha",
+    "commit_message"
+  ],
+  "title": "CoordinatorProvenance",
+  "type": "object"
+}

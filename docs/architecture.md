@@ -149,8 +149,10 @@ is just an editable source.
 
 The substitution-bearing templates are bundled into the `sbagent`
 binary via `include_str!` and seeded to the operator's
-`.sbagent/prompts/` by `sbagent init` (and refreshed via
-`sbagent sync --force-prompts`). At runtime they render through
+`.sbagent/prompts/` by `sbagent init` (and refreshed by every
+`sbagent sync` — the bundled prompts are the contract surface;
+operator edits survive only with `--keep-tunables`). At runtime
+they render through
 **[MiniJinja](https://github.com/mitsuhiko/minijinja) in strict mode**
 — undefined variables are a hard error, not a silent empty string.
 Each phase has a typed [`Prompt`](../crates/stacks-bench-agent/src/prompts.rs)

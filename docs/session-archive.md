@@ -126,7 +126,7 @@ follow-up:
 | `started_at` | Derived from session id's `YYYYMMDD-HHMMSS` prefix. | Pulled from a per-session manifest written by orchestrator. |
 | `finished_at` | Latest mtime under `sessions/<id>/`. | Same manifest source. |
 | `phase_durations_secs` | Empty `{}`. | Populated when phase-timing instrumentation lands. |
-| `targets[].head_sha` | `None`. | Populated by publish-feedback integration. |
+| `targets[].head_sha` | Populated from `summary.json.experiments[].head_sha` (which finalize reads from the coordinator-provenance sidecar). `None` for targets whose optimizer never committed. | — landed 2026-05-21. |
 | `targets[].pr_url` | `None`. | Populated by publish push outputs. |
 | `bench.baseline_total_us` / `candidate_total_us` | `0`. | Aggregated across per-run `bench-run.json` files. |
 

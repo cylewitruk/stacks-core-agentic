@@ -17,7 +17,8 @@
 //!   **fails**.
 //! - **Context** sits with prompts: operator-tunable. The sidecar metadata
 //!   ships in lockstep with the markdown body, both treated as operator edits
-//!   (warn on drift, force on `--force-tunables`).
+//!   (warn on drift, refreshed by default by `sbagent sync` — pass
+//!   `--keep-tunables` to preserve operator edits).
 //!
 //! See `<repo>/context/*.md` + `<repo>/context/*.toml` for the bundled set.
 
@@ -325,8 +326,9 @@ pub fn seed_to(dir: &Path) -> Result<SeedReport> {
 }
 
 /// Force-rewrite every bundled doc + sidecar to disk. Same operator-tunable
-/// contract as [`crate::prompts::sync_force`]: intended only for explicit
-/// invocation (`sbagent sync --force-tunables` and friends).
+/// contract as [`crate::prompts::sync_force`]: invoked by `sbagent sync`
+/// in its default refresh-everything mode, skipped when the operator
+/// passes `--keep-tunables`.
 pub fn sync_force(dir: &Path) -> Result<Vec<&'static str>> {
     std::fs::create_dir_all(dir)
         .with_context(|| format!("creating context dir {}", dir.display()))?;

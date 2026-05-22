@@ -1,20 +1,22 @@
 //! `sbagent sync` — refresh the operator's on-disk bundles
-//! (`.sbagent/{schemas,queries}/` always; `.sbagent/{prompts,context}/`
-//! only with `--force-tunables`) and optionally commit + push the result.
+//! (`.sbagent/{schemas,queries,prompts,context}/`) from the binary's
+//! embedded defaults and optionally commit + push the result.
 //!
 //! The operator's `.sbagent/` tree is a **mirror** of the binary's
 //! embedded bundle. After an `sbagent` upgrade, run `sbagent sync` to
-//! pull the new version's schemas, queries (and optionally tunables)
-//! onto disk.
+//! pull the new version's bundles onto disk.
 //!
-//! Asymmetric write semantics, by design:
-//! - **Schemas + queries** always overwrite (no flag). They are versioned
-//!   contract, not a tuning surface; the operator's on-disk copy must always
-//!   reflect the running binary.
-//! - **Prompts + context docs** only overwrite with `--force-tunables` (alias:
-//!   `--force-prompts`, kept for one release for migration). Operators may have
-//!   tuned them (autoresearch's `program.md` model); a silent reset would erase
-//!   legitimate edits.
+//! Write semantics (default-flipped 2026-05-21):
+//! - **Schemas + queries** always overwrite. They are versioned contract, not a
+//!   tuning surface; the operator's on-disk copy must always reflect the
+//!   running binary.
+//! - **Prompts + context docs** also overwrite by default. The bundled
+//!   templates are the contract surface; silent operator edits drifted
+//!   load-bearing prompts (e.g. `optimizer.md`) past what the orchestrator's
+//!   typed-contract gate expects and burned operator time mid-session. Pass
+//!   `--keep-tunables` to preserve operator edits while still refreshing
+//!   schemas + queries. The legacy `--force-tunables` / `--force-prompts` flags
+//!   are accepted as no-op aliases for one release.
 //!
 //! `--commit` produces a single bot-authored commit covering whatever
 //! `.sbagent/` paths actually changed. `--push` implies `--commit`
@@ -24,10 +26,12 @@
 //! CI workflow can run `sbagent sync --push` after each binary
 //! upgrade without spelling out the git + auth dance in shell.
 //!
-//! `sbagent check` separately reports schema / query drift as a
-//! failure and prompt drift as a warning, so an operator who upgrades
-//! the binary without running sync sees a loud "run sbagent sync"
-//! message rather than silently broken validation.
+//! `sbagent check` reports schema / query drift as a failure and
+//! prompt drift as a failure on the load-bearing `optimizer.md`, so
+//! an operator who upgrades the binary without running sync sees a
+//! loud "run sbagent sync" message rather than silently broken
+//! validation. Session-start preflight ([`crate::session::preflight`])
+//! runs the same prompt-drift check before any heavy phase.
 
 use std::path::Path;
 
@@ -42,16 +46,29 @@ use crate::{context, git, prompts, queries, schemas};
 /// Args for `sbagent sync`.
 #[derive(Debug, Args)]
 pub struct SyncArgs {
-    /// Also overwrite the operator's on-disk prompt templates AND
-    /// context docs with the binary's bundled defaults. **Destructive**
-    /// — clobbers operator edits. Without this flag, prompts + context
-    /// docs are left alone (only schemas + queries are refreshed).
+    /// Preserve the operator's on-disk prompt templates and context
+    /// docs from being overwritten with the binary's bundled defaults.
+    /// By default `sync` ALWAYS refreshes both tunable bundles (along
+    /// with schemas + queries) — the bundled templates are the
+    /// contract surface, and silent operator edits have repeatedly
+    /// drifted load-bearing prompts (e.g. `optimizer.md`) past what
+    /// the orchestrator's typed-contract gate expects. Pass
+    /// `--keep-tunables` only when you've consciously edited prompts /
+    /// context docs and want to merge bundled changes manually.
     ///
-    /// Long-form name is `--force-tunables`; `--force-prompts` is kept
-    /// as a deprecated alias for one release for migration. Both flags
-    /// resolve to the same field — passing either covers both bundles.
-    #[clap(long = "force-tunables", alias = "force-prompts")]
-    pub force_tunables: bool,
+    /// The legacy `--force-tunables` and `--force-prompts` flags are
+    /// accepted as deprecated no-op aliases for one release (the
+    /// behavior they used to opt into is now the default). Both emit
+    /// a deprecation notice and resolve to `keep_tunables = false`.
+    #[clap(long = "keep-tunables")]
+    pub keep_tunables: bool,
+
+    /// Deprecated: pre-flip-of-defaults muscle memory. Sync now
+    /// refreshes tunables by default; this flag was the opt-in for
+    /// that behavior. Now a no-op. Pass `--keep-tunables` to preserve
+    /// operator edits.
+    #[clap(long = "force-tunables", alias = "force-prompts", hide = true)]
+    pub force_tunables_deprecated: bool,
 
     /// After writing the bundles, stage the changed `.sbagent/` paths
     /// and produce a single commit authored as the bot (identity from
@@ -69,9 +86,19 @@ pub struct SyncArgs {
 }
 
 /// Run `sbagent sync`. Always rewrites schemas + queries; rewrites
-/// prompts + context only when `--force-tunables` is set; optionally
-/// commits + pushes.
+/// prompts + context UNLESS `--keep-tunables` is set (default-flipped
+/// from the prior behavior where prompts were left alone — see
+/// `SyncArgs::keep_tunables` for rationale).
 pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
+    if args.force_tunables_deprecated {
+        eprintln!(
+            "note: `--force-tunables` / `--force-prompts` is now a no-op (sync refreshes tunables \
+             by default); this flag will be removed in a future release. Drop it from your \
+             scripts.",
+        );
+    }
+    let refresh_tunables = !args.keep_tunables;
+
     // ── 1. Refresh bundles on disk ────────────────────────────────
     // Legacy context-doc migration runs at startup (in
     // `CliContext::from_args`, before `context::seed_to` would
@@ -115,31 +142,30 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
         println!("  - {name}");
     }
 
-    if args.force_tunables {
+    if refresh_tunables {
         let prompts_dir = ctx
             .settings
             .require_prompt_overrides_dir()
-            .context("`--force-tunables` requires `prompt_overrides_dir` in config")?;
+            .context(
+                "sync requires `prompt_overrides_dir` in config to refresh tunables; pass \
+                 `--keep-tunables` to skip the tunable refresh if you can't set it",
+            )?;
         let written = prompts::sync_force(prompts_dir)
-            .with_context(|| format!("force-syncing prompts into {}", prompts_dir.display()))?;
-        println!(
-            "sync: rewrote {} prompt(s) in {} (--force-tunables)",
-            written.len(),
-            prompts_dir.display(),
-        );
+            .with_context(|| format!("refreshing prompts into {}", prompts_dir.display()))?;
+        println!("sync: rewrote {} prompt(s) in {}", written.len(), prompts_dir.display(),);
         for name in &written {
             println!("  - {name}");
         }
         let written = context::sync_force(&ctx.layout.context_dir).with_context(|| {
             format!(
-                "force-syncing context docs into {}",
+                "refreshing context docs into {}",
                 ctx.layout
                     .context_dir
                     .display()
             )
         })?;
         println!(
-            "sync: rewrote {} context file(s) in {} (--force-tunables)",
+            "sync: rewrote {} context file(s) in {}",
             written.len(),
             ctx.layout
                 .context_dir
@@ -150,8 +176,9 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
         }
     } else {
         println!(
-            "sync: prompts + context left alone (pass `--force-tunables` to also overwrite \
-             operator-edited templates and reference docs)",
+            "sync: prompts + context left alone (--keep-tunables); operator edits preserved. Be \
+             aware that load-bearing prompt drift (esp. optimizer.md) can break the \
+             orchestrator's typed-report gate at session-start preflight.",
         );
     }
 
@@ -161,7 +188,7 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
     // convention is the operator dir; bundles are absolutized in
     // Layout so paths are valid regardless.
     if args.commit || args.push {
-        commit_bundles(ctx, args.force_tunables).context("`sbagent sync --commit`")?;
+        commit_bundles(ctx, refresh_tunables).context("`sbagent sync --commit`")?;
     }
 
     // ── 3. Optionally push ────────────────────────────────────────
@@ -173,9 +200,9 @@ pub async fn run(args: SyncArgs, ctx: &CliContext) -> Result<()> {
 }
 
 /// Stage the changed `.sbagent/` paths (always schemas + queries; also
-/// prompts + context when `--force-tunables` was set) and produce one
-/// bot-authored commit. Skipped silently when nothing changed.
-fn commit_bundles(ctx: &CliContext, force_tunables: bool) -> Result<()> {
+/// prompts + context unless `--keep-tunables` was set) and produce
+/// one bot-authored commit. Skipped silently when nothing changed.
+fn commit_bundles(ctx: &CliContext, refresh_tunables: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("getting cwd for `sbagent sync --commit`")?;
     if !is_git_repo(&cwd) {
         bail!(
@@ -195,7 +222,7 @@ fn commit_bundles(ctx: &CliContext, force_tunables: bool) -> Result<()> {
     let queries_rel = rel_to(&ctx.layout.queries_dir, &cwd);
     pathspecs.push(schemas_rel);
     pathspecs.push(queries_rel);
-    if force_tunables {
+    if refresh_tunables {
         if let Some(dir) = ctx
             .settings
             .prompt_overrides_dir

@@ -80,7 +80,9 @@ pub fn run_git_check(dir: &Path, args: &[&str]) -> bool {
 
 /// Run `git -C <dir> <args>` and return trimmed stdout. Used for
 /// reading single-value outputs like `remote get-url <name>` or
-/// `status --porcelain`.
+/// `status --porcelain`. On non-zero exit, trimmed stderr is folded
+/// into the error so operators see git's own diagnostic (auth failure,
+/// missing remote, etc.) rather than an opaque exit code.
 pub fn run_git_output(dir: &Path, args: &[&str]) -> Result<String> {
     let out = std::process::Command::new("git")
         .arg("-C")
@@ -89,7 +91,12 @@ pub fn run_git_output(dir: &Path, args: &[&str]) -> Result<String> {
         .output()
         .with_context(|| format!("spawn git {args:?} in {}", dir.display()))?;
     if !out.status.success() {
-        bail!("git {args:?} exited {} in {}", out.status, dir.display());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr_trimmed = stderr.trim();
+        if stderr_trimmed.is_empty() {
+            bail!("git {args:?} exited {} in {}", out.status, dir.display());
+        }
+        bail!("git {args:?} exited {} in {}: {stderr_trimmed}", out.status, dir.display(),);
     }
     Ok(String::from_utf8_lossy(&out.stdout)
         .trim()
@@ -467,6 +474,327 @@ pub fn checkout_or_create_branch(dir: &Path, branch: &str, base_ref: &str) -> Re
 pub fn current_branch(dir: &Path) -> Result<String> {
     run_git_output(dir, &["symbolic-ref", "--short", "HEAD"])
         .context("git symbolic-ref --short HEAD (operator repo has detached HEAD?)")
+}
+
+// ── Higher-level wrappers ─────────────────────────────────────────────
+//
+// The wrappers below encapsulate operations that previously appeared as
+// raw `Command::new("git")` calls scattered across `session/`, `cli/`,
+// and tests. Goal: every git invocation in the codebase goes through
+// `git.rs` so error context, env handling, and lock semantics are
+// consistent.
+
+/// `git rev-parse HEAD` in `dir`. Returns the 40-char SHA on
+/// success. Used as a "what sha am I about to record?" probe by
+/// Phase 0a archival, the optimizer post-commit observer, and the
+/// analyzer's seed for prompt context.
+pub fn rev_parse_head(dir: &Path) -> Result<String> {
+    let sha = run_git_output(dir, &["rev-parse", "HEAD"])?;
+    if sha.len() != 40
+        || !sha
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    {
+        bail!("git rev-parse HEAD returned non-40-char-hex value: {sha:?}");
+    }
+    Ok(sha)
+}
+
+/// Best-effort variant of [`rev_parse_head`]. Returns `None` when
+/// anything goes wrong (not a repo, no commits, IO failure). Used by
+/// callers that treat the sha as decorative rather than load-bearing.
+pub fn rev_parse_head_optional(dir: &Path) -> Option<String> {
+    rev_parse_head(dir).ok()
+}
+
+/// `git rev-parse HEAD^` — the parent of HEAD. Returns the 40-char
+/// SHA on success. Used by the coordinator-provenance sidecar to
+/// record the base commit the agent's change was applied on top of.
+/// Fails on root commits (no parent) and on detached HEADs at the
+/// initial commit — both indicate the per-target clone is in an
+/// unexpected state, so a hard error here is the right surface.
+pub fn rev_parse_head_parent(dir: &Path) -> Result<String> {
+    let sha = run_git_output(dir, &["rev-parse", "HEAD^"])?;
+    if sha.len() != 40
+        || !sha
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    {
+        bail!("git rev-parse HEAD^ returned non-40-char-hex value: {sha:?}");
+    }
+    Ok(sha)
+}
+
+/// `git status --porcelain` in `dir`, trimmed (empty string = clean
+/// tree). Suitable for the "is anything dirty?" check used by Phase
+/// 0a + the optimizer's commit gate. Not suitable for parsing the
+/// status-column bytes, since the leading whitespace that encodes
+/// staged/unstaged state is stripped — add a raw-output sibling
+/// helper here in `git.rs` if a caller ever needs that.
+pub fn status_porcelain(dir: &Path) -> Result<String> {
+    run_git_output(dir, &["status", "--porcelain"])
+        .with_context(|| format!("git status --porcelain in {}", dir.display()))
+}
+
+/// True iff the worktree has ANY uncommitted change (tracked or
+/// untracked). Returns `false` on error — defensive fallback. Used
+/// by Phase 0a to surface a `dirty: true` field in the binary
+/// manifest.
+pub fn is_worktree_dirty(dir: &Path) -> bool {
+    status_porcelain(dir)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// `git -C <dir> remote` — list configured remote names. Trimmed +
+/// empty-lines-dropped.
+pub fn list_remotes(dir: &Path) -> Result<Vec<String>> {
+    let raw = run_git_output(dir, &["remote"])
+        .with_context(|| format!("git remote in {}", dir.display()))?;
+    Ok(raw
+        .lines()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+/// `git -C <dir> remote get-url <name>` — return the configured URL
+/// for `name`. Bails when the remote doesn't exist.
+pub fn get_remote_url(dir: &Path, name: &str) -> Result<String> {
+    run_git_output(dir, &["remote", "get-url", name])
+        .with_context(|| format!("git -C {} remote get-url {name}", dir.display()))
+}
+
+/// Add OR update a remote's URL in `dir`. When `name` is already
+/// configured, runs `git remote set-url`; otherwise `git remote add`.
+/// Used by per-target clone setup (mirrors the base's remote map
+/// into the new clone, idempotently).
+pub fn add_or_set_remote(dir: &Path, name: &str, url: &str) -> Result<()> {
+    let existing = list_remotes(dir)?;
+    let subcmd = if existing
+        .iter()
+        .any(|n| n == name)
+    {
+        "set-url"
+    } else {
+        "add"
+    };
+    run_git(dir, &["remote", subcmd, name, url])
+        .with_context(|| format!("git remote {subcmd} {name} {url} in {}", dir.display()))
+}
+
+/// `git clone --reference <base> --branch <branch> --local <base>
+/// <dest>` — used by the optimizer to fan out per-target clones
+/// that share the base's object store via `--reference --local`.
+/// `branch` is checked out at the new clone's HEAD.
+pub fn clone_with_reference(base: &Path, branch: &str, dest: &Path) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .arg("clone")
+        .arg("--reference")
+        .arg(base)
+        .arg("--branch")
+        .arg(branch)
+        .arg("--local")
+        .arg(base)
+        .arg(dest)
+        .status()
+        .with_context(|| format!("git clone {} -> {}", base.display(), dest.display()))?;
+    if !status.success() {
+        bail!(
+            "git clone --reference {} --branch {branch} --local {} {} exited {status}",
+            base.display(),
+            base.display(),
+            dest.display(),
+        );
+    }
+    Ok(())
+}
+
+/// `git clone --bare --branch <branch> <source_url> <dest>` — used
+/// by `sbagent init --push --seed-from` to materialize a bare-clone
+/// "staging area" before pushing to the operator's fork.
+pub fn clone_bare_branch(source_url: &str, branch: &str, dest: &Path) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .arg("clone")
+        .arg("--bare")
+        .arg("--branch")
+        .arg(branch)
+        .arg(source_url)
+        .arg(dest)
+        .status()
+        .with_context(|| format!("spawn git clone --bare --branch {branch} {source_url}"))?;
+    if !status.success() {
+        bail!(
+            "git clone --bare --branch {branch} {source_url} exited {status}; verify the URL is \
+             reachable and carries {branch}",
+        );
+    }
+    Ok(())
+}
+
+/// `git switch -c <branch>` — create + check out `branch` from
+/// HEAD. Used by per-target clones to land on an
+/// `agent/<session>/<target>` branch.
+pub fn switch_create_branch(dir: &Path, branch: &str) -> Result<()> {
+    run_git(dir, &["switch", "-c", branch])
+        .with_context(|| format!("git switch -c {branch} in {}", dir.display()))
+}
+
+/// Best-effort `git worktree remove --force <path>` against `repo`.
+/// Returns the underlying status; callers that don't care about the
+/// outcome can discard it. Used by the optimizer's clone teardown
+/// to clear stale linked-worktree registry entries.
+pub fn worktree_remove_force_quiet(repo: &Path, path: &Path) {
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Best-effort `git worktree prune` in `repo`. Pairs with
+/// [`worktree_remove_force_quiet`] in the optimizer cleanup path.
+pub fn worktree_prune_quiet(repo: &Path) {
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("prune")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// `git add -A` with caller-supplied env. Distinct from
+/// [`stage_and_commit`] (which takes explicit pathspecs and never
+/// stages with `-A`): this is the "stage everything the optimizer
+/// agent changed" sweep used by Phase 2's coordinator-side commit.
+/// Reserved for callers that own the worktree's mutation contract;
+/// avoid in generic code.
+pub fn add_all_with_env(dir: &Path, env: &[(String, String)]) -> Result<()> {
+    run_git_envs(dir, &["add", "-A"], env)
+        .with_context(|| format!("git add -A in {}", dir.display()))
+}
+
+/// `git commit -m <msg>` with caller-supplied env (typically the
+/// optimizer's identity overrides). Returns an error when the
+/// commit fails — the caller is responsible for first verifying
+/// that something IS staged.
+pub fn commit_with_message_and_env(
+    dir: &Path,
+    message: &str,
+    env: &[(String, String)],
+) -> Result<()> {
+    run_git_envs(dir, &["commit", "-m", message], env)
+        .with_context(|| format!("git commit in {}", dir.display()))
+}
+
+/// `git diff --cached --quiet` — exit 0 means "nothing staged", exit
+/// 1 means "at least one staged change", any other code (typically
+/// 128) means git itself failed (not a repo, broken index, ...).
+/// Captures stderr so a real git failure surfaces in the error rather
+/// than being misread as "has staged changes."
+pub fn has_staged_changes(dir: &Path) -> Result<bool> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("diff")
+        .arg("--cached")
+        .arg("--quiet")
+        .output()
+        .with_context(|| format!("git diff --cached --quiet in {}", dir.display()))?;
+    match out.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr_trimmed = stderr.trim();
+            if stderr_trimmed.is_empty() {
+                bail!("git diff --cached --quiet exited {} in {}", out.status, dir.display(),);
+            }
+            bail!(
+                "git diff --cached --quiet exited {} in {}: {stderr_trimmed}",
+                out.status,
+                dir.display(),
+            )
+        }
+    }
+}
+
+/// `git ls-remote <remote>` with prompts disabled, against `dir`.
+/// Used by the publish-wiring preflight to validate that the
+/// configured remote responds without falling back to interactive
+/// auth (which would hang in a non-TTY operator session).
+pub fn ls_remote_no_prompt(dir: &Path, remote: &str) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("ls-remote")
+        .arg(remote)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+        .status()
+        .with_context(|| format!("git -C {} ls-remote {remote}", dir.display()))?;
+    if !status.success() {
+        bail!("git -C {} ls-remote {remote} exited {status}", dir.display());
+    }
+    Ok(())
+}
+
+/// Push a refspec to an explicit destination URL with the
+/// PAT-via-env auth header overlaid. Used by `init --push` where
+/// the destination is a one-shot URL (not a configured remote).
+/// `base_env` is overlaid the same way [`push_with_pat`] does.
+pub fn push_url_refspec(
+    bare_repo: &Path,
+    dest_url: &str,
+    refspec: &str,
+    env: &[(String, String)],
+) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(bare_repo)
+        .arg("push")
+        .arg(dest_url)
+        .arg(refspec)
+        .envs(
+            env.iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
+        .status()
+        .with_context(|| format!("spawn git push {dest_url} {refspec}"))?;
+    if !status.success() {
+        bail!("git push {dest_url} {refspec} exited {status}");
+    }
+    Ok(())
+}
+
+// ── Test-helper wrappers ─────────────────────────────────────────────
+//
+// These are useful in `#[cfg(test)]` setup code that needs to bootstrap
+// throwaway git repos. They live in the production module (not
+// `#[cfg(test)]`) so integration tests can call them too.
+
+/// `git init -q -b <initial_branch>` in `dir`. Returns an error if
+/// the repo can't be initialized. Used by test fixtures to bootstrap
+/// throwaway repos.
+pub fn init_repo(dir: &Path, initial_branch: &str) -> Result<()> {
+    run_git(dir, &["init", "-q", "-b", initial_branch])
+        .with_context(|| format!("git init -b {initial_branch} in {}", dir.display()))
+}
+
+/// `git config <key> <value>` in `dir` — local config only, never
+/// touches global or system config. Used by test fixtures to set
+/// `user.email` / `user.name` / `commit.gpgsign=false` so commits
+/// don't depend on the host's signing setup.
+pub fn config_set_local(dir: &Path, key: &str, value: &str) -> Result<()> {
+    run_git(dir, &["config", key, value])
+        .with_context(|| format!("git config {key} {value} in {}", dir.display()))
 }
 
 #[cfg(test)]

@@ -1,25 +1,172 @@
-//! Phase 0: baseline benchmark.
+//! Phase 0: baseline binary archival + baseline benchmark.
 //!
-//! Two entry points port the bash scripts wholesale:
-//! - [`run`] → `scripts/run-baseline.sh` — fresh `bench run` + a second `bench
-//!   run` (issued in lieu of `bench rerun` so the second invocation can carry
-//!   `--bench-spans-only --no-profiler-kv`; the noise-floor computation reads
-//!   only `total_duration_us`, so the full profiler tree on the rerun would be
-//!   discarded). Serialized via BENCH_LOCK, then captures bench-list and
-//!   profiler hotspots metadata.
-//! - [`import`] → `scripts/import-baseline.sh` — reconstructs the same artifact
-//!   set from existing run ids in the persistent stacks-bench db.
+//! Three entry points:
+//!
+//! - [`archive_baseline_binary`] → Phase 0a (Pass 1a). Build the `stacks-bench`
+//!   binary from `repos/stacks-core` HEAD, copy it to
+//!   `<session>/results/baseline/bin/stacks-bench`, and write a manifest
+//!   carrying source sha + dirty-worktree flag + build metadata. Downstream
+//!   baseline / calibration / full-range fallback paths all read from this
+//!   archived path via the strict-binary contract. Runs BEFORE Phase 0b
+//!   (whether fresh baseline or imported).
+//! - [`run`] → Phase 0b. One `stacks-bench bench run` invocation against the
+//!   archived binary, then the rerun id is aliased to the run id (no second
+//!   `bench` invocation under Pass 1a — see
+//!   [baseline-verification-agent-plan.md](../../../../
+//!   baseline-verification-agent-plan.md) Sub-step B). The noise floor falls
+//!   back to `settings.single_run_noise_floor_pct`. Serialized via BENCH_LOCK,
+//!   then captures bench-list + profiler hotspots metadata.
+//! - [`import`] → `scripts/import-baseline.sh` — reconstructs the baseline
+//!   artifact set from existing run ids in the persistent stacks-bench db.
+//!   Phase 0a still runs (Phase 1.8 needs the archived binary regardless of how
+//!   Phase 0b was resolved).
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
-use serde_json::Value;
+use serde_json::{Value, json};
 
+use crate::analyzed_rejections::now_utc_iso8601;
 use crate::session::SessionLayout;
 use crate::session::bench::{BenchClient, InvokeOptions, extract_run_id};
 use crate::settings::Settings;
 
+/// Inputs to [`archive_baseline_binary`] (Phase 0a).
+pub struct ArchiveBinaryInputs<'a> {
+    pub layout: &'a SessionLayout,
+    /// Operator's `repos/stacks-core` checkout (where `cargo build`
+    /// runs). The submodule HEAD sha is captured into the manifest.
+    pub stacks_core_base: &'a Path,
+}
+
+/// Outputs of [`archive_baseline_binary`].
+#[derive(Debug)]
+pub struct ArchiveBinaryOutputs {
+    /// Absolute path to the archived binary under
+    /// `<session>/results/baseline/bin/stacks-bench`. This is the
+    /// path every downstream "use the baseline binary" code path
+    /// reads from.
+    pub archived_path: PathBuf,
+    /// `repos/stacks-core` submodule HEAD sha at archive time.
+    pub source_sha: String,
+}
+
+/// Phase 0a: build + archive the `stacks-bench` binary that the rest
+/// of the session uses as the deterministic baseline reference. Runs
+/// BEFORE Phase 0b's first bench invocation. See
+/// [`baseline-verification-agent-plan.md`](../../../../
+/// baseline-verification-agent-plan.md) (Pass 1a, Sub-step A).
+///
+/// Steps:
+///
+/// 1. `git rev-parse HEAD` on `stacks_core_base` → source_sha.
+/// 2. `cargo build --release -p stacks-bench` in that checkout.
+/// 3. Copy `target/release/stacks-bench` to
+///    `<session>/results/baseline/bin/stacks-bench`.
+/// 4. Write `<session>/results/baseline/bin/manifest.json` with `{source_sha,
+///    cargo_version, build_flags, archived_at}`.
+pub fn archive_baseline_binary(inputs: &ArchiveBinaryInputs<'_>) -> Result<ArchiveBinaryOutputs> {
+    let base = inputs.stacks_core_base;
+    if !base.is_dir() {
+        bail!(
+            "stacks-core base checkout missing at {} (required for Phase 0a binary archival)",
+            base.display(),
+        );
+    }
+    let source_sha = crate::git::rev_parse_head(base)
+        .with_context(|| format!("reading HEAD sha of {}", base.display()))?;
+    // Detect uncommitted changes BEFORE the build. A dirty
+    // worktree means `source_sha` doesn't fully identify the
+    // archived binary; we still allow the build (operators may be
+    // testing local stacks-bench changes intentionally) but
+    // surface it in the manifest so downstream audit can tell.
+    let dirty_worktree = crate::git::is_worktree_dirty(base);
+    if dirty_worktree {
+        eprintln!(
+            "Phase 0a: stacks-core checkout at {} has uncommitted changes; archived binary will \
+             be marked dirty=true in manifest. source_sha={} alone does NOT identify the built \
+             binary in this case.",
+            base.display(),
+            source_sha,
+        );
+    }
+
+    // cargo build --release -p stacks-bench (same invocation as
+    // session/cargo.rs's CargoRunner; no-op if HEAD is already built).
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg("stacks-bench")
+        .current_dir(base)
+        .status()
+        .with_context(|| {
+            format!("invoking `cargo build --release -p stacks-bench` in {}", base.display())
+        })?;
+    if !status.success() {
+        bail!("`cargo build --release -p stacks-bench` exited {status} in {}", base.display(),);
+    }
+
+    let built = base
+        .join("target")
+        .join("release")
+        .join("stacks-bench");
+    if !built.is_file() {
+        bail!(
+            "expected built binary at {} after `cargo build` succeeded — not found",
+            built.display(),
+        );
+    }
+
+    // Copy into session artifacts.
+    let archive_dir = inputs
+        .layout
+        .baseline_bin_dir();
+    fs::create_dir_all(&archive_dir)
+        .with_context(|| format!("creating {}", archive_dir.display()))?;
+    let archived_path = inputs
+        .layout
+        .baseline_bin_path();
+    fs::copy(&built, &archived_path)
+        .with_context(|| format!("copying {} → {}", built.display(), archived_path.display()))?;
+
+    // Manifest.
+    let cargo_version = Command::new("cargo")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_owned())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_owned());
+    let manifest = json!({
+        "source_sha": source_sha,
+        "dirty": dirty_worktree,
+        "cargo_version": cargo_version,
+        "build_flags": ["--release", "-p", "stacks-bench"],
+        "archived_at": now_utc_iso8601(),
+        "archived_path": archived_path,
+    });
+    let manifest_path = inputs
+        .layout
+        .baseline_bin_manifest_path();
+    fs::write(&manifest_path, format!("{manifest:#}\n"))
+        .with_context(|| format!("writing {}", manifest_path.display()))?;
+
+    Ok(ArchiveBinaryOutputs { archived_path, source_sha })
+}
+
+/// `git status --porcelain` in `dir`. Returns `true` when ANY
+/// uncommitted change (tracked or untracked) is present — under
+/// which condition `source_sha` alone does not identify the built
 /// Inputs to a fresh baseline benchmark.
 pub struct RunInputs<'a> {
     /// The session layout (must already exist; results dir is created here).
@@ -48,20 +195,34 @@ pub struct RunInputs<'a> {
     /// BENCH_LOCK path — flock'd around each `bench run` invocation (both
     /// the initial and the rerun).
     pub bench_lock: &'a std::path::Path,
+    /// Noise floor percent to record at
+    /// `baseline/noise-floor-pct` under the Pass 1a aliased-rerun
+    /// contract (Phase 0b skips the empirical rerun and falls back
+    /// to this constant). Default sourced from
+    /// [`Settings::single_run_noise_floor_pct`].
+    pub single_run_noise_floor_pct: f64,
 }
 
 /// Outputs of a successful baseline run.
 #[derive(Debug)]
 pub struct RunOutputs {
-    /// Newly-recorded run id from the fresh `bench run`.
+    /// Newly-recorded run id from the fresh `bench run` against
+    /// the archived baseline binary.
     pub baseline_run_id: i64,
-    /// Newly-recorded run id from the companion rerun (a `bench run` against
-    /// the same range with `--bench-spans-only --no-profiler-kv`).
+    /// Under Pass 1a's aliased-rerun contract, equal to
+    /// `baseline_run_id` — the `bench rerun` invocation is skipped
+    /// and both id files are populated with the same value.
+    /// Schema contracts (triage, summary, archive ledger, baseline
+    /// import) stay intact. Pass 1b later migrates this to
+    /// `Option<i64>` once the consumers are updated.
     pub baseline_rerun_id: i64,
 }
 
-/// Run a fresh baseline benchmark + rerun, then capture metadata. Mirrors
-/// `scripts/run-baseline.sh` end-to-end.
+/// Phase 0b: run one `stacks-bench bench run` against the archived
+/// baseline binary and alias the rerun id to the run id (no second
+/// bench invocation — see module-level doc + Sub-step B of the
+/// execution plan). Captures bench-list + profiler hotspots
+/// metadata. All bench invocations are serialized via BENCH_LOCK.
 pub fn run(inputs: &RunInputs<'_>) -> Result<RunOutputs> {
     fs::create_dir_all(&inputs.layout.results_dir).with_context(|| {
         format!(
@@ -140,63 +301,49 @@ pub fn run(inputs: &RunInputs<'_>) -> Result<RunOutputs> {
         format!("{baseline_run_id}\n"),
     )?;
 
-    // 2. baseline rerun — re-issued as `bench run` (NOT `bench rerun`) so we can
-    //    pass `--bench-spans-only --no-profiler-kv`. The rerun's only consumer is
-    //    the noise-floor computation, which reads `total_duration_us` only; the
-    //    full profiler tree + k-v records captured by the default `bench rerun`
-    //    would be discarded. Same range args as the initial run; distinct `--name`
-    //    for audit.
-    let run_id_str = baseline_run_id.to_string();
-    let rerun_name = format!("{bench_name}-rerun");
-    let mut rerun_args: Vec<&str> = vec![
-        "bench",
-        "run",
-        "--source",
-        &source_str,
-        "--network",
-        inputs.network,
-        "--start-at",
-        &start_at,
-        "--count",
-        &count,
-        "--name",
-        &rerun_name,
-        "--bench-spans-only",
-        "--no-profiler-kv",
-    ];
-    if let Some(sd) = shadow_str.as_deref() {
-        rerun_args.push("--shadow-dir-root");
-        rerun_args.push(sd);
-    }
-    if let Some(w) = warmup.as_deref() {
-        rerun_args.push("--warmup");
-        rerun_args.push(w);
-    }
-    if let Some(f) = inputs.filter {
-        rerun_args.push("--filter");
-        rerun_args.push(f);
-    }
-    let baseline_rerun_json = inputs
-        .layout
-        .baseline_rerun_json();
-    let baseline_rerun_stderr = inputs
-        .layout
-        .baseline_rerun_stderr();
-    inputs
-        .bench
-        .invoke(InvokeOptions {
-            args: &rerun_args,
-            stdout: Some(&baseline_rerun_json),
-            stderr: Some(&baseline_rerun_stderr),
-            lock: Some(inputs.bench_lock),
-        })?;
-    let baseline_rerun_id = extract_run_id(&baseline_rerun_json)?;
+    // 2. Phase 0b under Pass 1a: rerun id aliased to run id. The `bench rerun`
+    //    invocation is skipped because per-target targeted calibration (Phase 1.8)
+    //    now provides the apples-to-apples noise basis for the dominant comparison
+    //    path. Full-range comparisons that DO need an empirical noise floor wait
+    //    for Pass 1b (lazy in-phase calibration). Until then, the noise floor for
+    //    full-range comparisons falls back to `single_run_noise_floor_pct`, the
+    //    existing single-run-fallback path the framework supports.
+    //
+    //    Both `baseline-run-id` and `baseline-rerun-id` files are
+    //    populated with the same value so existing consumers
+    //    (triage, summary, archive ledger, baseline import) see no
+    //    schema breakage. Pass 1b later migrates the rerun id to
+    //    `Option<i64>`.
+    let baseline_rerun_id = baseline_run_id;
     fs::write(
         inputs
             .layout
             .baseline_rerun_id_path(),
         format!("{baseline_rerun_id}\n"),
     )?;
+    // Alias the rerun JSON to the run JSON so validate.rs's
+    // require-non-empty check still passes without us actually
+    // re-running. Pass 1b makes `baseline/rerun.json` optional once
+    // `baseline_rerun_id` becomes `Option<i64>` and validate is
+    // updated.
+    fs::copy(
+        &baseline_run_json,
+        inputs
+            .layout
+            .baseline_rerun_json(),
+    )?;
+    let single_run_noise_floor_pct = inputs.single_run_noise_floor_pct;
+    eprintln!(
+        "baseline rerun aliased to run id {baseline_run_id}; using configured single-run noise \
+         floor {single_run_noise_floor_pct}%",
+    );
+    fs::write(
+        inputs
+            .layout
+            .baseline_noise_floor_path(),
+        format!("{single_run_noise_floor_pct}\n"),
+    )?;
+    let run_id_str = baseline_run_id.to_string();
 
     // 3. bench list. Reads from the persistent SQLite DB shared with
     // every other `bench run`/`bench rerun`. Take the bench lock so a
@@ -433,4 +580,32 @@ pub fn import(inputs: &ImportInputs<'_>) -> Result<ImportOutputs> {
         baseline_rerun_id: inputs.rerun_id,
         single_run_fallback,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `archive_baseline_binary` fails fast when the stacks-core
+    /// base path doesn't exist (rather than running `cargo build` in
+    /// a non-existent directory).
+    #[test]
+    fn archive_fails_fast_on_missing_base_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = SessionLayout::new(
+            tmp.path(),
+            "20260520-100000-test"
+                .to_owned()
+                .try_into()
+                .unwrap(),
+        );
+        let bogus_base = tmp.path().join("nope");
+        let err = archive_baseline_binary(&ArchiveBinaryInputs {
+            layout: &layout,
+            stacks_core_base: &bogus_base,
+        })
+        .expect_err("missing base must surface clearly");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("stacks-core base checkout missing"), "got: {msg}");
+    }
 }

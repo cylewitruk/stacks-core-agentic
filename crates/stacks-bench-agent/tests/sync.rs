@@ -1,9 +1,10 @@
 //! End-to-end coverage for `sbagent sync` — refreshes the operator's
 //! on-disk bundle from the binary's embedded defaults.
 //!
-//! Asymmetric write semantics:
-//! - Schemas + queries: always overwritten (no flag).
-//! - Prompts: only overwritten with `--force-prompts`.
+//! Default-flipped 2026-05-21: sync now refreshes ALL bundles
+//! (schemas, queries, prompts, context) unconditionally; pass
+//! `--keep-tunables` to preserve operator-edited prompts / context
+//! while still refreshing schemas + queries.
 //!
 //! `--commit` produces one bot-authored commit covering whatever
 //! changed; `--push` (implies `--commit`) ships it via PAT-via-env.
@@ -29,10 +30,11 @@ fn ctx_for(target: &std::path::Path) -> CliContext {
     CliContext { settings, layout }
 }
 
-/// `sync` (no flag) rewrites schemas but leaves operator-edited
-/// prompts intact.
+/// Pass `--keep-tunables` to preserve operator-edited prompts /
+/// context. Schemas + queries still refresh unconditionally. This is
+/// the opt-out path now that the default flipped to refresh-tunables.
 #[tokio::test]
-async fn sync_overwrites_schemas_preserves_prompt_edits() {
+async fn sync_keep_tunables_preserves_prompt_edits() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().to_path_buf();
     let prompts = target
@@ -53,14 +55,15 @@ async fn sync_overwrites_schemas_preserves_prompt_edits() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: true,
+            force_tunables_deprecated: false,
             commit: false,
             push: false,
         },
         &ctx,
     )
     .await
-    .expect("sync");
+    .expect("sync --keep-tunables");
 
     // Schema overwritten.
     let after_schema = std::fs::read_to_string(&stale_schema).unwrap();
@@ -68,19 +71,20 @@ async fn sync_overwrites_schemas_preserves_prompt_edits() {
         after_schema.contains("\"$defs\""),
         "schema must be refreshed from bundle; got: {after_schema}",
     );
-    // Prompt left alone.
+    // Prompt left alone (opt-out semantics).
     assert_eq!(
         std::fs::read_to_string(&tuned_prompt).unwrap(),
         "OPERATOR TUNE\n",
-        "operator tune must survive `sbagent sync` without --force-prompts",
+        "operator tune must survive `sbagent sync --keep-tunables`",
     );
 }
 
-/// `--force-prompts` is the explicit acknowledgement that prompts
-/// should be overwritten too. The schemas-overwrite behavior is
-/// unchanged.
+/// Default `sync` (no flags) now refreshes prompts + context too.
+/// Pre-flip-of-defaults this required `--force-tunables`; the flip
+/// makes the bundled prompts the contract surface, with operator
+/// edits preserved only via the explicit `--keep-tunables` opt-out.
 #[tokio::test]
-async fn sync_force_prompts_overwrites_prompts_too() {
+async fn sync_default_overwrites_prompts() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().to_path_buf();
     let prompts = target
@@ -93,24 +97,27 @@ async fn sync_force_prompts_overwrites_prompts_too() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_tunables: true,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: false,
             push: false,
         },
         &ctx,
     )
     .await
-    .expect("sync --force-prompts");
+    .expect("sync");
 
     let after = std::fs::read_to_string(&tuned).unwrap();
-    assert!(!after.contains("OPERATOR TUNE"), "tune must be clobbered with --force-prompts");
+    assert!(!after.contains("OPERATOR TUNE"), "tune must be clobbered by default sync");
     assert!(after.contains("# Goal"), "bundle content must be restored");
 }
 
-/// `sync --force-prompts` without `prompt_overrides_dir` set in config
-/// surfaces a clear error rather than panicking.
+/// Default `sync` requires `prompt_overrides_dir` in config (since
+/// it now refreshes prompts unconditionally). Surfaces a clear error
+/// rather than panicking. Pre-flip this requirement only kicked in
+/// with `--force-tunables`.
 #[tokio::test]
-async fn sync_force_prompts_requires_prompt_overrides_dir() {
+async fn sync_default_requires_prompt_overrides_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().to_path_buf();
     // Settings WITHOUT prompt_overrides_dir but with schemas_dir set so
@@ -128,7 +135,8 @@ async fn sync_force_prompts_requires_prompt_overrides_dir() {
 
     let err = sync::run(
         SyncArgs {
-            force_tunables: true,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: false,
             push: false,
         },
@@ -155,7 +163,8 @@ async fn sync_bootstraps_empty_operator_dir() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: false,
             push: false,
         },
@@ -204,7 +213,8 @@ async fn sync_overwrites_stale_queries_unconditionally() {
     let ctx = ctx_for(&target);
     sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: false,
             push: false,
         },
@@ -244,13 +254,7 @@ fn stage_operator_git_repo(target: &Path) -> std::path::PathBuf {
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .status()
-        .unwrap_or_else(|e| panic!("spawn git {args:?}: {e}"));
-    assert!(status.success(), "git {args:?} failed: {status}");
+    stacks_bench_agent::git::run_git(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e:#}"));
 }
 
 /// `sync --commit` on a fresh-from-init repo writes one
@@ -280,7 +284,8 @@ async fn sync_commit_produces_one_bot_authored_commit() {
 
     let result = sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: true,
             push: false,
         },
@@ -291,13 +296,9 @@ async fn sync_commit_produces_one_bot_authored_commit() {
     result.expect("sync --commit");
 
     // One commit beyond the seed.
-    let log = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["log", "--pretty=%an <%ae>%n%s%n---"])
-        .output()
-        .unwrap();
-    let log_s = String::from_utf8_lossy(&log.stdout);
+    let log_s =
+        stacks_bench_agent::git::run_git_output(&target, &["log", "--pretty=%an <%ae>%n%s%n---"])
+            .unwrap();
     assert!(
         log_s.contains("test-bot <test-bot@example>"),
         "commit must be authored as the bot; got:\n{log_s}",
@@ -308,13 +309,11 @@ async fn sync_commit_produces_one_bot_authored_commit() {
     );
 
     // HEAD must include schemas + queries paths.
-    let names = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["show", "--name-only", "--pretty=format:", "HEAD"])
-        .output()
-        .unwrap();
-    let names_s = String::from_utf8_lossy(&names.stdout);
+    let names_s = stacks_bench_agent::git::run_git_output(
+        &target,
+        &["show", "--name-only", "--pretty=format:", "HEAD"],
+    )
+    .unwrap();
     assert!(
         names_s.contains(".sbagent/schemas/candidates.schema.json"),
         "HEAD must include the candidates schema; got:\n{names_s}",
@@ -351,7 +350,8 @@ async fn sync_commit_is_noop_on_clean_tree() {
     // First run lands a commit.
     sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: true,
             push: false,
         },
@@ -364,7 +364,8 @@ async fn sync_commit_is_noop_on_clean_tree() {
     // Second run on the clean tree leaves HEAD unchanged.
     sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: true,
             push: false,
         },
@@ -413,7 +414,8 @@ async fn sync_push_rejects_ssh_origin() {
 
     let err = sync::run(
         SyncArgs {
-            force_tunables: false,
+            keep_tunables: false,
+            force_tunables_deprecated: false,
             commit: false,
             push: true,
         },
@@ -460,14 +462,6 @@ async fn sync_commit_then_separate_push_workflow() {
 }
 
 fn git_stdout(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?} failed: {}", out.status);
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .to_owned()
+    stacks_bench_agent::git::run_git_output(dir, args)
+        .unwrap_or_else(|e| panic!("git {args:?}: {e:#}"))
 }

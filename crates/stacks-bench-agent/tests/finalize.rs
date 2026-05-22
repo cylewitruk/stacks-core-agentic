@@ -173,3 +173,153 @@ fn finalize_normal_pr_regression_is_rejected() {
         normal_pr.reason
     );
 }
+
+/// Pass 1c invariant: when `optimize/<target>/coordinator-provenance.json`
+/// exists, finalize must propagate its `base_sha` / `head_sha` into the
+/// corresponding [`Experiment`] row, populating the audit-trail surface
+/// Phase 5 PR-writer + downstream review depend on.
+#[test]
+fn finalize_propagates_coordinator_provenance_into_experiment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    // Drop a provenance sidecar for the lone normal_pr target.
+    let provenance = serde_json::json!({
+        "schema_version": 1,
+        "session_id": id.as_str(),
+        "target_id": "marf-read-cache-rollback-wrapper",
+        "delivery_mode": "normal_pr",
+        "base_sha": "0ad33704c259da4102b5f195617760003ac89c18",
+        "head_sha": "f994e6ef03002fb7b1acdc1b5018da40e73b105b",
+        "commit_message": "perf: optimize marf-read-cache-rollback-wrapper",
+    });
+    std::fs::write(
+        layout
+            .results_dir
+            .join("optimize")
+            .join("marf-read-cache-rollback-wrapper")
+            .join("coordinator-provenance.json"),
+        serde_json::to_string_pretty(&provenance).unwrap(),
+    )
+    .unwrap();
+
+    let mut canned = HashMap::new();
+    canned.insert(100i64, 1_000_000i64);
+    canned.insert(101, 1_000_000);
+    canned.insert(500, 940_000);
+    canned.insert(501, 950_000);
+    let bench = FakeBench(canned);
+
+    let summary = finalize(&FinalizeInputs { layout: &layout, bench: &bench }).unwrap();
+    let normal_pr = summary
+        .experiments
+        .iter()
+        .find(|e| e.target_id == "marf-read-cache-rollback-wrapper")
+        .unwrap();
+    assert_eq!(
+        normal_pr.base_sha.as_deref(),
+        Some("0ad33704c259da4102b5f195617760003ac89c18"),
+        "base_sha must flow from sidecar into Experiment",
+    );
+    assert_eq!(
+        normal_pr.head_sha.as_deref(),
+        Some("f994e6ef03002fb7b1acdc1b5018da40e73b105b"),
+        "head_sha must flow from sidecar into Experiment",
+    );
+}
+
+/// Targets without a `coordinator-provenance.json` (aborted experiments,
+/// consensus_issue rows, sessions that predate the sidecar contract) must
+/// land in finalize with both SHA fields absent — finalize must not
+/// invent SHAs and must not error.
+#[test]
+fn finalize_leaves_sha_fields_none_when_provenance_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    // No provenance sidecar staged.
+    let mut canned = HashMap::new();
+    canned.insert(100i64, 1_000_000i64);
+    canned.insert(101, 1_000_000);
+    canned.insert(500, 940_000);
+    canned.insert(501, 950_000);
+    let bench = FakeBench(canned);
+
+    let summary = finalize(&FinalizeInputs { layout: &layout, bench: &bench }).unwrap();
+    for exp in &summary.experiments {
+        assert_eq!(exp.base_sha, None, "{}", exp.target_id);
+        assert_eq!(exp.head_sha, None, "{}", exp.target_id);
+    }
+}
+
+/// Pass 1a invariant: when every normal_pr target has a per-target
+/// `verify/<target>/baseline-run-ids.json`, finalize must NOT consult the
+/// session-level `baseline_run_id` / `baseline_rerun_id` against the DB.
+/// Operators can wipe the session-level baseline run row without breaking
+/// finalize, as long as per-target denominators cover the whole target set.
+/// Regression test for the failure surfaced 2026-05-21 where the eager
+/// session-level lookup blocked finalize even though no target consumed it.
+#[test]
+fn finalize_skips_session_baseline_when_all_targets_have_per_target_ids() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    // Stage a per-target baseline file for the lone normal_pr target.
+    // The IDs (200, 201) will be looked up against the FakeBench; the
+    // session-level baseline run_ids (100, 101 from the fixture) are
+    // INTENTIONALLY absent from the canned table to prove the eager
+    // session-level lookup isn't happening.
+    let verify_dir = layout
+        .results_dir
+        .join("verify")
+        .join("marf-read-cache-rollback-wrapper");
+    std::fs::create_dir_all(&verify_dir).unwrap();
+    std::fs::write(
+        verify_dir.join("baseline-run-ids.json"),
+        r#"{"txid_run_ids":[200,201],"block_run_ids":[]}"#,
+    )
+    .unwrap();
+
+    let mut canned = HashMap::new();
+    // No 100 / 101 — would have errored under the eager-lookup behavior.
+    canned.insert(200i64, 1_000_000i64);
+    canned.insert(201, 1_000_000);
+    canned.insert(500, 940_000);
+    canned.insert(501, 950_000);
+    let bench = FakeBench(canned);
+
+    let summary = finalize(&FinalizeInputs { layout: &layout, bench: &bench })
+        .expect("finalize must succeed when per-target ids cover all normal_pr targets");
+
+    let normal_pr = summary
+        .experiments
+        .iter()
+        .find(|e| e.target_id == "marf-read-cache-rollback-wrapper")
+        .unwrap();
+    assert_eq!(
+        normal_pr.baseline_run_ids,
+        Some(vec![200, 201]),
+        "per-target ids must flow into the experiment record",
+    );
+    // ~5.5% improvement against the 1_000_000 per-target denominator.
+    assert!(
+        normal_pr
+            .improvement_pct
+            .is_some_and(|p| p > 5.0 && p < 6.0),
+        "improvement_pct must derive from the per-target denominator (200/201, not 100/101); got \
+         {:?}",
+        normal_pr.improvement_pct,
+    );
+}

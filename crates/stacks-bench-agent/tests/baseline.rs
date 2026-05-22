@@ -135,11 +135,14 @@ fn run_invokes_expected_bench_subcommands_in_order() {
         filter: None,
         shadow_dir_root: None,
         bench_lock: &bench_lock,
+        single_run_noise_floor_pct: 1.0,
     })
     .expect("baseline::run");
 
     let calls = bench.calls();
-    assert_eq!(calls.len(), 4, "expected 4 invocations: run, rerun, list, show");
+    // Pass 1a: Phase 0b runs `bench run` once; the rerun is
+    // aliased (no second invocation). Sequence is: run, list, show.
+    assert_eq!(calls.len(), 3, "expected 3 invocations: run, list, show (no rerun under Pass 1a)");
     assert_eq!(calls[0][..2], ["bench", "run"]);
     assert!(
         calls[0]
@@ -163,36 +166,10 @@ fn run_invokes_expected_bench_subcommands_in_order() {
             .any(|s| s == "--bench-spans-only"),
         "initial baseline run must NOT carry --bench-spans-only (triage reads the full tree)"
     );
-    // Rerun is now a `bench run` (not `bench rerun`) so we can pass the
-    // minimal-profiler flags. Same range args, `-rerun` name suffix.
-    assert_eq!(calls[1][..2], ["bench", "run"]);
+    assert_eq!(calls[1][..2], ["bench", "list"]);
+    assert_eq!(calls[2][..2], ["bench", "show"]);
     assert!(
-        calls[1]
-            .iter()
-            .any(|s| s == "--bench-spans-only"),
-        "rerun must carry --bench-spans-only; got: {:?}",
-        calls[1]
-    );
-    assert!(
-        calls[1]
-            .iter()
-            .any(|s| s == "--no-profiler-kv"),
-        "rerun must carry --no-profiler-kv; got: {:?}",
-        calls[1]
-    );
-    let rerun_name_idx = calls[1]
-        .iter()
-        .position(|s| s == "--name")
-        .expect("rerun has --name");
-    assert!(
-        calls[1][rerun_name_idx + 1].ends_with("-rerun"),
-        "rerun --name must end with `-rerun`; got: {}",
-        calls[1][rerun_name_idx + 1]
-    );
-    assert_eq!(calls[2][..2], ["bench", "list"]);
-    assert_eq!(calls[3][..2], ["bench", "show"]);
-    assert!(
-        calls[3]
+        calls[2]
             .iter()
             .any(|s| s == "--profiler-hot")
     );
@@ -206,6 +183,8 @@ fn run_invokes_expected_bench_subcommands_in_order() {
             .baseline_run_id
             .to_string()
     );
+    // Pass 1a: rerun id is aliased to run id (single value, both
+    // files populated for backward compat).
     assert_eq!(
         std::fs::read_to_string(layout.baseline_rerun_id_path())
             .unwrap()
@@ -214,11 +193,13 @@ fn run_invokes_expected_bench_subcommands_in_order() {
             .baseline_rerun_id
             .to_string()
     );
+    assert_eq!(outputs.baseline_run_id, outputs.baseline_rerun_id);
     assert!(
         layout
             .baseline_bench_run_json()
             .is_file()
     );
+    // Rerun JSON is aliased to bench-run JSON content (file copy).
     assert!(
         layout
             .baseline_rerun_json()
@@ -234,7 +215,14 @@ fn run_invokes_expected_bench_subcommands_in_order() {
             .baseline_profiler_hotspots_json()
             .is_file()
     );
-    assert_ne!(outputs.baseline_run_id, outputs.baseline_rerun_id);
+    // Noise floor file is written from the configured single-run
+    // value.
+    assert_eq!(
+        std::fs::read_to_string(layout.baseline_noise_floor_path())
+            .unwrap()
+            .trim(),
+        "1",
+    );
 }
 
 /// Phase 0 baseline must also pass `--shadow-dir-root` when the operator
@@ -265,28 +253,27 @@ fn baseline_run_emits_shadow_dir_root_when_set() {
         filter: None,
         shadow_dir_root: Some(&shadow_root),
         bench_lock: &bench_lock,
+        single_run_noise_floor_pct: 1.0,
     })
     .expect("baseline::run");
 
     let calls = bench.calls();
-    // Both the initial run AND the rerun are `bench run` invocations now;
-    // both need --shadow-dir-root when the operator configured it. list /
-    // show don't need it (they operate on the persistent DB only).
+    // Pass 1a: only the initial `bench run` is invoked (rerun is
+    // aliased, no second bench invocation). Verify that single call
+    // carries `--shadow-dir-root` when the operator configured it.
     let shadow_str = shadow_root
         .to_string_lossy()
         .into_owned();
-    for (i, label) in [(0usize, "initial run"), (1, "rerun")] {
-        let call = &calls[i];
-        let idx = call
-            .iter()
-            .position(|a| a == "--shadow-dir-root")
-            .unwrap_or_else(|| panic!("--shadow-dir-root missing in {label} call: {call:?}"));
-        assert_eq!(
-            call[idx + 1],
-            shadow_str,
-            "--shadow-dir-root value mismatch in {label} call: {call:?}",
-        );
-    }
+    let call = &calls[0];
+    let idx = call
+        .iter()
+        .position(|a| a == "--shadow-dir-root")
+        .unwrap_or_else(|| panic!("--shadow-dir-root missing in initial run: {call:?}"));
+    assert_eq!(
+        call[idx + 1],
+        shadow_str,
+        "--shadow-dir-root value mismatch in initial run: {call:?}",
+    );
 }
 
 #[test]

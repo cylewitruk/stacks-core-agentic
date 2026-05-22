@@ -8,8 +8,9 @@ use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
-use crate::session::SessionLayout;
 use crate::session::archive::{ArchiveInputs, archive, print_outputs};
+use crate::session::bench::StacksBenchCli;
+use crate::session::{SessionLayout, db_consistency};
 use crate::types::SessionId;
 
 /// Args for `sbagent session archive`.
@@ -26,6 +27,33 @@ pub struct ArchiveArgs {
 /// Dispatch `sbagent session archive`.
 pub async fn run(args: ArchiveArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
+
+    // DB ↔ artifact run-id consistency check: archive bakes the
+    // session's `summary.json` + per-target run-ids into the
+    // write-once `session/<id>` branch + the `sessions.jsonl` append.
+    // Dangling references here become permanent audit-trail poison;
+    // warn before the immutable write. Same helper the full-pipeline
+    // `session run` invokes at Phase 6. Skipped silently when
+    // `base` isn't set (archive will fail with a clearer error
+    // anyway).
+    if let Ok(base) = ctx.layout.require_base() {
+        let bench = StacksBenchCli {
+            release_bin: Some(
+                base.join("target")
+                    .join("release")
+                    .join("stacks-bench"),
+            ),
+            data_dir: ctx
+                .layout
+                .stacks_bench_data_dir
+                .clone(),
+            cargo_cwd: base.to_path_buf(),
+            strict: false,
+        };
+        db_consistency::warn_dangling_refs(&layout, &bench)
+            .context("pre-archive DB consistency check")?;
+    }
+
     let outputs = archive(&ArchiveInputs {
         layout: &layout,
         framework: &ctx.layout,

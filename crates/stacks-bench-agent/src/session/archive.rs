@@ -783,7 +783,13 @@ fn build_target_records(
             status,
             status_stage,
             reason_code,
-            head_sha: None, // populated by future publish-feedback integration
+            // Pulled from `summary.json` Experiment row, which finalize
+            // populates from `optimize/<target>/coordinator-provenance.json`
+            // (Pass 1c provenance sidecar). `None` for any target whose
+            // optimizer never committed (aborted before commit, or
+            // session predates the sidecar). `pr_url` / `issue_url`
+            // still wait on publish-feedback integration.
+            head_sha: exp.and_then(|e| e.head_sha.clone()),
             pr_url: None,
             issue_url: None,
             bench,
@@ -838,8 +844,18 @@ fn build_target_bench(
     if candidate_run_ids.is_empty() {
         return None;
     }
-    let baseline_run_ids = summary
-        .map(|s| vec![s.baseline_run_id, s.baseline_rerun_id])
+    // Pass 1a: prefer the per-target baseline run ids finalize
+    // ACTUALLY used (carried in `Experiment.baseline_run_ids` when
+    // Phase 1.8 calibration produced them). Fall back to the
+    // session-level baseline ids only when finalize fell back too
+    // (target had no `verification_replay`). Without this branch
+    // the ledger would claim finalize used P0 run/rerun while
+    // `improvement_pct` was actually computed from targeted
+    // calibration — misleading to any future reader.
+    let baseline_run_ids = exp
+        .baseline_run_ids
+        .clone()
+        .or_else(|| summary.map(|s| vec![s.baseline_run_id, s.baseline_rerun_id]))
         .unwrap_or_default();
     let noise_floor = summary
         .map(|s| s.noise_floor_pct)

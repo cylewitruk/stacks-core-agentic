@@ -236,7 +236,10 @@ git pull
 just install                              # rebuilds ~/.cargo/bin/sbagent
 
 cd ~/operator
-sbagent sync                              # rewrite .sbagent/{schemas,queries}
+sbagent sync                              # rewrite ALL .sbagent/ bundles
+                                          # (schemas, queries, prompts, context)
+                                          # — `--keep-tunables` preserves
+                                          # operator-edited prompts/context
 sbagent check                             # confirm no drift remains
 ```
 

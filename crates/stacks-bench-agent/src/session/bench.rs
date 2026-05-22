@@ -51,18 +51,41 @@ pub trait BenchClient: Send + Sync {
 pub struct StacksBenchCli {
     /// Path to `<stacks-core>/target/release/stacks-bench`. When the file
     /// exists, used directly to skip cargo's lockfile check on every call.
-    /// Otherwise falls back to `cargo stacks-bench`.
+    /// Otherwise falls back to `cargo stacks-bench` — unless [`strict`] is
+    /// set, in which case a missing binary is a hard error.
     pub release_bin: Option<PathBuf>,
     /// Stacks-bench data dir (passed as `--db`).
     pub data_dir: PathBuf,
     /// Working directory for `cargo stacks-bench` fallback.
     pub cargo_cwd: PathBuf,
+    /// When `true`, [`release_bin`] is required to exist at every
+    /// invocation; a missing path causes an error rather than silently
+    /// falling back to `cargo stacks-bench`. Used by Phase 0b baseline,
+    /// Phase 1.8 calibration, and Phase 3 full-range fallback — all the
+    /// code paths that depend on the archived baseline binary being the
+    /// deterministic source of truth.
+    pub strict: bool,
+}
+
+impl StacksBenchCli {
+    /// Construct a strict CLI that requires an archived release binary.
+    /// Used by baseline / calibration / full-range fallback paths where a
+    /// silent `cargo stacks-bench` rebuild would defeat the
+    /// archived-binary determinism contract.
+    pub fn strict_archived(release_bin: PathBuf, data_dir: PathBuf, cargo_cwd: PathBuf) -> Self {
+        Self {
+            release_bin: Some(release_bin),
+            data_dir,
+            cargo_cwd,
+            strict: true,
+        }
+    }
 }
 
 impl BenchClient for StacksBenchCli {
     fn total_duration_us(&self, run_id: i64) -> Result<Option<i64>> {
         self.ensure_data_dir()?;
-        let mut cmd = self.build_cmd();
+        let mut cmd = self.build_cmd()?;
         cmd.arg("--db")
             .arg(&self.data_dir)
             .arg("--json")
@@ -102,7 +125,7 @@ impl BenchClient for StacksBenchCli {
             None => None,
         };
 
-        let mut cmd = self.build_cmd();
+        let mut cmd = self.build_cmd()?;
         cmd.arg("--db")
             .arg(&self.data_dir)
             .arg("--json");
@@ -140,15 +163,27 @@ impl StacksBenchCli {
     }
 
     /// Construct the base `Command`: prebuilt release binary if available,
-    /// `cargo stacks-bench` otherwise.
-    fn build_cmd(&self) -> Command {
+    /// `cargo stacks-bench` otherwise. When `strict` is set, a missing
+    /// `release_bin` (or one whose path doesn't resolve to a file) is a
+    /// hard error.
+    fn build_cmd(&self) -> Result<Command> {
         match &self.release_bin {
-            Some(p) if p.is_file() => Command::new(p),
+            Some(p) if p.is_file() => Ok(Command::new(p)),
+            Some(p) if self.strict => bail!(
+                "strict StacksBenchCli requires the archived binary at {} to exist; refusing to \
+                 fall back to `cargo stacks-bench`. Re-run Phase 0a to rebuild and archive the \
+                 baseline binary.",
+                p.display(),
+            ),
+            None if self.strict => bail!(
+                "strict StacksBenchCli requires a release_bin path; none configured. Construct \
+                 via StacksBenchCli::strict_archived(...).",
+            ),
             _ => {
                 let mut c = Command::new("cargo");
                 c.current_dir(&self.cargo_cwd);
                 c.arg("stacks-bench");
-                c
+                Ok(c)
             }
         }
     }
@@ -266,6 +301,7 @@ mod tests {
             release_bin: None,
             data_dir: data_dir.clone(),
             cargo_cwd: tmp.path().to_path_buf(),
+            strict: false,
         };
         cli.ensure_data_dir()
             .expect("ensure_data_dir must succeed on missing dir");
@@ -281,9 +317,63 @@ mod tests {
             release_bin: None,
             data_dir: tmp.path().to_path_buf(),
             cargo_cwd: tmp.path().to_path_buf(),
+            strict: false,
         };
         cli.ensure_data_dir().unwrap();
         cli.ensure_data_dir().unwrap();
         assert!(tmp.path().is_dir());
+    }
+
+    /// Strict CLI errors when `release_bin` points at a missing path
+    /// — no silent `cargo stacks-bench` fallback. Permissive CLI in
+    /// the same state would fall back (existing behavior).
+    #[test]
+    fn strict_cli_errors_on_missing_binary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bogus = tmp
+            .path()
+            .join("does-not-exist");
+        let cli = StacksBenchCli::strict_archived(
+            bogus.clone(),
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+        );
+        let err = cli
+            .total_duration_us(1)
+            .expect_err("strict CLI must refuse to fall back when binary missing");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("strict StacksBenchCli"), "got: {msg}");
+        assert!(msg.contains(bogus.to_str().unwrap()), "got: {msg}");
+    }
+
+    /// Permissive CLI with the same missing-binary state falls back
+    /// to `cargo stacks-bench` (the existing behavior preserved for
+    /// non-baseline / non-calibration / non-fallback callers).
+    #[test]
+    fn permissive_cli_falls_back_when_binary_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bogus = tmp
+            .path()
+            .join("does-not-exist");
+        let cli = StacksBenchCli {
+            release_bin: Some(bogus),
+            data_dir: tmp.path().to_path_buf(),
+            cargo_cwd: tmp.path().to_path_buf(),
+            strict: false,
+        };
+        // build_cmd is private; exercise it through total_duration_us.
+        // The call will fail (no cargo project + no run id 1 in DB),
+        // but the failure mode must NOT be "strict StacksBenchCli" —
+        // it should attempt the cargo fallback path.
+        let result = cli.total_duration_us(1);
+        // Either succeeds (returns None) or fails with a non-strict error.
+        // What it MUST NOT do is bail with our strict-mode message.
+        if let Err(e) = result {
+            let msg = format!("{e:#}");
+            assert!(
+                !msg.contains("strict StacksBenchCli"),
+                "permissive CLI should not surface strict-mode error: {msg}"
+            );
+        }
     }
 }

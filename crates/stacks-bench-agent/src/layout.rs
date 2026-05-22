@@ -51,6 +51,14 @@ impl FrameworkDir {
         Self(path)
     }
 
+    /// Root of the framework checkout (the workspace dir that owns
+    /// `Cargo.toml` + `target/`). Used by session-start preflight to
+    /// locate `target/release/sbagent` for the installed-binary
+    /// drift check.
+    pub fn root(&self) -> &Path {
+        &self.0
+    }
+
     /// `<framework>/prompts`.
     pub fn prompts_dir(&self) -> PathBuf {
         self.0.join("prompts")

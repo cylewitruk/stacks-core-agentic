@@ -35,6 +35,15 @@ use anyhow::{Context as _, Result};
 /// match the on-disk layout exactly so callers can build absolute
 /// paths via `<schemas_dir>/<FILE_NAME>` and pass them to agents
 /// (which validate their JSON output against the file).
+///
+/// Adding a new schema is a two-step bootstrap: create a placeholder
+/// file at the canonical `schemas/<name>.schema.json` path so
+/// `include_str!` resolves at build time, rebuild, run
+/// `sbagent schema export --out schemas` to generate the real bytes,
+/// then **rebuild again** so the binary embeds the populated schema
+/// (not the stub). Skipping the second rebuild leaves a `{}` baked
+/// into `BUNDLED_SCHEMAS`, which then propagates to operator dirs on
+/// the next `sbagent sync` and surfaces as drift much later.
 pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
     ("candidates.schema.json", include_str!("../../../schemas/candidates.schema.json")),
     ("analysis.schema.json", include_str!("../../../schemas/analysis.schema.json")),
@@ -43,6 +52,10 @@ pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
         include_str!("../../../schemas/optimization-targets.schema.json"),
     ),
     ("optimizer-report.schema.json", include_str!("../../../schemas/optimizer-report.schema.json")),
+    (
+        "coordinator-provenance.schema.json",
+        include_str!("../../../schemas/coordinator-provenance.schema.json"),
+    ),
     ("summary.schema.json", include_str!("../../../schemas/summary.schema.json")),
     ("session-record.schema.json", include_str!("../../../schemas/session-record.schema.json")),
 ];

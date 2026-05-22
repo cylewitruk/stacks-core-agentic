@@ -34,26 +34,12 @@ fn init_operator_repo(dir: &Path) {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .status()
-        .expect("spawn git");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
+    stacks_bench_agent::git::run_git(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e:#}"));
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .expect("spawn git");
-    assert!(out.status.success(), "git {args:?} failed in {}", dir.display());
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .to_owned()
+    stacks_bench_agent::git::run_git_output(dir, args)
+        .unwrap_or_else(|e| panic!("git {args:?}: {e:#}"))
 }
 
 /// Stage the fixture session bulk into the WORKSPACE path. Returns
@@ -288,6 +274,95 @@ fn archive_writes_artifact_url_into_ledger() {
         v["artifact_url"].as_str(),
         Some("https://github.com/owner/repo/tree/session/20260519-000000-test"),
         "ledger line must carry the SAME URL the outputs do"
+    );
+}
+
+/// Pass 1c provenance follow-up: `head_sha` on each
+/// `SessionRecord.targets[]` row flows from
+/// `summary.json.experiments[].head_sha`, which finalize populated
+/// from `optimize/<target>/coordinator-provenance.json`. Closes the
+/// "Per-target audit fields in archive ledger" roadmap item for
+/// the `head_sha` half (PR url + bench wallclock totals still wait
+/// on publish-feedback wiring).
+#[test]
+fn archive_propagates_head_sha_into_target_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260521-180000-test"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // Stage a finalize/summary.json with head_sha set on the normal_pr
+    // target. The fixture's optimization-targets.json carries
+    // `marf-read-cache-rollback-wrapper` as the normal_pr target;
+    // matching its id here is what links the rows.
+    let finalize_dir = session_layout
+        .results_dir
+        .join("finalize");
+    std::fs::create_dir_all(&finalize_dir).unwrap();
+    let summary = serde_json::json!({
+        "schema_version": 2,
+        "session_id": id.as_str(),
+        "baseline_run_id": 100,
+        "baseline_rerun_id": 101,
+        "noise_floor_pct": 1.0,
+        "experiments": [{
+            "target_id": "marf-read-cache-rollback-wrapper",
+            "delivery_mode": "normal_pr",
+            "status": "accepted",
+            "run_ids": [500, 501],
+            "baseline_run_ids": [200, 201],
+            "improvement_pct": 5.5,
+            "base_sha": "0ad33704c259da4102b5f195617760003ac89c18",
+            "head_sha": "f994e6ef03002fb7b1acdc1b5018da40e73b105b",
+        }],
+        "outcome_counts": {
+            "normal_pr": {"accepted": 1, "rejected": 0, "aborted": 0},
+            "consensus_poc_pr": {"poc_landed": 0, "aborted": 0},
+            "consensus_issue": {"routed_to_issue": 0, "aborted": 0},
+        },
+        "lens_dispositions": [],
+    });
+    std::fs::write(
+        finalize_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary).unwrap(),
+    )
+    .unwrap();
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .unwrap();
+
+    // Read the ledger line and confirm the normal_pr target's
+    // head_sha made it through.
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .next()
+        .expect("at least one ledger line");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let target = v["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"].as_str() == Some("marf-read-cache-rollback-wrapper"))
+        .expect("normal_pr target row in ledger");
+    assert_eq!(
+        target["head_sha"].as_str(),
+        Some("f994e6ef03002fb7b1acdc1b5018da40e73b105b"),
+        "head_sha must flow from summary.experiments → SessionRecord.targets",
     );
 }
 

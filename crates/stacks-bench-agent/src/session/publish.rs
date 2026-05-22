@@ -633,43 +633,22 @@ fn split_repo(slug: &str) -> Result<(&str, &str)> {
 
 impl GhClient for StdGhClient {
     fn worktree_remote_url(&self, worktree: &Path, remote: &str) -> Result<String> {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(worktree)
-            .arg("remote")
-            .arg("get-url")
-            .arg(remote)
-            .output()
-            .context("git remote get-url")?;
-        if !out.status.success() {
-            bail!("git remote get-url {remote} failed: {}", String::from_utf8_lossy(&out.stderr));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .to_owned())
+        crate::git::get_remote_url(worktree, remote)
     }
     fn switch_branch(&self, worktree: &Path, branch: &str) -> Result<()> {
-        run_git(worktree, &["switch", "-C", branch])
+        crate::git::run_git(worktree, &["switch", "-C", branch])
     }
     fn add_modified(&self, worktree: &Path) -> Result<()> {
-        run_git(worktree, &["add", "-u"])
+        crate::git::run_git(worktree, &["add", "-u"])
     }
     fn commit_if_staged(&self, worktree: &Path, message: &str) -> Result<()> {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(worktree)
-            .arg("diff")
-            .arg("--cached")
-            .arg("--quiet")
-            .status()
-            .context("git diff --cached --quiet")?;
-        if status.success() {
-            return Ok(()); // nothing staged
+        if !crate::git::has_staged_changes(worktree)? {
+            return Ok(());
         }
-        run_git(worktree, &["commit", "-m", message])
+        crate::git::run_git(worktree, &["commit", "-m", message])
     }
     fn push_branch(&self, worktree: &Path, remote: &str, branch: &str) -> Result<()> {
-        run_git(worktree, &["push", "-u", remote, branch])
+        crate::git::run_git(worktree, &["push", "-u", remote, branch])
     }
 
     async fn pr_exists(
@@ -756,20 +735,6 @@ impl GhClient for StdGhClient {
         println!("{}", issue.html_url);
         Ok(())
     }
-}
-
-fn run_git(worktree: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("-C")
-        .arg(worktree)
-        .args(args);
-    let status = cmd
-        .status()
-        .with_context(|| format!("git {}", args.join(" ")))?;
-    if !status.success() {
-        bail!("git {} exited {status}", args.join(" "));
-    }
-    Ok(())
 }
 
 /// Inputs to `publish push`.

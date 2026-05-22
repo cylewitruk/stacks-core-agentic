@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
@@ -30,10 +30,27 @@ pub struct OptimizeRunArgs {
     /// inner-loop wall-clock budget). Defaults to settings → `60`.
     #[clap(long)]
     pub optimizer_budget_minutes: Option<u32>,
+    /// Skip targets that already carry a valid typed
+    /// `optimizer-report.json` for this session; only re-run targets
+    /// whose report is missing, corrupt, or context-mismatched. Used
+    /// to recover a partially-failed optimizer phase without redoing
+    /// the targets that already succeeded.
+    #[clap(long)]
+    pub resume: bool,
+    /// Skip the session-start preflight. See `session run --help` for
+    /// the same flag's full rationale.
+    #[clap(long)]
+    pub skip_preflight: bool,
 }
 
 /// Fan out one optimizer per merged target.
 pub async fn run(args: OptimizeRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
+    if !args.skip_preflight {
+        let findings =
+            crate::session::preflight::collect_findings(ctx).context("session-start preflight")?;
+        crate::session::preflight::report(&findings)?;
+    }
+
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
     let harness = Arc::new(CodexHarness::new());
 
@@ -53,6 +70,7 @@ pub async fn run(args: OptimizeRunArgs, ctx: &CliContext, session_id: &SessionId
         base_branch: args.base_branch,
         harness,
         git: Arc::new(StdGitCheckoutManager),
+        resume: args.resume,
     })
     .await?;
 

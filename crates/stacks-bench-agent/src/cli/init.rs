@@ -306,8 +306,8 @@ pub async fn run(args: InitArgs, settings: &Settings) -> Result<()> {
     );
 
     // Step 4d: seed context docs (operator-tunable reference material,
-    // same drift contract as prompts — warn on drift, force on
-    // `--force-tunables`).
+    // same drift contract as prompts — warn on drift, refreshed by
+    // default by `sbagent sync` unless `--keep-tunables` is set).
     let context_rel = crate::settings::default_context_dir(settings)
         .unwrap_or_else(|| std::path::PathBuf::from(".sbagent").join("context"));
     let context_abs =
@@ -515,21 +515,7 @@ pub fn seed_branch_with_auth(
 ) -> Result<()> {
     let tmp = tempfile::tempdir().context("creating tempdir for seed bare clone")?;
     let bare = tmp.path().join("seed.git");
-    let status = std::process::Command::new("git")
-        .arg("clone")
-        .arg("--bare")
-        .arg("--branch")
-        .arg(branch)
-        .arg(source_url)
-        .arg(&bare)
-        .status()
-        .with_context(|| format!("spawn git clone --bare --branch {branch} {source_url}"))?;
-    if !status.success() {
-        bail!(
-            "git clone --bare --branch {branch} {source_url} exited {status}; verify the URL is \
-             reachable and carries {branch}",
-        );
-    }
+    crate::git::clone_bare_branch(source_url, branch, &bare)?;
 
     // Build env for the dest push. The auth header is only meaningful
     // for HTTPS dests — git ignores `http.<prefix>.extraheader` for
@@ -537,23 +523,9 @@ pub fn seed_branch_with_auth(
     // tests against `file://` URLs don't need a real PAT and the env
     // shape stays minimal in non-HTTPS code paths.
     let env = build_auth_header_env(dest_url, token, auth_username, auth_url_prefix);
-    let status = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&bare)
-        .arg("push")
-        .arg(dest_url)
-        .arg(format!("{branch}:refs/heads/{branch}"))
-        .envs(
-            env.iter()
-                .map(|(k, v)| (k.as_str(), v.as_str())),
-        )
-        .status()
-        .with_context(|| format!("spawn git push {dest_url} {branch}"))?;
-    if !status.success() {
-        bail!(
-            "git push {dest_url} {branch} exited {status}; either the PAT lacks Contents:write on \
-             that repo, or the bot fork has diverged and a non-fast-forward push was rejected",
-        );
-    }
-    Ok(())
+    crate::git::push_url_refspec(&bare, dest_url, &format!("{branch}:refs/heads/{branch}"), &env)
+        .with_context(|| {
+            "push to bot fork failed; either the PAT lacks Contents:write on that repo, or the bot \
+             fork has diverged and a non-fast-forward push was rejected"
+        })
 }

@@ -201,28 +201,18 @@ impl GitCheckoutManager for FakeGit {
         let _ = std::fs::remove_dir_all(checkout);
         std::fs::create_dir_all(checkout)?;
         for args in [
-            vec!["init", "-q", "-b", "main"],
-            vec!["config", "user.email", "fake@t"],
-            vec!["config", "user.name", "fake"],
-            vec!["config", "commit.gpgsign", "false"],
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.email", "fake@t"][..],
+            &["config", "user.name", "fake"][..],
+            &["config", "commit.gpgsign", "false"][..],
         ] {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(checkout)
-                .args(&args)
-                .status()?;
-            anyhow::ensure!(status.success(), "git {args:?} failed: {status}");
+            stacks_bench_agent::git::run_git(checkout, args)?;
         }
         // Seed an initial commit so HEAD resolves + the coordinator's
         // post-edit commit advances HEAD past a real baseline.
         std::fs::write(checkout.join(".gitignore"), "target/\n")?;
-        for args in [vec!["add", ".gitignore"], vec!["commit", "-q", "-m", "init"]] {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(checkout)
-                .args(&args)
-                .status()?;
-            anyhow::ensure!(status.success(), "git {args:?} failed: {status}");
+        for args in [&["add", ".gitignore"][..], &["commit", "-q", "-m", "init"][..]] {
+            stacks_bench_agent::git::run_git(checkout, args)?;
         }
         Ok(())
     }
@@ -408,6 +398,7 @@ async fn optimizers_routes_three_delivery_modes() {
         base_branch: "feat/test".to_owned(),
         harness: harness.clone(),
         git: Arc::new(FakeGit),
+        resume: false,
     })
     .await
     .expect("optimizers::run");
@@ -496,6 +487,7 @@ async fn optimizers_aborts_clear_implementation_marker() {
         base_branch: "feat/test".to_owned(),
         harness,
         git: Arc::new(FakeGit),
+        resume: false,
     })
     .await
     .unwrap();

@@ -29,13 +29,7 @@ fn stage_local_remote(tmp: &Path, name: &str, branch: &str) -> (String, String) 
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .status()
-        .unwrap_or_else(|e| panic!("spawn git {args:?}: {e}"));
-    assert!(status.success(), "git {args:?} failed: {status}");
+    stacks_bench_agent::git::run_git(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e:#}"));
 }
 
 fn settings_for(base_dir: PathBuf, base_url: String, branch: String) -> Settings {
@@ -250,23 +244,14 @@ async fn seed_branch_pushes_to_empty_dest_via_local_files() {
     let bot_dir = tmp
         .path()
         .join("bot-stacks-core.git");
-    let status = std::process::Command::new("git")
-        .arg("init")
-        .arg("--bare")
-        .arg(&bot_dir)
-        .status()
-        .unwrap();
-    assert!(status.success());
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    stacks_bench_agent::git::run_git(&bot_dir, &["init", "--bare"]).unwrap();
     let bot_url = format!("file://{}", bot_dir.display());
 
     // Pre-seed sanity: bot fork has no refs.
-    let pre = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&bot_dir)
-        .args(["ls-remote", "--heads", "."])
-        .output()
-        .unwrap();
-    assert!(pre.stdout.is_empty(), "bot fork pre-seed must be empty");
+    let pre =
+        stacks_bench_agent::git::run_git_output(&bot_dir, &["ls-remote", "--heads", "."]).unwrap();
+    assert!(pre.is_empty(), "bot fork pre-seed must be empty");
 
     // `seed_branch` uses GIT_CONFIG_COUNT-style env vars internally for
     // the auth header. `file://` pushes don't actually check the
@@ -297,13 +282,8 @@ async fn seed_branch_pushes_to_empty_dest_via_local_files() {
     result.expect("seed_branch must succeed against file:// dest");
 
     // Post: bot fork now has the substrate branch.
-    let post = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&bot_dir)
-        .args(["ls-remote", "--heads", "."])
-        .output()
-        .unwrap();
-    let post_refs = String::from_utf8_lossy(&post.stdout).into_owned();
+    let post_refs =
+        stacks_bench_agent::git::run_git_output(&bot_dir, &["ls-remote", "--heads", "."]).unwrap();
     assert!(
         post_refs.contains(&format!("refs/heads/{branch}")),
         "bot fork should have refs/heads/{branch} after seed_branch; got:\n{post_refs}",
@@ -335,18 +315,12 @@ async fn init_push_rejects_ssh_origin() {
     }
 
     // Pre-init the target with an SSH-style origin.
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["init", "-b", "main"])
-        .status()
-        .unwrap();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["remote", "add", "origin", "git@github.com:bot/operator.git"])
-        .status()
-        .unwrap();
+    stacks_bench_agent::git::run_git(&target, &["init", "-b", "main"]).unwrap();
+    stacks_bench_agent::git::run_git(
+        &target,
+        &["remote", "add", "origin", "git@github.com:bot/operator.git"],
+    )
+    .unwrap();
 
     let err = init::run(
         InitArgs {
@@ -382,16 +356,8 @@ async fn init_push_rejects_ssh_origin() {
 }
 
 fn git_stdout(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("spawn git {args:?}: {e}"));
-    assert!(out.status.success(), "git {args:?} failed: {}", out.status);
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .to_owned()
+    stacks_bench_agent::git::run_git_output(dir, args)
+        .unwrap_or_else(|e| panic!("git {args:?}: {e:#}"))
 }
 
 /// `git add -A` would sweep any unrelated file present in the target
@@ -552,18 +518,12 @@ async fn init_push_rejects_url_outside_configured_prefix() {
         std::env::set_var("GIT_CONFIG_VALUE_0", "always");
     }
 
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["init", "-b", "main"])
-        .status()
-        .unwrap();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["remote", "add", "origin", "https://github.com/bot/operator.git"])
-        .status()
-        .unwrap();
+    stacks_bench_agent::git::run_git(&target, &["init", "-b", "main"]).unwrap();
+    stacks_bench_agent::git::run_git(
+        &target,
+        &["remote", "add", "origin", "https://github.com/bot/operator.git"],
+    )
+    .unwrap();
 
     let err = init::run(
         InitArgs {
@@ -621,18 +581,12 @@ async fn init_push_normalizes_prefix_against_typosquat() {
         std::env::set_var("GIT_CONFIG_VALUE_0", "always");
     }
 
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["init", "-b", "main"])
-        .status()
-        .unwrap();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["remote", "add", "origin", "https://gitlab.com.evil.example/bot/repo.git"])
-        .status()
-        .unwrap();
+    stacks_bench_agent::git::run_git(&target, &["init", "-b", "main"]).unwrap();
+    stacks_bench_agent::git::run_git(
+        &target,
+        &["remote", "add", "origin", "https://gitlab.com.evil.example/bot/repo.git"],
+    )
+    .unwrap();
 
     let err = init::run(
         InitArgs {
@@ -692,18 +646,12 @@ async fn init_push_expert_mode_rejects_ssh_origin() {
         std::env::set_var("GIT_CONFIG_VALUE_0", "always");
     }
 
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["init", "-b", "main"])
-        .status()
-        .unwrap();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&target)
-        .args(["remote", "add", "origin", "git@gitlab.example:bot/operator.git"])
-        .status()
-        .unwrap();
+    stacks_bench_agent::git::run_git(&target, &["init", "-b", "main"]).unwrap();
+    stacks_bench_agent::git::run_git(
+        &target,
+        &["remote", "add", "origin", "git@gitlab.example:bot/operator.git"],
+    )
+    .unwrap();
 
     let err = init::run(
         InitArgs {

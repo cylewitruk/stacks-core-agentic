@@ -109,8 +109,10 @@ embedded-repo warnings.
 
 ```text
 sbagent init [--push] [--seed-from URL]    # bootstrap a fresh operator dir
-sbagent sync [--force-prompts]             # refresh .sbagent/{schemas,queries}
-                                           # (and --force-prompts) from binary
+sbagent sync [--keep-tunables]             # refresh .sbagent/{schemas,queries,
+                                           # prompts,context} from binary;
+                                           # --keep-tunables preserves operator
+                                           # edits to prompts + context docs
 sbagent check [--with-publish]             # preflight: tools, codex compat,
                                            # bundle drift, optional publish probe
 

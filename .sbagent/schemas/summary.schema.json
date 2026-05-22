@@ -174,6 +174,24 @@
       ],
       "description": "One experiment row.",
       "properties": {
+        "base_sha": {
+          "description": "Parent of the coordinator's per-target commit. Populated from\n`optimize/<id>/coordinator-provenance.json.base_sha` when the\nsidecar exists. Used by Phase 5 PR-writer + audit to prove the\noptimization was applied on top of the same source SHA Phase 0a\narchived. Absent for aborted experiments (no commit) and for\nsessions that predate the provenance sidecar contract.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseline_run_ids": {
+          "description": "Per-target baseline run ids — pooled (phase-aware breakdown\nlives on disk at `verify/<target>/baseline-run-ids.json`).\nPresent when Phase 1.8 ran for this target (i.e. the target\nhad a non-empty `verification_replay` and Pass 1a's\ntargeted-baseline calibration produced results). Absent\nwhen finalize falls back to the session-level baseline\n(legacy path for targets without `verification_replay`).",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "breakage_class": {
           "anyOf": [
             {
@@ -188,6 +206,13 @@
         "delivery_mode": {
           "$ref": "#/$defs/DeliveryMode",
           "description": "Carried from `optimization-targets.json`."
+        },
+        "head_sha": {
+          "description": "Coordinator's per-target commit SHA. Populated from\n`coordinator-provenance.json.head_sha` (see [`base_sha`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "improvement_pct": {
           "description": "Improvement vs baseline as a signed percentage. Set only for\n`NormalPr` targets that reached benchmarking.",

@@ -1,1 +1,10 @@
 target
+
+# Claude session runtime — scheduled-task state + locks live alongside the
+# committed `.claude/settings.json` but must not be tracked.
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
+
+# Runtime lock files produced by stacks-bench-agent (BENCH_LOCK,
+# test-lock, etc.). Live under operator's data dir; never tracked.
+data/run/

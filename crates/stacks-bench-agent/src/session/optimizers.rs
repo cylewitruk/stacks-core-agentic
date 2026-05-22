@@ -135,44 +135,14 @@ impl GitCheckoutManager for StdGitCheckoutManager {
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
 
-        // `git clone --reference <base> --local <base> <checkout>` —
-        // `--reference` shares the object store, `--local` says the
-        // source is on the local filesystem (enables hardlinks for
-        // refs/HEAD/etc.; safe + cheap). `--branch <base_branch>`
-        // checks out base_branch's tip in the new clone.
-        let status = std::process::Command::new("git")
-            .arg("clone")
-            .arg("--reference")
-            .arg(base)
-            .arg("--branch")
-            .arg(base_branch)
-            .arg("--local")
-            .arg(base)
-            .arg(checkout)
-            .status()
-            .with_context(|| format!("git clone {} -> {}", base.display(), checkout.display()))?;
-        if !status.success() {
-            anyhow::bail!(
-                "git clone --reference {} --branch {base_branch} --local {} {} exited {status}",
-                base.display(),
-                base.display(),
-                checkout.display(),
-            );
-        }
+        // Per-target clone: `--reference` shares the object store with
+        // the base, `--local` enables hardlinks for refs/HEAD/etc.,
+        // `--branch <base_branch>` checks out base_branch's tip.
+        crate::git::clone_with_reference(base, base_branch, checkout)?;
 
         // Switch to the agent's per-target branch (created from the
         // base_branch tip we just cloned).
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(checkout)
-            .arg("switch")
-            .arg("-c")
-            .arg(branch_name)
-            .status()
-            .with_context(|| format!("git switch -c {branch_name} in {}", checkout.display()))?;
-        if !status.success() {
-            anyhow::bail!("git -C {} switch -c {branch_name} exited {status}", checkout.display(),);
-        }
+        crate::git::switch_create_branch(checkout, branch_name)?;
 
         // Replicate every remote from `base` into the clone. `git clone
         // --local` only creates `origin` pointing at the local base path
@@ -226,24 +196,8 @@ fn cleanup_existing_checkout(base: &Path, checkout: &Path) -> Result<()> {
         // refuses (worktree locked / corrupt), fall through to the
         // `rm -rf` below — `prune` will eventually catch the missing
         // dir on the next `git worktree` invocation.
-        let _ = std::process::Command::new("git")
-            .arg("-C")
-            .arg(base)
-            .arg("worktree")
-            .arg("remove")
-            .arg("--force")
-            .arg(checkout)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let _ = std::process::Command::new("git")
-            .arg("-C")
-            .arg(base)
-            .arg("worktree")
-            .arg("prune")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        crate::git::worktree_remove_force_quiet(base, checkout);
+        crate::git::worktree_prune_quiet(base);
     }
 
     // Belt + suspenders: nuke the directory regardless of which path
@@ -273,25 +227,13 @@ fn cleanup_existing_checkout(base: &Path, checkout: &Path) -> Result<()> {
 /// checkout (not GitHub), which is exactly the bug the rewrite was
 /// supposed to prevent.
 fn replicate_remotes(base: &Path, checkout: &Path) -> Result<()> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(base)
-        .arg("remote")
-        .output()
-        .with_context(|| format!("listing remotes in {}", base.display()))?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "git -C {} remote exited {}; cannot replicate remotes into clone {}",
+    let remote_names = crate::git::list_remotes(base).with_context(|| {
+        format!(
+            "listing remotes in {} (cannot replicate into clone {})",
             base.display(),
-            out.status,
             checkout.display(),
-        );
-    }
-    let remote_names: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .collect();
+        )
+    })?;
     if remote_names.is_empty() {
         // Base has no remotes — nothing to replicate. The clone's
         // `origin` still points at the local base path, which is
@@ -301,62 +243,12 @@ fn replicate_remotes(base: &Path, checkout: &Path) -> Result<()> {
         // mode (clearer than silently pushing to the local base).
         return Ok(());
     }
-    let clone_existing: std::collections::BTreeSet<String> = {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(checkout)
-            .arg("remote")
-            .output()
-            .with_context(|| format!("listing remotes in {}", checkout.display()))?;
-        if !out.status.success() {
-            anyhow::bail!("git -C {} remote exited {}", checkout.display(), out.status,);
-        }
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty())
-            .collect()
-    };
     for name in &remote_names {
-        let url_out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(base)
-            .arg("remote")
-            .arg("get-url")
-            .arg(name)
-            .output()
-            .with_context(|| format!("getting URL for {name} in {}", base.display()))?;
-        if !url_out.status.success() {
-            anyhow::bail!(
-                "git -C {} remote get-url {name} exited {}",
-                base.display(),
-                url_out.status,
-            );
-        }
-        let url = String::from_utf8_lossy(&url_out.stdout)
-            .trim()
-            .to_owned();
+        let url = crate::git::get_remote_url(base, name)?;
         if url.is_empty() {
             anyhow::bail!("remote {name} in {} has empty URL", base.display());
         }
-        let subcmd = if clone_existing.contains(name) { "set-url" } else { "add" };
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(checkout)
-            .arg("remote")
-            .arg(subcmd)
-            .arg(name)
-            .arg(&url)
-            .status()
-            .with_context(|| {
-                format!("git -C {} remote {subcmd} {name} {url}", checkout.display())
-            })?;
-        if !status.success() {
-            anyhow::bail!(
-                "git -C {} remote {subcmd} {name} {url} exited {status}",
-                checkout.display(),
-            );
-        }
+        crate::git::add_or_set_remote(checkout, name, &url)?;
     }
     Ok(())
 }
@@ -530,6 +422,14 @@ pub struct Inputs<H: AgentHarness + 'static, G: GitCheckoutManager + 'static> {
     pub harness: Arc<H>,
     /// Git worktree manager.
     pub git: Arc<G>,
+    /// When true, targets that already carry a valid
+    /// `optimize/<id>/optimizer-report.json` (parses, validates,
+    /// `outcome ∈ {implemented, aborted}`, target/session/delivery
+    /// metadata matches) are skipped; only targets with missing,
+    /// corrupt, or context-mismatched reports get re-run. Used to
+    /// recover a partially-failed optimizer phase without redoing the
+    /// targets that already succeeded.
+    pub resume: bool,
 }
 
 /// Outputs of an optimizer fan-out.
@@ -636,6 +536,7 @@ where
             sem: semaphore.clone(),
             harness: inputs.harness.clone(),
             git: inputs.git.clone(),
+            resume: inputs.resume,
         };
         set.spawn(run_one(task));
     }
@@ -706,6 +607,7 @@ struct OptimizerTaskInputs<H: AgentHarness + 'static, G: GitCheckoutManager + 's
     sem: Arc<Semaphore>,
     harness: Arc<H>,
     git: Arc<G>,
+    resume: bool,
 }
 
 async fn run_one<H, G>(state: OptimizerTaskInputs<H, G>) -> Result<()>
@@ -731,6 +633,28 @@ where
         clear_optimizer_artifacts(&exp_dir)?;
         std::fs::write(exp_dir.join("consensus-issue.md"), CONSENSUS_ISSUE_MARKER)?;
         return Ok(());
+    }
+
+    // Resume mode: skip targets whose typed report already parses,
+    // validates, matches this session's context, AND (for implemented
+    // outcomes) whose coordinator-provenance sidecar shows the per-
+    // target branch was built on top of the session's archived
+    // baseline source SHA. Anything else falls through to the normal
+    // re-run path below.
+    if state.resume {
+        let baseline_source_sha = read_baseline_source_sha(&state.session_results_dir)
+            .with_context(|| {
+                "resume mode requires baseline/bin/manifest.json to resolve; rerun without \
+                 --resume or invoke Phase 0a first"
+            })?;
+        if resume_target_is_complete(&exp_dir, target, &state.session_id, &baseline_source_sha) {
+            tracing::info!(
+                target = "session.optimizers",
+                target_id = %target.id,
+                "resume: skipping target with valid typed report + matching provenance",
+            );
+            return Ok(());
+        }
     }
 
     // Idempotency: tear down worktree + clear stale optimizer artifacts.
@@ -1082,33 +1006,23 @@ fn coordinator_commit_if_kept(
             format!("writing companion implementation.md for {target_id} at {}", exp_dir.display())
         })?;
 
-    // Contract step 2: tree must actually have changes. `git status
-    // --porcelain` outputs one line per modified/untracked path; empty
-    // stdout means "clean tree."
-    let porcelain = std::process::Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .arg("status")
-        .arg("--porcelain")
-        .output()
-        .with_context(|| format!("git status in {}", checkout.display()))?;
-    if !porcelain.status.success() {
-        demote_implemented_to_aborted(
-            exp_dir,
-            target_id,
-            session_id,
-            delivery_mode,
-            &format!(
-                "`git status --porcelain` failed in {} (exit {})",
-                checkout.display(),
-                porcelain.status
-            ),
-            FailedGate::EnvironmentalError,
-        )?;
-        return Ok(());
-    }
-    let dirty = !porcelain.stdout.is_empty();
-    if !dirty {
+    // Contract step 2: tree must actually have changes. Empty
+    // porcelain output means "clean tree."
+    let porcelain = match crate::git::status_porcelain(checkout) {
+        Ok(p) => p,
+        Err(e) => {
+            demote_implemented_to_aborted(
+                exp_dir,
+                target_id,
+                session_id,
+                delivery_mode,
+                &format!("{e:#}"),
+                FailedGate::EnvironmentalError,
+            )?;
+            return Ok(());
+        }
+    };
+    if porcelain.is_empty() {
         demote_implemented_to_aborted(
             exp_dir,
             target_id,
@@ -1123,53 +1037,51 @@ fn coordinator_commit_if_kept(
 
     // Contract step 3: commit, with env-var identity overrides.
     let env = optimizer_git_env(settings);
-    let add = std::process::Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .arg("add")
-        .arg("-A")
-        .envs(
-            env.iter()
-                .map(|(k, v)| (k.as_str(), v.as_str())),
-        )
-        .status()
-        .with_context(|| format!("git add -A in {}", checkout.display()))?;
-    if !add.success() {
+    if let Err(e) = crate::git::add_all_with_env(checkout, &env) {
         demote_implemented_to_aborted(
             exp_dir,
             target_id,
             session_id,
             delivery_mode,
-            &format!("coordinator `git add -A` failed in {} (exit {})", checkout.display(), add),
+            &format!("coordinator `git add -A` failed: {e:#}"),
             FailedGate::EnvironmentalError,
         )?;
         return Ok(());
     }
     let msg = format!("perf: optimize {target_id}");
-    let commit = std::process::Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .arg("commit")
-        .arg("-m")
-        .arg(&msg)
-        .envs(
-            env.iter()
-                .map(|(k, v)| (k.as_str(), v.as_str())),
-        )
-        .status()
-        .with_context(|| format!("git commit in {}", checkout.display()))?;
-    if !commit.success() {
+    if let Err(e) = crate::git::commit_with_message_and_env(checkout, &msg, &env) {
         demote_implemented_to_aborted(
             exp_dir,
             target_id,
             session_id,
             delivery_mode,
             &format!(
-                "coordinator `git commit -m {msg:?}` failed in {} (exit {}); check operator's git \
-                 config / signing setup",
-                checkout.display(),
-                commit
+                "coordinator `git commit -m {msg:?}` failed: {e:#}; check operator's git config / \
+                 signing setup",
             ),
+            FailedGate::EnvironmentalError,
+        )?;
+        return Ok(());
+    }
+
+    // Contract step 4: capture coordinator-observed git provenance.
+    // After this point HEAD is the agent's new commit; HEAD^ is the
+    // base the agent's work was applied on top of. Both are recorded
+    // in `coordinator-provenance.json` so (a) the `--resume` gate can
+    // verify the on-disk commit was built against the same source
+    // Phase 0a archived, and (b) finalize / future PR-writer can quote
+    // exact provenance. If rev-parse fails here the commit is on disk
+    // but unprovenanced — demote, since keeping a kept-but-
+    // unprovenanced experiment would poison the audit chain.
+    if let Err(e) =
+        write_coordinator_provenance(exp_dir, checkout, target_id, session_id, delivery_mode, &msg)
+    {
+        demote_implemented_to_aborted(
+            exp_dir,
+            target_id,
+            session_id,
+            delivery_mode,
+            &format!("coordinator could not record provenance after commit: {e:#}"),
             FailedGate::EnvironmentalError,
         )?;
         return Ok(());
@@ -1181,6 +1093,48 @@ fn coordinator_commit_if_kept(
         checkout = %checkout.display(),
         "coordinator committed agent changes",
     );
+    Ok(())
+}
+
+/// Write `optimize/<target>/coordinator-provenance.json` capturing
+/// the SHAs the coordinator observed in the per-target clone right
+/// after the agent's commit landed. See
+/// [`crate::models::coordinator_provenance`] for the artifact's role.
+///
+/// Read order is `rev-parse HEAD` then `rev-parse HEAD^`: HEAD is the
+/// agent's new commit; HEAD^ is the base we want to confirm matches
+/// the session's archived `baseline/bin/manifest.json.source_sha`.
+fn write_coordinator_provenance(
+    exp_dir: &Path,
+    checkout: &Path,
+    target_id: &str,
+    session_id: &str,
+    delivery_mode: DeliveryMode,
+    commit_message: &str,
+) -> Result<()> {
+    use crate::models::common::SchemaVersionV1;
+    use crate::models::coordinator_provenance::CoordinatorProvenance;
+
+    let head_sha = crate::git::rev_parse_head(checkout)
+        .with_context(|| format!("post-commit `git rev-parse HEAD` in {}", checkout.display()))?;
+    let base_sha = crate::git::rev_parse_head_parent(checkout)
+        .with_context(|| format!("post-commit `git rev-parse HEAD^` in {}", checkout.display()))?;
+    let provenance = CoordinatorProvenance {
+        schema_version: SchemaVersionV1,
+        session_id: session_id.to_owned(),
+        target_id: target_id.to_owned(),
+        delivery_mode,
+        base_sha,
+        head_sha,
+        commit_message: commit_message.to_owned(),
+    };
+    provenance
+        .validate()
+        .map_err(|e| anyhow::anyhow!("coordinator-provenance.json validation: {e}"))?;
+    let json = serde_json::to_string_pretty(&provenance)
+        .context("serializing coordinator-provenance.json")?;
+    let path = exp_dir.join("coordinator-provenance.json");
+    std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 
@@ -1198,6 +1152,160 @@ fn coordinator_commit_if_kept(
 /// worst an agent can do there is mis-bucket its own outcome.
 ///
 /// Returns `Ok(None)` when the report is absent — agent never wrote it.
+/// Resume gate — true iff this target's optimizer outputs are
+/// terminal and trustworthy:
+///
+/// - `optimize/<id>/optimizer-report.json` exists, parses, validates, and its
+///   `target_id` / `session_id` / `delivery_mode` match the expected context.
+/// - For `outcome=implemented`: `coordinator-provenance.json` ALSO exists,
+///   parses, validates, and its `base_sha` matches the session's archived
+///   `baseline/bin/manifest.json.source_sha` (passed in via
+///   `baseline_source_sha`). Catches the case where the per-target branch was
+///   built against a different base than Phase 0a archived — e.g. a mid-session
+///   submodule bump that didn't propagate to every clone.
+/// - For `outcome=aborted`: no sidecar required; aborted targets produced no
+///   commit, so there's nothing to provenance. The agent report's context match
+///   is sufficient.
+///
+/// Any failure mode (missing, corrupt, context mismatch, base SHA
+/// mismatch) falls back to "incomplete" so the caller re-runs. All
+/// re-run reasons log at WARN so operators can distinguish "agent
+/// never ran" from "stale provenance" when investigating skips.
+fn resume_target_is_complete(
+    exp_dir: &Path,
+    target: &MergedTarget,
+    session_id: &str,
+    baseline_source_sha: &str,
+) -> bool {
+    let report = match read_optimizer_report(exp_dir) {
+        Ok(Some(r)) => r,
+        Ok(None) => return false,
+        Err(e) => {
+            tracing::warn!(
+                target = "session.optimizers",
+                target_id = %target.id,
+                error = %e,
+                "resume: optimizer-report.json failed to parse/validate; re-running",
+            );
+            return false;
+        }
+    };
+    if let Err(e) = validate_report_context(&report, &target.id, session_id, target.delivery_mode) {
+        tracing::warn!(
+            target = "session.optimizers",
+            target_id = %target.id,
+            error = %e,
+            "resume: optimizer-report.json context mismatch; re-running",
+        );
+        return false;
+    }
+    // Aborted reports don't produce a commit → no provenance sidecar
+    // to check. Implemented reports REQUIRE a matching sidecar.
+    if matches!(&report, OptimizerReport::Aborted(_)) {
+        return true;
+    }
+    match read_coordinator_provenance(exp_dir) {
+        Ok(Some(p)) => {
+            if let Err(e) = p.validate_context(session_id, &target.id, target.delivery_mode) {
+                tracing::warn!(
+                    target = "session.optimizers",
+                    target_id = %target.id,
+                    error = %e,
+                    "resume: coordinator-provenance.json context mismatch (sidecar from a \
+                     different target/session?); re-running",
+                );
+                return false;
+            }
+            if p.base_sha != baseline_source_sha {
+                tracing::warn!(
+                    target = "session.optimizers",
+                    target_id = %target.id,
+                    provenance_base_sha = %p.base_sha,
+                    baseline_source_sha = %baseline_source_sha,
+                    "resume: coordinator-provenance.json base_sha != archived baseline source_sha; \
+                     per-target branch was built against a different base — re-running",
+                );
+                false
+            } else {
+                true
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                target = "session.optimizers",
+                target_id = %target.id,
+                "resume: optimizer-report.json says outcome=implemented but \
+                 coordinator-provenance.json is missing — re-running",
+            );
+            false
+        }
+        Err(e) => {
+            tracing::warn!(
+                target = "session.optimizers",
+                target_id = %target.id,
+                error = %e,
+                "resume: coordinator-provenance.json failed to parse/validate; re-running",
+            );
+            false
+        }
+    }
+}
+
+/// Read `source_sha` out of the session's archived
+/// `baseline/bin/manifest.json`. Used by the resume gate to verify
+/// each per-target branch was built on top of the same source the
+/// Phase 0a binary was built from. The manifest is JSON written by
+/// Phase 0a; structure is `{ source_sha, dirty, cargo_version, ... }`.
+/// Returns the 40-char hex SHA on success.
+fn read_baseline_source_sha(session_results_dir: &Path) -> Result<String> {
+    let path = session_results_dir.join("baseline/bin/manifest.json");
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    let sha = v
+        .get("source_sha")
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| anyhow::anyhow!("{} missing `source_sha` field", path.display()))?;
+    if sha.len() != 40
+        || !sha
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    {
+        anyhow::bail!("{}: source_sha is not a 40-char hex SHA: {sha:?}", path.display());
+    }
+    Ok(sha.to_owned())
+}
+
+/// Read + validate the coordinator-provenance sidecar for the target
+/// whose `optimize/<target-id>/` dir is `exp_dir`. Companion to
+/// [`read_optimizer_report`] for the audit-trail surface.
+///
+/// Returns `Ok(None)` when the sidecar is absent (expected for
+/// aborted experiments or for sessions that predate the sidecar),
+/// `Ok(Some(_))` when it parses + validates, and an error on parse
+/// or validation failure — same soft-fallback contract as the
+/// optimizer report itself.
+fn read_coordinator_provenance(
+    exp_dir: &Path,
+) -> Result<Option<crate::models::coordinator_provenance::CoordinatorProvenance>> {
+    let path = exp_dir.join("coordinator-provenance.json");
+    match std::fs::metadata(&path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    }
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let p: crate::models::coordinator_provenance::CoordinatorProvenance =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    p.validate()
+        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    Ok(Some(p))
+}
+
 fn read_optimizer_report(exp_dir: &Path) -> Result<Option<OptimizerReport>> {
     let path = exp_dir.join("optimizer-report.json");
     match std::fs::metadata(&path) {
@@ -1442,26 +1550,14 @@ pub fn verify_kept_or_demote(
     }
 }
 
-/// Run `git -C <worktree> rev-parse HEAD` and return the trimmed SHA.
-/// Returns `None` on any failure — caller decides whether to treat that
-/// as a soft "trust the marker" path or a hard error. Used by the
-/// "did the agent actually commit?" gate at the end of `run_one`.
+/// Best-effort `git -C <worktree> rev-parse HEAD`. Returns `None` on
+/// any failure — caller decides whether to treat that as a soft
+/// "trust the marker" path or a hard error. Used by the "did the
+/// agent actually commit?" gate at the end of `run_one`. Thin
+/// re-export of [`crate::git::rev_parse_head_optional`] under the
+/// historical name.
 pub fn git_rev_parse_head(worktree: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(worktree)
-        .arg("rev-parse")
-        .arg("HEAD")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8(out.stdout)
-        .ok()?
-        .trim()
-        .to_owned();
-    if s.is_empty() { None } else { Some(s) }
+    crate::git::rev_parse_head_optional(worktree)
 }
 
 /// Clear per-target optimizer outputs so a retry doesn't leave stale
@@ -1473,6 +1569,8 @@ fn clear_optimizer_artifacts(exp_dir: &Path) -> Result<()> {
         "optimizer-report.json.demoted",
         "abort.md",
         "implementation.md",
+        // Coordinator-owned provenance sidecar (written post-commit).
+        "coordinator-provenance.json",
         // Agent-written side artifacts.
         "side-observations.md",
         "nextest.log",
@@ -1806,13 +1904,7 @@ mod tests {
     }
 
     fn run_git(dir: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .status()
-            .unwrap_or_else(|e| panic!("spawn git {args:?}: {e}"));
-        assert!(status.success(), "git {args:?} failed: {status}");
+        crate::git::run_git(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e:#}"));
     }
 
     /// Initialize a one-commit real git repo at `dir` with a default
@@ -1880,6 +1972,26 @@ mod tests {
                 .join("optimizer-report.json.demoted")
                 .exists()
         );
+        // Coordinator-provenance sidecar landed with the correct SHAs.
+        let provenance_raw = std::fs::read_to_string(exp_dir.join("coordinator-provenance.json"))
+            .expect("coordinator-provenance.json must be written post-commit");
+        let provenance: crate::models::coordinator_provenance::CoordinatorProvenance =
+            serde_json::from_str(&provenance_raw).expect("provenance parses");
+        provenance
+            .validate()
+            .expect("provenance validates");
+        assert_eq!(provenance.session_id, "20260517-000000");
+        assert_eq!(provenance.target_id, "tgt");
+        assert_eq!(provenance.delivery_mode, DeliveryMode::NormalPr);
+        assert_eq!(
+            provenance.base_sha, baseline_head,
+            "base_sha must be the pre-coordinator-commit HEAD (the agent's parent)"
+        );
+        assert_eq!(
+            provenance.head_sha, head_after,
+            "head_sha must be the coordinator's post-commit HEAD"
+        );
+        assert_eq!(provenance.commit_message, "perf: optimize tgt");
     }
 
     /// `outcome=implemented` but the worktree has NO changes ("agent
@@ -2044,16 +2156,7 @@ mod tests {
     /// on non-zero exit. Used by the cleanup/replicate tests to assert
     /// `git worktree list` / `git remote get-url` output.
     fn git_stdout(dir: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .output()
-            .unwrap_or_else(|e| panic!("spawn git {args:?}: {e}"));
-        assert!(out.status.success(), "git {args:?} failed: {}", out.status);
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .to_owned()
+        crate::git::run_git_output(dir, args).unwrap_or_else(|e| panic!("git {args:?}: {e:#}"))
     }
 
     /// Migration regression: when a path is a linked worktree pointer
@@ -2157,5 +2260,225 @@ mod tests {
         // Sanity: the per-target branch landed.
         let head_branch = git_stdout(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]);
         assert_eq!(head_branch, "agent/t");
+    }
+
+    // ── --resume tests ────────────────────────────────────────────
+    //
+    // `resume_target_is_complete` is the gate. It composes
+    // `read_optimizer_report` + `validate_report_context`, so we cover
+    // the failure modes (no report, corrupt JSON, schema-invalid,
+    // context mismatch) plus the happy paths (implemented + aborted
+    // both count as complete).
+
+    fn minimal_resume_target(id: &str, delivery_mode: DeliveryMode) -> MergedTarget {
+        use crate::models::common::{Bucket, Hotspot, ImprovementVector, Risk};
+        use crate::models::targets::MergedFrom;
+
+        let consensus_breaking = !matches!(delivery_mode, DeliveryMode::NormalPr);
+        let poc_implementable = match delivery_mode {
+            DeliveryMode::NormalPr => None,
+            DeliveryMode::ConsensusPocPr => Some(true),
+            DeliveryMode::ConsensusIssue => Some(false),
+        };
+        MergedTarget {
+            id: id.to_owned(),
+            merged_from: vec![MergedFrom {
+                family_id: "x-fam".to_owned(),
+                target_index: 0,
+            }],
+            convergence_count: 1,
+            rank: None,
+            target_span: "x::y".to_owned(),
+            bucket: Bucket::BlockProcessing,
+            hotspot: Hotspot {
+                span: "x::y".to_owned(),
+                self_wall_us: 1,
+                total_wall_us: 1,
+                calls: 1,
+                location: "x.rs:1".to_owned(),
+            },
+            files: vec!["x.rs".to_owned()],
+            evidence: "e".to_owned(),
+            proposed_change: "p".to_owned(),
+            expected_improvement: ImprovementVector {
+                tx_latency: 1.0,
+                tenure_throughput: 0.0,
+                commit_time: 0.0,
+            },
+            risk: Risk::Low,
+            verification_plan: "v".to_owned(),
+            verification_replay: None,
+            merge_notes: None,
+            contributor_differences: None,
+            consensus_breaking,
+            breakage_class: None,
+            poc_implementable,
+            poc_test_scope: None,
+            consensus_writeup: None,
+            delivery_mode,
+            bench_eligible: matches!(delivery_mode, DeliveryMode::NormalPr),
+        }
+    }
+
+    /// Test SHA constants — full-width hex to satisfy validate_sha. The
+    /// values are arbitrary but must not be equal (base_sha != head_sha).
+    const TEST_BASE_SHA: &str = "0ad33704c259da4102b5f195617760003ac89c18";
+    const TEST_HEAD_SHA: &str = "f994e6ef03002fb7b1acdc1b5018da40e73b105b";
+    const TEST_WRONG_BASE_SHA: &str = "b2ea69397c89f7ef8c61a7dcb289d55a421564e4";
+
+    /// Stage a coordinator-provenance sidecar that pairs with
+    /// [`write_implemented_report`] (matching session_id /
+    /// delivery_mode). Used by resume tests for implemented outcomes,
+    /// which require both the report AND the sidecar to skip.
+    fn write_provenance_sidecar(exp_dir: &Path, target_id: &str, base_sha: &str) {
+        use crate::models::common::SchemaVersionV1;
+        use crate::models::coordinator_provenance::CoordinatorProvenance;
+        let p = CoordinatorProvenance {
+            schema_version: SchemaVersionV1,
+            session_id: "20260517-000000".to_owned(),
+            target_id: target_id.to_owned(),
+            delivery_mode: DeliveryMode::NormalPr,
+            base_sha: base_sha.to_owned(),
+            head_sha: TEST_HEAD_SHA.to_owned(),
+            commit_message: format!("perf: optimize {target_id}"),
+        };
+        std::fs::write(
+            exp_dir.join("coordinator-provenance.json"),
+            serde_json::to_string_pretty(&p).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// No report on disk → not complete; falls through to the
+    /// normal re-run path.
+    #[test]
+    fn resume_target_is_complete_returns_false_when_no_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = minimal_resume_target("missing-report", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260521-000000", TEST_BASE_SHA,));
+    }
+
+    /// Implemented report + matching provenance sidecar (base_sha
+    /// matches the session's archived baseline source_sha) → complete;
+    /// skip. The load-bearing happy path.
+    #[test]
+    fn resume_target_is_complete_returns_true_on_matching_implemented_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "test-target");
+        write_provenance_sidecar(tmp.path(), "test-target", TEST_BASE_SHA);
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        assert!(resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Aborted report whose context matches → complete; skip. Aborted
+    /// experiments produce no commit and have no provenance sidecar;
+    /// the gate must NOT require one for them.
+    #[test]
+    fn resume_target_is_complete_returns_true_on_matching_aborted_report() {
+        use crate::models::optimizer_report::{AbortedOutcomeTag, AbortedReport, FailedGate};
+        let tmp = tempfile::tempdir().unwrap();
+        let report = OptimizerReport::Aborted(AbortedReport {
+            schema_version: SchemaVersionV2,
+            session_id: "20260517-000000".to_owned(),
+            target_id: "test-target".to_owned(),
+            outcome: AbortedOutcomeTag::Aborted,
+            delivery_mode: DeliveryMode::NormalPr,
+            reason: "test reason".to_owned(),
+            failed_gate: Some(FailedGate::Clippy),
+            failing_tests: None,
+        });
+        std::fs::write(
+            tmp.path()
+                .join("optimizer-report.json"),
+            serde_json::to_string_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        assert!(resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Report's session_id doesn't match the live session → not
+    /// complete; re-run with a warning. Catches the "report left over
+    /// from a previous session" case.
+    #[test]
+    fn resume_target_is_complete_returns_false_on_session_id_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "test-target");
+        write_provenance_sidecar(tmp.path(), "test-target", TEST_BASE_SHA);
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20991231-235959", TEST_BASE_SHA,));
+    }
+
+    /// Report's target_id doesn't match the expected one → not
+    /// complete; re-run with a warning. Catches a misrouted report.
+    #[test]
+    fn resume_target_is_complete_returns_false_on_target_id_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "report-says-A");
+        write_provenance_sidecar(tmp.path(), "report-says-A", TEST_BASE_SHA);
+        let target = minimal_resume_target("expected-is-B", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Corrupt JSON on disk → not complete; re-run with a warning.
+    /// The warning lets operators distinguish "agent crashed" from
+    /// "stale or tampered report" when investigating skips.
+    #[test]
+    fn resume_target_is_complete_returns_false_on_corrupt_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path()
+                .join("optimizer-report.json"),
+            "{ not valid json",
+        )
+        .unwrap();
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Implemented report present but provenance sidecar missing → not
+    /// complete; re-run. Closes the historical hole where a
+    /// partially-recovered session could skip a target without
+    /// verifying the on-disk commit was built against the archived
+    /// baseline source.
+    #[test]
+    fn resume_target_is_complete_returns_false_when_implemented_lacks_provenance() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "test-target");
+        // No provenance sidecar.
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Provenance sidecar present but `base_sha` doesn't match the
+    /// session's archived baseline source_sha → not complete; re-run.
+    /// This is the load-bearing apples-to-apples invariant: if the
+    /// per-target branch was rebased onto / built against a different
+    /// base than Phase 0a archived, the comparison isn't honest.
+    #[test]
+    fn resume_target_is_complete_returns_false_on_base_sha_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "test-target");
+        write_provenance_sidecar(tmp.path(), "test-target", TEST_WRONG_BASE_SHA);
+        let target = minimal_resume_target("test-target", DeliveryMode::NormalPr);
+        // Gate is given TEST_BASE_SHA as the session's source; sidecar
+        // recorded TEST_WRONG_BASE_SHA → mismatch → re-run.
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
+    }
+
+    /// Provenance sidecar has matching `base_sha`, but its `target_id`
+    /// belongs to a different target (e.g. an operator copy-paste
+    /// during recovery). Resume gate's context check must catch this
+    /// — without it the wrong target's `head_sha` would skip the
+    /// re-run and the audit chain would silently lie.
+    #[test]
+    fn resume_target_is_complete_returns_false_on_provenance_context_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_implemented_report(tmp.path(), "expected-target");
+        // Sidecar says the commit was made for a DIFFERENT target even
+        // though the report + dir name align with `expected-target`.
+        write_provenance_sidecar(tmp.path(), "some-other-target", TEST_BASE_SHA);
+        let target = minimal_resume_target("expected-target", DeliveryMode::NormalPr);
+        assert!(!resume_target_is_complete(tmp.path(), &target, "20260517-000000", TEST_BASE_SHA,));
     }
 }

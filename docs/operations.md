@@ -12,9 +12,13 @@ version's bundle:
 
 ```bash
 cd <operator>
-sbagent sync                          # rewrite schemas + queries on disk;
-                                      # leave operator-tuned prompts alone.
-sbagent sync --force-prompts          # also clobber prompt edits.
+sbagent sync                          # rewrite ALL bundles on disk
+                                      # (schemas, queries, prompts, context)
+                                      # — the bundled versions are the
+                                      # contract surface.
+sbagent sync --keep-tunables          # preserve operator-edited prompts +
+                                      # context docs (still refreshes
+                                      # schemas + queries).
 sbagent sync --commit                 # also produce one bot-authored commit
                                       # of whatever changed.
 sbagent sync --push                   # implies --commit; pushes to origin

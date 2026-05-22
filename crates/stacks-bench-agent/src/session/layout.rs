@@ -128,6 +128,32 @@ impl SessionLayout {
             .join("noise-floor-pct")
     }
 
+    /// `results/baseline/bin/` — directory holding the archived
+    /// `stacks-bench` binary used by Phase 0b baseline, Phase 1.8
+    /// calibration, and Phase 3 full-range fallback. See Phase 0a in
+    /// [`baseline-verification-agent-plan.md`](../../../../
+    /// baseline-verification-agent-plan.md).
+    pub fn baseline_bin_dir(&self) -> PathBuf {
+        self.baseline_dir()
+            .join("bin")
+    }
+
+    /// `results/baseline/bin/stacks-bench` — the archived binary
+    /// itself. Strict-binary code paths read this path directly;
+    /// missing file → hard error, no `cargo stacks-bench` fallback.
+    pub fn baseline_bin_path(&self) -> PathBuf {
+        self.baseline_bin_dir()
+            .join("stacks-bench")
+    }
+
+    /// `results/baseline/bin/manifest.json` — provenance for the
+    /// archived binary: source sha, cargo version, build flags,
+    /// archived_at timestamp.
+    pub fn baseline_bin_manifest_path(&self) -> PathBuf {
+        self.baseline_bin_dir()
+            .join("manifest.json")
+    }
+
     /// `results/baseline/bench-run.stderr.log`.
     pub fn baseline_bench_run_stderr(&self) -> PathBuf {
         self.baseline_dir()
@@ -278,6 +304,65 @@ impl SessionLayout {
     pub fn optimize_dir(&self) -> PathBuf {
         self.results_dir
             .join("optimize")
+    }
+
+    // ── Phase 1.8: targeted baseline calibration (Pass 1a) ───────────
+
+    /// `results/verify/` — root for per-target Phase 1.8 (and future
+    /// Phase 1.9 verifier) artifacts. Separate from `optimize/`
+    /// because verification owns its own audit trail; conflating
+    /// the two confuses re-runs and clean-step semantics.
+    pub fn verify_dir(&self) -> PathBuf {
+        self.results_dir
+            .join("verify")
+    }
+
+    /// `results/verify/<target-id>/`.
+    pub fn verify_target_dir(&self, target_id: &str) -> PathBuf {
+        self.verify_dir()
+            .join(target_id)
+    }
+
+    /// Per-phase baseline calibration run dir for a single bench
+    /// invocation. `phase` is `"txid"` or `"block"`; `k` is the
+    /// 1-indexed invocation number (Pass 1a always writes `k=1`;
+    /// Path B multi-invocation variance — future work — would
+    /// produce `k=1..N`).
+    pub fn verify_baseline_run_dir(&self, target_id: &str, phase: &str, k: usize) -> PathBuf {
+        self.verify_target_dir(target_id)
+            .join(format!("baseline-{phase}-run-{k}"))
+    }
+
+    /// `results/verify/<target-id>/baseline-{phase}-run-{k}/bench-run.json`
+    /// — the stacks-bench output for one calibration invocation.
+    pub fn verify_baseline_bench_run_json(
+        &self,
+        target_id: &str,
+        phase: &str,
+        k: usize,
+    ) -> PathBuf {
+        self.verify_baseline_run_dir(target_id, phase, k)
+            .join("bench-run.json")
+    }
+
+    /// `results/verify/<target-id>/baseline-{phase}-run-{k}/bench-run.stderr.
+    /// log`.
+    pub fn verify_baseline_bench_run_stderr(
+        &self,
+        target_id: &str,
+        phase: &str,
+        k: usize,
+    ) -> PathBuf {
+        self.verify_baseline_run_dir(target_id, phase, k)
+            .join("bench-run.stderr.log")
+    }
+
+    /// `results/verify/<target-id>/baseline-run-ids.json` — structured
+    /// `{txid_run_ids: [...], block_run_ids: [...]}` mapping replay
+    /// phase → run ids produced by Phase 1.8.
+    pub fn verify_baseline_run_ids_json(&self, target_id: &str) -> PathBuf {
+        self.verify_target_dir(target_id)
+            .join("baseline-run-ids.json")
     }
 
     /// `results/optimize/<target-id>/`.

@@ -10,8 +10,6 @@
 //! API access for `publish_base_repo`, and the git-side push path
 //! (remote configured, github.com URL, auth works via `ls-remote`).
 
-use std::process::Command;
-
 use anyhow::{Result, bail};
 
 use super::CliContext;
@@ -104,38 +102,16 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
             return;
         }
     };
-    match Command::new("git")
-        .arg("-C")
-        .arg(base)
-        .arg("remote")
-        .arg("get-url")
-        .arg(&cfg.publish_remote)
-        .output()
-    {
+    match crate::git::get_remote_url(base, &cfg.publish_remote) {
         Err(e) => findings.push(format!(
-            "spawning `git -C {} remote get-url {}` failed: {e}",
-            base.display(),
+            "{e:#}; configure the remote or set `publish_remote` to the correct name",
+        )),
+        Ok(url) if !is_github_url(&url) => findings.push(format!(
+            "remote `{}` resolves to {url}, which is not a github.com URL; the publish path can \
+             only push to github.com",
             cfg.publish_remote
         )),
-        Ok(out) if !out.status.success() => findings.push(format!(
-            "`git -C {} remote get-url {}` failed: {}; configure the remote or set \
-             `publish_remote` to the correct name",
-            base.display(),
-            cfg.publish_remote,
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-        Ok(out) => {
-            let url = String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .to_owned();
-            if !is_github_url(&url) {
-                findings.push(format!(
-                    "remote `{}` resolves to {url}, which is not a github.com URL; the publish \
-                     path can only push to github.com",
-                    cfg.publish_remote
-                ));
-            }
-        }
+        Ok(_) => {}
     }
 
     // Validate that `git push` will actually authenticate. `ls-remote`
@@ -148,28 +124,10 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
     // - `GIT_TERMINAL_PROMPT=0` disables git's own credential prompts.
     // - `GIT_SSH_COMMAND=ssh -oBatchMode=yes` disables ssh's prompts (host trust,
     //   passphrase, etc.) so failures surface immediately as non-zero exits.
-    match Command::new("git")
-        .arg("-C")
-        .arg(base)
-        .arg("ls-remote")
-        .arg(&cfg.publish_remote)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
-        .output()
-    {
-        Err(e) => findings.push(format!(
-            "spawning `git -C {} ls-remote {}` failed: {e}",
-            base.display(),
-            cfg.publish_remote
-        )),
-        Ok(out) if !out.status.success() => findings.push(format!(
-            "`git -C {} ls-remote {}` failed: {}; verify the SSH key / HTTPS credentials this \
-             user has for `git push <remote>`",
-            base.display(),
-            cfg.publish_remote,
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-        Ok(_) => {}
+    if let Err(e) = crate::git::ls_remote_no_prompt(base, &cfg.publish_remote) {
+        findings.push(format!(
+            "{e:#}; verify the SSH key / HTTPS credentials this user has for `git push <remote>`",
+        ));
     }
 }
 

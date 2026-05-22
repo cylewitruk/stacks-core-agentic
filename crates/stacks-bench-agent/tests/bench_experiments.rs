@@ -277,9 +277,10 @@ fn bench_experiments_normal_pr_target_runs_two_invocations() {
     assert_eq!(run_ids.len(), 2);
 
     // Both invocations were `bench run --source ... --name target-a-run-{1,2}`,
-    // and both carry the minimal-profiler flags (finalize reads only
-    // `total_duration_us` from candidate runs; the full profiler tree
-    // would just bloat the persistent DB).
+    // and NEITHER carries minimal-profiler flags. Pass 1c flag-symmetry
+    // invariant: candidate must use the same profile flags as the Phase
+    // 1.8 baseline calibration; baseline runs rich (no --bench-spans-only,
+    // no --no-profiler-kv), so candidate must match.
     let calls = bench.calls();
     assert_eq!(calls.len(), 2);
     for (i, call) in calls.iter().enumerate() {
@@ -292,14 +293,18 @@ fn bench_experiments_normal_pr_target_runs_two_invocations() {
             "call[{i}] missing --name {expected_name}: {call:?}"
         );
         assert!(
-            call.iter()
+            !call
+                .iter()
                 .any(|a| a == "--bench-spans-only"),
-            "candidate call[{i}] missing --bench-spans-only: {call:?}"
+            "candidate call[{i}] must NOT carry --bench-spans-only (flag-symmetry with rich \
+             baseline); got: {call:?}"
         );
         assert!(
-            call.iter()
+            !call
+                .iter()
                 .any(|a| a == "--no-profiler-kv"),
-            "candidate call[{i}] missing --no-profiler-kv: {call:?}"
+            "candidate call[{i}] must NOT carry --no-profiler-kv (flag-symmetry with rich \
+             baseline); got: {call:?}"
         );
     }
 
@@ -529,19 +534,24 @@ fn bench_experiments_uses_verification_replay_when_present() {
     let calls = bench.calls();
     assert_eq!(calls.len(), 2, "two bench invocations (txids, blocks)");
 
-    // Minimal-profiler flags ride on the common arg prefix; pin them on both
-    // phases so a future refactor that splits targeted-replay arg construction
-    // can't silently drop them.
+    // Flag-symmetry invariant (Pass 1c): targeted-replay candidate runs
+    // must NOT carry --bench-spans-only / --no-profiler-kv because the
+    // Phase 1.8 baseline they're compared against runs rich. Asymmetric
+    // profile overhead biases improvement_pct on profile-heavy
+    // workloads. If lean profiles are reintroduced later, baseline +
+    // candidate must match within a profile.
     for (i, call) in calls.iter().enumerate() {
         assert!(
-            call.iter()
+            !call
+                .iter()
                 .any(|a| a == "--bench-spans-only"),
-            "targeted-replay call[{i}] missing --bench-spans-only: {call:?}"
+            "targeted-replay call[{i}] must NOT carry --bench-spans-only: {call:?}"
         );
         assert!(
-            call.iter()
+            !call
+                .iter()
                 .any(|a| a == "--no-profiler-kv"),
-            "targeted-replay call[{i}] missing --no-profiler-kv: {call:?}"
+            "targeted-replay call[{i}] must NOT carry --no-profiler-kv: {call:?}"
         );
     }
 

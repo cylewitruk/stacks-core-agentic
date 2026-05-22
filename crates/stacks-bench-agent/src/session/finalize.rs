@@ -94,12 +94,27 @@ pub fn compute_summary(
     targets: &OptimizationTargets,
     inputs: &FinalizeInputs<'_>,
 ) -> Result<Summary> {
-    // Compute baseline mean only when at least one normal_pr target needs
-    // it (matches the bash NEEDS_BASELINE optimization).
-    let needs_baseline = targets
-        .targets
-        .iter()
-        .any(|t| t.delivery_mode == DeliveryMode::NormalPr);
+    // Compute session-level baseline mean only when at least one
+    // normal_pr target would actually fall back to it. Pass 1a's
+    // per-target denominator (via `verify/<target>/baseline-run-ids.json`)
+    // is preferred for any target that has it; the session-level
+    // baseline_run_id is only consulted when a target has no per-target
+    // ids on disk. Resolving the session-level baseline against the DB
+    // unconditionally would force operators to keep that run_id alive
+    // even when no target consumes it.
+    let mut needs_baseline = false;
+    for t in &targets.targets {
+        if t.delivery_mode != DeliveryMode::NormalPr {
+            continue;
+        }
+        if load_per_target_baseline_ids(inputs, t)
+            .with_context(|| format!("loading per-target baseline ids for {}", t.id))?
+            .is_none()
+        {
+            needs_baseline = true;
+            break;
+        }
+    }
     let baseline_mean = if needs_baseline {
         let b1 = inputs
             .bench
@@ -126,7 +141,20 @@ pub fn compute_summary(
 
     let mut experiments: Vec<Experiment> = Vec::with_capacity(targets.targets.len());
     for t in &targets.targets {
-        experiments.push(evaluate_target(t, inputs, baseline_mean, targets.noise_floor_pct)?);
+        let mut exp = evaluate_target(t, inputs, baseline_mean, targets.noise_floor_pct)?;
+        // Thread coordinator-provenance (base_sha + head_sha) into the
+        // experiment record when the sidecar exists. The sidecar is
+        // only written for targets whose coordinator commit landed
+        // (i.e. shipped optimizer-report.json with outcome=implemented);
+        // aborted experiments + consensus_issue rows leave both fields
+        // None.
+        if let Some(p) = load_coordinator_provenance(inputs, t)
+            .with_context(|| format!("loading coordinator provenance for {}", t.id))?
+        {
+            exp.base_sha = Some(p.base_sha);
+            exp.head_sha = Some(p.head_sha);
+        }
+        experiments.push(exp);
     }
 
     let outcome_counts = aggregate_counts(&experiments);
@@ -242,14 +270,65 @@ fn evaluate_target(
         ));
     }
 
-    let baseline_mean = baseline_mean.expect("baseline_mean is computed when needed");
+    // Per-target baseline denominator (Pass 1a): if Phase 1.8
+    // produced calibration runs for this target, mean them and use
+    // that as the denominator (apples-to-apples targeted-replay
+    // comparison). Otherwise fall back to the session-level
+    // baseline mean (legacy P0 ↔ candidate-full-range comparison).
+    //
+    // Soft-fallback ONLY applies when no per-target baseline file
+    // exists (target had no `verification_replay` OR Phase 1.8 was
+    // skipped). Any OTHER failure mode — parse error, IO error,
+    // referenced run id missing from the DB — is a hard error.
+    // Silent fallback in those cases would emit an
+    // old-methodology `improvement_pct` while the summary's
+    // `baseline_run_ids` field still claims per-target data was
+    // used; that's an integrity hazard the Pass 1a gate exists to
+    // prevent.
+    let per_target_baseline_ids = load_per_target_baseline_ids(inputs, t)
+        .with_context(|| format!("loading per-target baseline ids for {}", t.id))?;
+    let effective_baseline_mean = if let Some(ids) = per_target_baseline_ids.as_ref() {
+        if ids.is_empty() {
+            // Shouldn't happen — loader returns None for an empty
+            // file. Defensive: treat as "no per-target data" path.
+            baseline_mean.expect("baseline_mean is computed when needed")
+        } else {
+            let mut samples: Vec<i64> = Vec::with_capacity(ids.len());
+            for &id in ids {
+                let dur = inputs
+                    .bench
+                    .total_duration_us(id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "per-target baseline run_id={id} for `{}` has no recorded summary in \
+                             the stacks-bench DB (referenced from \
+                             verify/{}/baseline-run-ids.json); Pass 1a refuses to fall back to \
+                             the session-level baseline when per-target data is partially missing",
+                            t.id,
+                            t.id,
+                        )
+                    })?;
+                samples.push(dur);
+            }
+            samples
+                .iter()
+                .copied()
+                .sum::<i64>() as f64
+                / samples.len() as f64
+        }
+    } else {
+        baseline_mean.expect("baseline_mean is computed when needed")
+    };
     let exp_mean = durations
         .iter()
         .copied()
         .sum::<i64>() as f64
         / durations.len() as f64;
-    let improvement_pct =
-        if baseline_mean == 0.0 { 0.0 } else { (baseline_mean - exp_mean) / baseline_mean * 100.0 };
+    let improvement_pct = if effective_baseline_mean == 0.0 {
+        0.0
+    } else {
+        (effective_baseline_mean - exp_mean) / effective_baseline_mean * 100.0
+    };
 
     let (status, reason) = if improvement_pct > noise_floor_pct {
         (ExperimentStatus::Accepted, None)
@@ -267,11 +346,20 @@ fn evaluate_target(
             )),
         )
     };
-    Ok(experiment(t, status, Some(run_ids), Some(improvement_pct), reason))
+    Ok(experiment_with_baseline(
+        t,
+        status,
+        Some(run_ids),
+        per_target_baseline_ids,
+        Some(improvement_pct),
+        reason,
+    ))
 }
 
 /// Construct an [`Experiment`] row carrying the target's `breakage_class`
-/// when relevant.
+/// when relevant. `base_sha` / `head_sha` start as `None`; the
+/// outer `finalize` loop fills them from `coordinator-provenance.json`
+/// after construction for experiments whose commit landed.
 fn experiment(
     t: &MergedTarget,
     status: ExperimentStatus,
@@ -284,10 +372,75 @@ fn experiment(
         delivery_mode: t.delivery_mode,
         status,
         run_ids,
+        baseline_run_ids: None,
         improvement_pct,
         breakage_class: t.breakage_class,
+        base_sha: None,
+        head_sha: None,
         reason,
     }
+}
+
+/// Variant of [`experiment`] that records the per-target baseline
+/// run ids used as the improvement_pct denominator. Used by
+/// `evaluate_normal_pr` when Phase 1.8 calibration produced a
+/// per-target baseline. Same `base_sha` / `head_sha` post-construction
+/// fill semantics as [`experiment`].
+fn experiment_with_baseline(
+    t: &MergedTarget,
+    status: ExperimentStatus,
+    run_ids: Option<Vec<i64>>,
+    baseline_run_ids: Option<Vec<i64>>,
+    improvement_pct: Option<f64>,
+    reason: Option<String>,
+) -> Experiment {
+    Experiment {
+        target_id: t.id.clone(),
+        delivery_mode: t.delivery_mode,
+        status,
+        run_ids,
+        baseline_run_ids,
+        improvement_pct,
+        breakage_class: t.breakage_class,
+        base_sha: None,
+        head_sha: None,
+        reason,
+    }
+}
+
+/// Read + validate `optimize/<target>/coordinator-provenance.json` for
+/// the audit-trail surface on [`Experiment`]. Returns `Ok(None)` when
+/// the sidecar is absent (expected for aborted experiments + sessions
+/// that predate Pass 1c's provenance contract), `Ok(Some(_))` on a
+/// clean sidecar, and an error on parse / validation failure (same
+/// strict-fallback contract as [`load_per_target_baseline_ids`]).
+fn load_coordinator_provenance(
+    inputs: &FinalizeInputs<'_>,
+    target: &MergedTarget,
+) -> Result<Option<crate::models::coordinator_provenance::CoordinatorProvenance>> {
+    let path = inputs
+        .layout
+        .experiment_dir(&target.id)
+        .join("coordinator-provenance.json");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    };
+    let p: crate::models::coordinator_provenance::CoordinatorProvenance =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    p.validate()
+        .map_err(|e| anyhow::anyhow!("validating {}: {e}", path.display()))?;
+    // Context cross-check: catches a sidecar that parses + validates
+    // but belongs to a different target / session / delivery mode.
+    // Without this a stale sidecar (e.g. copied from another session's
+    // exp_dir during operator recovery) could leak the wrong head_sha
+    // into summary.json.
+    p.validate_context(inputs.layout.id.as_str(), &target.id, target.delivery_mode)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    Ok(Some(p))
 }
 
 /// Aggregate experiment outcomes into the schema-shaped `outcome_counts`.
@@ -373,4 +526,45 @@ fn is_non_empty_file(path: &std::path::Path) -> bool {
     std::fs::metadata(path)
         .map(|m| m.is_file() && m.len() > 0)
         .unwrap_or(false)
+}
+
+/// Load `verify/<target>/baseline-run-ids.json` produced by Phase
+/// 1.8 calibration and flatten the txid + block run id vecs into
+/// the pooled-mean denominator set.
+///
+/// Returns:
+///
+/// - `Ok(None)` ONLY when the file does not exist (target had no
+///   `verification_replay`, or Phase 1.8 was skipped). This is the sole
+///   legitimate soft-fallback to the session-level baseline.
+/// - `Ok(Some(...))` when the file exists and parses to non-empty per-phase
+///   run-id arrays.
+/// - `Ok(None)` when the file parses to entirely empty arrays (Phase 1.8 ran
+///   but produced no usable ids for this target — defensive, shouldn't happen
+///   in practice).
+/// - `Err(...)` on any other failure: IO error, malformed JSON, schema
+///   mismatch. The caller propagates this rather than silently degrading the
+///   methodology.
+fn load_per_target_baseline_ids(
+    inputs: &FinalizeInputs<'_>,
+    target: &MergedTarget,
+) -> Result<Option<Vec<i64>>> {
+    let path = inputs
+        .layout
+        .verify_baseline_run_ids_json(&target.id);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    };
+    let ids: crate::session::calibration::BaselineRunIds =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    if ids.txid_run_ids.is_empty() && ids.block_run_ids.is_empty() {
+        return Ok(None);
+    }
+    let mut pooled = ids.txid_run_ids;
+    pooled.extend(ids.block_run_ids);
+    Ok(Some(pooled))
 }

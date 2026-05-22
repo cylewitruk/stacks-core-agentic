@@ -48,6 +48,15 @@ pub struct Experiment {
     /// targets that reached benchmarking).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_ids: Option<Vec<i64>>,
+    /// Per-target baseline run ids — pooled (phase-aware breakdown
+    /// lives on disk at `verify/<target>/baseline-run-ids.json`).
+    /// Present when Phase 1.8 ran for this target (i.e. the target
+    /// had a non-empty `verification_replay` and Pass 1a's
+    /// targeted-baseline calibration produced results). Absent
+    /// when finalize falls back to the session-level baseline
+    /// (legacy path for targets without `verification_replay`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_run_ids: Option<Vec<i64>>,
     /// Improvement vs baseline as a signed percentage. Set only for
     /// `NormalPr` targets that reached benchmarking.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,6 +64,18 @@ pub struct Experiment {
     /// Surfaced for `consensus_poc_pr` / `consensus_issue` rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breakage_class: Option<BreakageClass>,
+    /// Parent of the coordinator's per-target commit. Populated from
+    /// `optimize/<id>/coordinator-provenance.json.base_sha` when the
+    /// sidecar exists. Used by Phase 5 PR-writer + audit to prove the
+    /// optimization was applied on top of the same source SHA Phase 0a
+    /// archived. Absent for aborted experiments (no commit) and for
+    /// sessions that predate the provenance sidecar contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_sha: Option<String>,
+    /// Coordinator's per-target commit SHA. Populated from
+    /// `coordinator-provenance.json.head_sha` (see [`base_sha`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_sha: Option<String>,
     /// Free-form reason (e.g. abort message excerpt, "within noise floor").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,

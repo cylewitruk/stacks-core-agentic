@@ -5,7 +5,7 @@ use clap::Args;
 
 use crate::cli::CliContext;
 use crate::session::SessionLayout;
-use crate::session::baseline::{self, ImportInputs};
+use crate::session::baseline::{self, ArchiveBinaryInputs, ImportInputs};
 use crate::session::bench::StacksBenchCli;
 use crate::types::SessionId;
 
@@ -26,23 +26,35 @@ pub struct BaselineImportArgs {
 pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
-    let bench = StacksBenchCli {
-        release_bin: Some(
-            ctx.layout
-                .require_base()?
-                .join("target")
-                .join("release")
-                .join("stacks-bench"),
-        ),
-        data_dir: ctx
-            .layout
+    // Phase 0a archival also runs for imported-baseline sessions —
+    // downstream Phase 1.8 + Phase 3 paths need
+    // `baseline/bin/stacks-bench` regardless of how Phase 0b was
+    // resolved.
+    let stacks_core_base = ctx
+        .layout
+        .require_base()?
+        .to_path_buf();
+    let archive_outputs = baseline::archive_baseline_binary(&ArchiveBinaryInputs {
+        layout: &layout,
+        stacks_core_base: &stacks_core_base,
+    })?;
+    eprintln!(
+        "Phase 0a: archived baseline stacks-bench binary at {} (source_sha={})",
+        archive_outputs
+            .archived_path
+            .display(),
+        archive_outputs.source_sha,
+    );
+
+    let bench = StacksBenchCli::strict_archived(
+        archive_outputs
+            .archived_path
+            .clone(),
+        ctx.layout
             .stacks_bench_data_dir
             .clone(),
-        cargo_cwd: ctx
-            .layout
-            .require_base()?
-            .to_path_buf(),
-    };
+        stacks_core_base,
+    );
 
     let inputs = ImportInputs::from_settings(
         &layout,
