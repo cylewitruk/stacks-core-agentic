@@ -3,8 +3,9 @@
 //! touches a real git repo or codex CLI.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::models::common::{
@@ -60,7 +61,6 @@ impl FakeHarness {
     fn prompt_for(&self, target_id: &str) -> Option<String> {
         self.prompts
             .lock()
-            .unwrap()
             .get(target_id)
             .cloned()
     }
@@ -136,15 +136,12 @@ impl AgentHarness for FakeHarness {
             .ok_or_else(|| anyhow::anyhow!("output_dir has no terminal segment"))?
             .to_string_lossy()
             .into_owned();
-        self.prompts
-            .lock()
-            .unwrap()
-            .insert(
-                target.clone(),
-                inputs
-                    .rendered_prompt
-                    .to_owned(),
-            );
+        self.prompts.lock().insert(
+            target.clone(),
+            inputs
+                .rendered_prompt
+                .to_owned(),
+        );
 
         std::fs::write(
             inputs.events_jsonl,
@@ -156,7 +153,6 @@ impl AgentHarness for FakeHarness {
         let decision = self
             .decisions
             .lock()
-            .unwrap()
             .get(&target)
             .copied()
             .unwrap_or(FakeDecision::Implemented(DeliveryMode::NormalPr));
@@ -514,7 +510,7 @@ async fn optimizers_aborts_clear_implementation_marker() {
 /// call (or ordering between worktree and branch teardown) is needed.
 #[tokio::test]
 async fn prune_aborted_experiments_drops_only_unmarked_checkouts() {
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     struct RecordingGit {
         removed: Mutex<Vec<std::path::PathBuf>>,
@@ -526,7 +522,6 @@ async fn prune_aborted_experiments_drops_only_unmarked_checkouts() {
         fn remove_checkout(&self, checkout: &Path) -> anyhow::Result<bool> {
             self.removed
                 .lock()
-                .unwrap()
                 .push(checkout.to_path_buf());
             Ok(true)
         }
@@ -570,11 +565,7 @@ async fn prune_aborted_experiments_drops_only_unmarked_checkouts() {
     let dropped =
         optimizers::prune_aborted_experiments(&git, &checkouts_root, &layout).expect("prune");
 
-    let mut removed: Vec<std::path::PathBuf> = git
-        .removed
-        .lock()
-        .unwrap()
-        .clone();
+    let mut removed: Vec<std::path::PathBuf> = git.removed.lock().clone();
     removed.sort();
     assert_eq!(
         removed,

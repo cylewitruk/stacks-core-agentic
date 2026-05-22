@@ -10,9 +10,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Result;
+use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
@@ -96,7 +97,6 @@ impl AgentHarness for ChainHarness {
             .unwrap_or_default();
         self.invocations
             .lock()
-            .unwrap()
             .push(format!("{kind}:{target}"));
 
         // Resolve delivery_mode by reading the session's
@@ -273,49 +273,42 @@ impl GhClient for ChainGh {
     fn switch_branch(&self, _: &Path, branch: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::SwitchBranch(branch.to_owned()));
         Ok(())
     }
     fn add_modified(&self, _: &Path) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::AddModified);
         Ok(())
     }
     fn commit_if_staged(&self, _: &Path, _: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::Commit);
         Ok(())
     }
     fn push_branch(&self, _: &Path, _: &str, branch: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::Push(branch.to_owned()));
         Ok(())
     }
     async fn pr_exists(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::PrExists);
         Ok(false)
     }
     async fn issue_exists(&self, _: &str, _: &str) -> Result<bool> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::IssueExists);
         Ok(false)
     }
     async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::CreatePr {
                 head: args.head.to_owned(),
                 draft: args.draft,
@@ -332,7 +325,6 @@ impl GhClient for ChainGh {
     ) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(GhCall::CreateIssue {
                 title: title.to_owned(),
                 body_has_trace: body.contains("<!-- agentic-"),
@@ -504,7 +496,6 @@ async fn post_merge_chain_optimizers_finalize_publish() {
     let kinds_called: Vec<_> = harness
         .invocations
         .lock()
-        .unwrap()
         .iter()
         .map(|s| {
             s.split(':')
@@ -552,7 +543,7 @@ async fn post_merge_chain_optimizers_finalize_publish() {
     .await
     .expect("publish::push");
 
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
     let issue_calls: Vec<_> = calls
         .iter()
         .filter_map(|c| match c {

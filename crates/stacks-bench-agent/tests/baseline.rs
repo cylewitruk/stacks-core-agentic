@@ -6,10 +6,9 @@
 //! got invoked, in the right order, with the right flags, and (2) the
 //! correct artifact files landed in the session results dir.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::baseline::{self, ImportInputs, RunInputs};
 use stacks_bench_agent::session::bench::{BenchClient, InvokeOptions};
@@ -26,7 +25,7 @@ struct RecordingBench {
     next_run_id: Mutex<i64>,
     /// total_duration_us → run_id table (unused here but matches finalize
     /// tests).
-    durations: RefCell<Vec<(i64, i64)>>,
+    durations: Mutex<Vec<(i64, i64)>>,
 }
 
 impl RecordingBench {
@@ -34,25 +33,19 @@ impl RecordingBench {
         Self {
             calls: Mutex::new(Vec::new()),
             next_run_id: Mutex::new(500),
-            durations: RefCell::new(Vec::new()),
+            durations: Mutex::new(Vec::new()),
         }
     }
     fn calls(&self) -> Vec<Vec<String>> {
-        self.calls
-            .lock()
-            .unwrap()
-            .clone()
+        self.calls.lock().clone()
     }
 }
-
-unsafe impl Send for RecordingBench {}
-unsafe impl Sync for RecordingBench {}
 
 impl BenchClient for RecordingBench {
     fn total_duration_us(&self, run_id: i64) -> anyhow::Result<Option<i64>> {
         Ok(self
             .durations
-            .borrow()
+            .lock()
             .iter()
             .find(|(r, _)| *r == run_id)
             .map(|(_, d)| *d))
@@ -66,7 +59,6 @@ impl BenchClient for RecordingBench {
             .collect();
         self.calls
             .lock()
-            .unwrap()
             .push(argv.clone());
 
         // Write canned JSON depending on subcommand. `bench run` and
@@ -76,10 +68,7 @@ impl BenchClient for RecordingBench {
         if let Some(stdout_path) = opts.stdout {
             let body = match argv.as_slice() {
                 [c1, c2, ..] if c1 == "bench" && (c2 == "run" || c2 == "rerun") => {
-                    let mut id = self
-                        .next_run_id
-                        .lock()
-                        .unwrap();
+                    let mut id = self.next_run_id.lock();
                     *id += 1;
                     let value = *id;
                     serde_json::json!({ "data": { "run_id": value } }).to_string()

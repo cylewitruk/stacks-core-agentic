@@ -3,8 +3,9 @@
 //! post-invocation tally can roll up.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
@@ -31,10 +32,7 @@ impl FakeHarness {
         }
     }
     fn invocations(&self) -> usize {
-        *self
-            .invocations
-            .lock()
-            .unwrap()
+        *self.invocations.lock()
     }
 }
 
@@ -51,15 +49,11 @@ impl AgentHarness for FakeHarness {
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow::anyhow!("test cwd missing family-id segment"))?
             .to_owned();
-        *self
-            .invocations
-            .lock()
-            .unwrap() += 1;
+        *self.invocations.lock() += 1;
 
         let status = self
             .statuses
             .lock()
-            .unwrap()
             .get(&family)
             .copied()
             .unwrap_or("accepted");

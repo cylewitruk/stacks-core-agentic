@@ -8,8 +8,8 @@
 //! reflects what the harness wrote.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
@@ -40,7 +40,6 @@ impl RecordingHarness {
     fn last_prompt(&self) -> Option<String> {
         self.state
             .lock()
-            .unwrap()
             .prompts
             .last()
             .cloned()
@@ -48,7 +47,6 @@ impl RecordingHarness {
     fn last_cwd(&self) -> Option<PathBuf> {
         self.state
             .lock()
-            .unwrap()
             .cwds
             .last()
             .cloned()
@@ -56,7 +54,6 @@ impl RecordingHarness {
     fn last_add_dirs(&self) -> Option<Vec<PathBuf>> {
         self.state
             .lock()
-            .unwrap()
             .add_dirs
             .last()
             .cloned()
@@ -70,7 +67,7 @@ impl AgentHarness for RecordingHarness {
     async fn invoke<'a>(&'a self, inputs: &'a InvokeInputs<'a>) -> anyhow::Result<InvokeOutputs> {
         // Record the call.
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock();
             state.prompts.push(
                 inputs
                     .rendered_prompt

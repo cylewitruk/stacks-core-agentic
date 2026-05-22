@@ -8,8 +8,8 @@
 //!   can assert the exact `bench run` invocations land for each target.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use stacks_bench_agent::models::common::{
     Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV2, VerificationReplay,
 };
@@ -66,15 +66,9 @@ impl RecordingBench {
         }
     }
     fn calls(&self) -> Vec<Vec<String>> {
-        self.calls
-            .lock()
-            .unwrap()
-            .clone()
+        self.calls.lock().clone()
     }
 }
-
-unsafe impl Send for RecordingBench {}
-unsafe impl Sync for RecordingBench {}
 
 impl BenchClient for RecordingBench {
     fn total_duration_us(&self, _: i64) -> anyhow::Result<Option<i64>> {
@@ -86,12 +80,9 @@ impl BenchClient for RecordingBench {
             .iter()
             .map(|s| (*s).to_owned())
             .collect();
-        self.calls
-            .lock()
-            .unwrap()
-            .push(argv);
+        self.calls.lock().push(argv);
         if let Some(stdout_path) = opts.stdout {
-            let mut id = self.next.lock().unwrap();
+            let mut id = self.next.lock();
             *id += 1;
             let value = *id;
             if let Some(parent) = stdout_path.parent() {

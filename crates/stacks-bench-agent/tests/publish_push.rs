@@ -3,9 +3,9 @@
 //! `consensus_issue`), idempotent skip, and the issue-body trace tag.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use anyhow::Result;
+use parking_lot::Mutex;
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::publish::{
@@ -76,7 +76,6 @@ impl GhClient for FakeGh {
     fn switch_branch(&self, worktree: &Path, branch: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::SwitchBranch {
                 worktree: worktree.to_path_buf(),
                 branch: branch.to_owned(),
@@ -86,7 +85,6 @@ impl GhClient for FakeGh {
     fn add_modified(&self, worktree: &Path) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::AddModified {
                 worktree: worktree.to_path_buf(),
             });
@@ -95,7 +93,6 @@ impl GhClient for FakeGh {
     fn commit_if_staged(&self, worktree: &Path, message: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::Commit {
                 worktree: worktree.to_path_buf(),
                 message: message.to_owned(),
@@ -105,7 +102,6 @@ impl GhClient for FakeGh {
     fn push_branch(&self, worktree: &Path, remote: &str, branch: &str) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::Push {
                 worktree: worktree.to_path_buf(),
                 remote: remote.to_owned(),
@@ -122,7 +118,6 @@ impl GhClient for FakeGh {
     ) -> Result<bool> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::PrExists {
                 repo: repo.to_owned(),
                 head_owner: head_owner.to_owned(),
@@ -134,7 +129,6 @@ impl GhClient for FakeGh {
     async fn issue_exists(&self, repo: &str, trace_tag: &str) -> Result<bool> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::IssueExists {
                 repo: repo.to_owned(),
                 trace_tag: trace_tag.to_owned(),
@@ -144,7 +138,6 @@ impl GhClient for FakeGh {
     async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::CreatePr {
                 repo: args.repo.to_owned(),
                 base: args.base.to_owned(),
@@ -164,7 +157,6 @@ impl GhClient for FakeGh {
     ) -> Result<()> {
         self.calls
             .lock()
-            .unwrap()
             .push(Call::CreateIssue {
                 repo: repo.to_owned(),
                 labels: labels.to_vec(),
@@ -295,7 +287,7 @@ async fn push_creates_pr_for_normal_pr_and_consensus_poc_pr() {
     assert_eq!(outputs.issue_count, 1);
     assert_eq!(outputs.skip_count, 0);
 
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
 
     // Both PR targets should reach create_pr.
     let create_prs: Vec<_> = calls
@@ -361,7 +353,7 @@ async fn push_creates_issue_with_trace_tag_in_body() {
     .await
     .unwrap();
 
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
     let issue = calls
         .iter()
         .find_map(|c| match c {
@@ -414,7 +406,7 @@ async fn push_skips_git_ops_when_pr_already_exists() {
     assert_eq!(outputs.issue_count, 1);
     assert_eq!(outputs.pr_count, 2, "skip is silent: pr_count still increments");
 
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
     assert!(
         !calls.iter().any(|c| matches!(
             c,
@@ -444,7 +436,7 @@ async fn push_skips_issue_when_issue_already_exists() {
     .await
     .unwrap();
 
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
     assert!(
         !calls
             .iter()
@@ -571,7 +563,7 @@ async fn push_resolves_checkouts_through_agent_workspace_root_when_set() {
     let legacy_root = session_layout
         .worktrees_dir
         .clone();
-    let calls = gh.calls.lock().unwrap();
+    let calls = gh.calls.lock();
     let git_op_paths: Vec<PathBuf> = calls
         .iter()
         .filter_map(|c| match c {

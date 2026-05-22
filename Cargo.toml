@@ -12,6 +12,7 @@ fd-lock = "4.0.4"
 insta = { version = "1.47.2", default-features = false, features = ["glob", "colors", "json", "filters"] }
 jsonschema = { version = "0.39.0", default-features = false }
 octocrab = "0.50.0"
+parking_lot = "0.12.5"
 pretty_assertions = { version = "1.4.1", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", default-features =  false, features = ["std", "derive"] }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
