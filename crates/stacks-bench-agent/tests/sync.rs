@@ -241,10 +241,7 @@ async fn sync_overwrites_stale_queries_unconditionally() {
 fn stage_operator_git_repo(target: &Path) -> std::path::PathBuf {
     let prev = std::env::current_dir().unwrap();
     std::fs::create_dir_all(target).unwrap();
-    run_git(target, &["init", "-q", "-b", "main"]);
-    run_git(target, &["config", "user.email", "test@t"]);
-    run_git(target, &["config", "user.name", "test"]);
-    run_git(target, &["config", "commit.gpgsign", "false"]);
+    stacks_bench_agent::git::init_test_repo(target).unwrap();
     // Seed one commit so HEAD exists.
     std::fs::write(target.join("README.md"), "operator\n").unwrap();
     run_git(target, &["add", "README.md"]);

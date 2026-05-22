@@ -1,7 +1,7 @@
 # config.toml — single source of truth for the bench-agent workflow.
 #
-# Copy this file to <framework-root>/config.toml. `sbagent` auto-loads
-# `./config.toml` from cwd (or pass `-c <path>` to point elsewhere).
+# Copy this file to `~/.config/sbagent/config.toml` (or pass
+# `-c <path>` to point elsewhere).
 #
 # Field names mirror the keys exposed by `Settings` in
 # crates/stacks-bench-agent/src/settings.rs. Every field is optional;

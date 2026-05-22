@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::analyzed_rejections::now_utc_iso8601;
 use crate::session::SessionLayout;
@@ -147,26 +147,25 @@ pub fn archive_baseline_binary(inputs: &ArchiveBinaryInputs<'_>) -> Result<Archi
             }
         })
         .unwrap_or_else(|| "unknown".to_owned());
-    let manifest = json!({
-        "source_sha": source_sha,
-        "dirty": dirty_worktree,
-        "cargo_version": cargo_version,
-        "build_flags": ["--release", "-p", "stacks-bench"],
-        "archived_at": now_utc_iso8601(),
-        "archived_path": archived_path,
-    });
+    let manifest = crate::models::baseline_binary_manifest::BaselineBinaryManifest {
+        source_sha: source_sha.clone(),
+        dirty: dirty_worktree,
+        cargo_version,
+        build_flags: vec!["--release".to_owned(), "-p".to_owned(), "stacks-bench".to_owned()],
+        archived_at: now_utc_iso8601(),
+        archived_path: archived_path.clone(),
+    };
     let manifest_path = inputs
         .layout
         .baseline_bin_manifest_path();
-    fs::write(&manifest_path, format!("{manifest:#}\n"))
+    let json =
+        serde_json::to_string_pretty(&manifest).context("serializing baseline binary manifest")?;
+    fs::write(&manifest_path, format!("{json}\n"))
         .with_context(|| format!("writing {}", manifest_path.display()))?;
 
     Ok(ArchiveBinaryOutputs { archived_path, source_sha })
 }
 
-/// `git status --porcelain` in `dir`. Returns `true` when ANY
-/// uncommitted change (tracked or untracked) is present — under
-/// which condition `source_sha` alone does not identify the built
 /// Inputs to a fresh baseline benchmark.
 pub struct RunInputs<'a> {
     /// The session layout (must already exist; results dir is created here).

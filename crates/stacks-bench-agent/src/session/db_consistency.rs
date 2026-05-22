@@ -1,26 +1,17 @@
 //! DB ↔ artifact run-id consistency check.
 //!
-//! Every run-id referenced by a session artifact (baseline run/rerun
-//! id, per-target verify baselines, per-target candidate run-ids) must
-//! resolve to a row in `<stacks_bench_data_dir>/appdata/stacks-bench.db`.
-//! When that invariant breaks — e.g. the operator wiped the DB
-//! between sessions, or the data dir is misconfigured — every
-//! downstream consumer (finalize's improvement_pct math, archive's
-//! ledger emission, Phase 5 PR-writer's audit trail) silently produces
-//! either dangling references or wrong-numerator output.
+//! Every run-id under `sessions/<id>/results/` (baseline run/rerun,
+//! per-target verify baselines, per-target candidate run-ids) must
+//! resolve in `<stacks_bench_data_dir>/appdata/stacks-bench.db`.
+//! Dangling refs poison finalize math, ledger emission, and PR-body
+//! provenance.
 //!
-//! This module surfaces such dangling references as warnings before
-//! finalize / archive runs, giving the operator a chance to re-bench
-//! before the integrity break gets baked into immutable artifacts
-//! (the `session/<id>` write-once branch).
-//!
-//! Discovery is intentionally tolerant: missing files (e.g. a target
-//! whose Phase 1.8 was skipped) are NOT errors — only ID references
-//! that DO exist but don't resolve in the DB count as dangling. Some
-//! dangling references are expected by design (session-level
-//! `baseline/run-id` is audit-only when every normal_pr target has
-//! per-target ids); this module reports them, callers decide how to
-//! react.
+//! Discovery is tolerant: missing artifact files are skipped (not
+//! every target has every reference type). Some dangling refs are
+//! expected (audit-only session-level baseline when every target has
+//! per-target ids). Callers warn rather than block; immutable
+//! consumers (archive ledger append) should be invoked only after
+//! the operator has reviewed any warnings.
 
 use anyhow::{Context as _, Result};
 

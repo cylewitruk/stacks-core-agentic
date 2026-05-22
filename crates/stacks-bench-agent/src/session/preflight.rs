@@ -1,33 +1,20 @@
-//! Session-start preflight: fast checks that catch the drift modes
-//! that have historically wasted operator time mid-session.
+//! Session-start preflight: fast checks for operator/orchestrator
+//! drift modes that silently corrupt session output downstream.
 //!
-//! Three checks today, each with a documented real-session failure:
+//! Three checks:
 //!
-//! - **Installed binary drift** — operator's `sbagent` on `PATH` is older than
-//!   the workspace build that produced it. Caught us twice in pilot validation
-//!   when feature commits landed in the workspace but the operator forgot to
-//!   `cp` or `cargo install`. `Warn` (operators may legitimately run older
-//!   binaries; just surface it).
-//! - **Load-bearing prompt drift** — the operator's
-//!   `.sbagent/prompts/optimizer.md` differs from the bundled template. Caught
-//!   us when a stale optimizer prompt told agents to write `implementation.md`
-//!   instead of `optimizer-report.json` — orchestrator marked all 4 experiments
-//!   as `aborted: agent crashed` despite the agents having successfully
-//!   implemented their changes. `Fail` because the orchestrator's
-//!   typed-contract gate fires on this prompt specifically. Other
-//!   operator-tunable prompts (analyzer/triage/merge-analyses) drift is `Warn`.
-//! - **Submodule reachability** — the operator's `repos/<base>` submodule HEAD
-//!   must be reachable from the local
-//!   `refs/remotes/origin/<publish_base_branch>` ref (no network fetch — that's
-//!   deferred to a future "strict" variant). Caught us when a detached-HEAD
-//!   bump moved the submodule to a SHA that wasn't on the publish-base-branch
-//!   history. `Fail`.
+//! - **Installed binary drift** (`Warn`) — running `sbagent` older than
+//!   `<framework>/target/release/sbagent`. Operator forgot to install after
+//!   rebuild.
+//! - **Load-bearing prompt drift** (`Fail` on `optimizer.md`; `Warn` on other
+//!   tunable prompts) — orchestrator's typed-report gate depends on
+//!   `optimizer.md`'s contract; stale operator copy makes the agent write the
+//!   wrong artifact and looks like "agent crashed" downstream.
+//! - **Submodule reachability** (`Fail`) — `repos/<base>` HEAD must be an
+//!   ancestor of local `origin/<publish_base_branch>`. No network fetch in v1.
 //!
-//! These run at the top of `sbagent session run` and `sbagent session
-//! optimize run` (including `--resume`). Operators who want to skip
-//! (e.g. for testing) pass `--skip-preflight`. `sbagent check` runs
-//! the same set + the broader bundle / schema / publish-wiring checks
-//! that already lived under the `check` command.
+//! Wired into `sbagent session run`, `session optimize run` (incl.
+//! `--resume`), and `sbagent check`. `--skip-preflight` opts out.
 
 use std::fmt;
 use std::path::Path;

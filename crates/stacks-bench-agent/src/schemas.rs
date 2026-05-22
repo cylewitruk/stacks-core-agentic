@@ -1,7 +1,6 @@
 //! Bundled JSON Schemas + on-disk seeding/sync/drift helpers.
 //!
-//! The four canonical JSON Schemas (`candidates`, `analysis`,
-//! `optimization-targets`, `summary`) are embedded into the binary via
+//! The canonical JSON Schemas are embedded into the binary via
 //! `include_str!` at compile time. [`seed_to`] writes them to the
 //! operator's [`Settings::schemas_dir`](crate::settings::Settings::schemas_dir)
 //! on `sbagent init` and at every CLI startup (with don't-replace
@@ -32,18 +31,12 @@ use std::path::Path;
 use anyhow::{Context as _, Result};
 
 /// `(file_name, contents)` table for every bundled schema. File names
-/// match the on-disk layout exactly so callers can build absolute
-/// paths via `<schemas_dir>/<FILE_NAME>` and pass them to agents
-/// (which validate their JSON output against the file).
+/// match the on-disk layout exactly.
 ///
-/// Adding a new schema is a two-step bootstrap: create a placeholder
-/// file at the canonical `schemas/<name>.schema.json` path so
-/// `include_str!` resolves at build time, rebuild, run
-/// `sbagent schema export --out schemas` to generate the real bytes,
-/// then **rebuild again** so the binary embeds the populated schema
-/// (not the stub). Skipping the second rebuild leaves a `{}` baked
-/// into `BUNDLED_SCHEMAS`, which then propagates to operator dirs on
-/// the next `sbagent sync` and surfaces as drift much later.
+/// Adding a new schema: create a placeholder so `include_str!`
+/// resolves, rebuild, run `sbagent schema export --out schemas`,
+/// then rebuild again so the binary embeds the populated bytes (not
+/// the stub).
 pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
     ("candidates.schema.json", include_str!("../../../schemas/candidates.schema.json")),
     ("analysis.schema.json", include_str!("../../../schemas/analysis.schema.json")),

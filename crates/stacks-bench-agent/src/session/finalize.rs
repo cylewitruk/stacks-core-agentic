@@ -94,14 +94,10 @@ pub fn compute_summary(
     targets: &OptimizationTargets,
     inputs: &FinalizeInputs<'_>,
 ) -> Result<Summary> {
-    // Compute session-level baseline mean only when at least one
-    // normal_pr target would actually fall back to it. Pass 1a's
-    // per-target denominator (via `verify/<target>/baseline-run-ids.json`)
-    // is preferred for any target that has it; the session-level
-    // baseline_run_id is only consulted when a target has no per-target
-    // ids on disk. Resolving the session-level baseline against the DB
-    // unconditionally would force operators to keep that run_id alive
-    // even when no target consumes it.
+    // Resolve session-level baseline only if at least one normal_pr
+    // target lacks per-target ids and would fall back to it.
+    // Per-target denominators (`verify/<target>/baseline-run-ids.json`)
+    // are preferred when present.
     let mut needs_baseline = false;
     for t in &targets.targets {
         if t.delivery_mode != DeliveryMode::NormalPr {

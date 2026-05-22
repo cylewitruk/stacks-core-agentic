@@ -8,19 +8,13 @@
 //!
 //! Resolution order (full details on [`Settings::load`]):
 //! 1. `--config-path <path>` (or `-c <path>`).
-//! 2. `./config.toml` in the current directory (legacy default, kept for
-//!    backward compatibility with operators whose config sits next to their
-//!    `sessions/` dir).
-//! 3. `$XDG_CONFIG_HOME/sbagent/config.toml` when `XDG_CONFIG_HOME` is set.
-//! 4. `$HOME/.config/sbagent/config.toml` (macOS default; Linux fallback when
+//! 2. `$XDG_CONFIG_HOME/sbagent/config.toml` when `XDG_CONFIG_HOME` is set.
+//! 3. `$HOME/.config/sbagent/config.toml` (macOS default; Linux fallback when
 //!    `XDG_CONFIG_HOME` is unset).
 //!
-//! The XDG/HOME fallbacks let new operators land in
-//! `~/.config/sbagent/config.toml` (the standard XDG location for
-//! per-user config) without committing machine-specific paths into the
-//! operator repo. The cwd fallback exists for legacy/test workflows; an
-//! `sbagent init` bootstrap doesn't write a `./config.toml` —
-//! operators are expected to place their config under `~/.config/sbagent/`.
+//! Operators land in `~/.config/sbagent/config.toml` (the standard XDG
+//! location for per-user config); machine-specific paths stay out of
+//! the operator repo.
 
 use std::path::{Path, PathBuf};
 
@@ -592,11 +586,9 @@ impl Settings {
     ///
     /// 1. **`--config-path <path>`** (the `path` argument). Must exist. Use
     ///    this for non-standard layouts or in tests.
-    /// 2. **`./config.toml`** in cwd. Backward-compat for operators whose
-    ///    config currently sits next to their `sessions/` dir.
-    /// 3. **`$XDG_CONFIG_HOME/sbagent/config.toml`** (Linux + macOS operators
+    /// 2. **`$XDG_CONFIG_HOME/sbagent/config.toml`** (Linux + macOS operators
     ///    who set `XDG_CONFIG_HOME` explicitly).
-    /// 4. **`$HOME/.config/sbagent/config.toml`** (macOS default; also the
+    /// 3. **`$HOME/.config/sbagent/config.toml`** (macOS default; also the
     ///    Linux fallback when `XDG_CONFIG_HOME` is unset).
     ///
     /// If none match, returns [`Settings::default`] — every field `None`.
@@ -689,10 +681,6 @@ impl Settings {
         if let Some(p) = explicit {
             return Some(p.to_path_buf());
         }
-        let cwd_local = Path::new("config.toml");
-        if cwd_local.is_file() {
-            return Some(cwd_local.to_path_buf());
-        }
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
             let p = PathBuf::from(xdg)
                 .join("sbagent")
@@ -719,24 +707,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_returns_default_when_no_path_and_no_cwd_config() {
-        // Use a tmp cwd guaranteed to lack config.toml AND scrub
-        // XDG_CONFIG_HOME / HOME so the new resolution order (which
-        // checks both fallbacks) doesn't pick up the developer
-        // machine's `~/.config/sbagent/config.toml`. SAFETY: see the
-        // `resolve_config_path_precedence_order` test for the
-        // env-var-in-tests rationale (single-thread per-test).
-        let tmp = tempfile::tempdir().unwrap();
-        let prev_cwd = std::env::current_dir().unwrap();
+    fn load_returns_default_when_no_path_and_no_xdg_or_home_config() {
+        // Scrub XDG_CONFIG_HOME / HOME so resolution can't pick up
+        // the developer machine's `~/.config/sbagent/config.toml`.
+        // SAFETY: see `resolve_config_path_precedence_order` for the
+        // env-var-in-tests rationale (single-thread per-test under
+        // nextest).
         let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
         let prev_home = std::env::var_os("HOME");
-        std::env::set_current_dir(tmp.path()).unwrap();
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
             std::env::remove_var("HOME");
         }
         let result = Settings::load(None);
-        std::env::set_current_dir(prev_cwd).unwrap();
         unsafe {
             if let Some(v) = prev_xdg {
                 std::env::set_var("XDG_CONFIG_HOME", v);
@@ -909,29 +892,23 @@ mod tests {
         );
     }
 
-    /// `resolve_config_path` walks four locations in order; the
-    /// explicit `--config-path` arg wins, then a cwd-local
-    /// `./config.toml`, then `$XDG_CONFIG_HOME/sbagent/config.toml`,
-    /// then `$HOME/.config/sbagent/config.toml`. This test exercises
-    /// all four paths from a single test body so the env-var
-    /// manipulation (global state) doesn't race other tests.
+    /// `resolve_config_path` walks three locations in order: explicit
+    /// `--config-path`, `$XDG_CONFIG_HOME/sbagent/config.toml`,
+    /// `$HOME/.config/sbagent/config.toml`. This test exercises all
+    /// three from a single body so env-var manipulation (global state)
+    /// doesn't race other tests.
     #[test]
     fn resolve_config_path_precedence_order() {
         let tmp = tempfile::tempdir().unwrap();
         let explicit = tmp
             .path()
             .join("explicit.toml");
-        let cwd_local_dir = tmp
-            .path()
-            .join("cwd-with-local");
-        let cwd_empty_dir = tmp.path().join("cwd-empty");
         let xdg_root = tmp.path().join("xdg");
         let home_root = tmp.path().join("home");
-        for d in [&cwd_local_dir, &cwd_empty_dir, &xdg_root, &home_root] {
+        for d in [&xdg_root, &home_root] {
             std::fs::create_dir_all(d).unwrap();
         }
         std::fs::write(&explicit, "").unwrap();
-        std::fs::write(cwd_local_dir.join("config.toml"), "").unwrap();
         let xdg_path = xdg_root
             .join("sbagent")
             .join("config.toml");
@@ -944,18 +921,13 @@ mod tests {
         std::fs::create_dir_all(home_path.parent().unwrap()).unwrap();
         std::fs::write(&home_path, "").unwrap();
 
-        // Snapshot env so we can restore.
         let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
         let prev_home = std::env::var_os("HOME");
-        let prev_cwd = std::env::current_dir().unwrap();
 
-        // 1. Explicit beats everything else.
-        std::env::set_current_dir(&cwd_local_dir).unwrap();
         // SAFETY: changing process-wide env vars is safe here because
         // cargo nextest runs each test in its own process; within a
         // single test body these `set_var` calls don't race other
-        // tests. The cargo-test runner (without nextest) would race,
-        // but that's out of scope for this project's testing setup.
+        // tests.
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", &xdg_root);
             std::env::set_var("HOME", &home_root);
@@ -966,25 +938,12 @@ mod tests {
             "explicit --config-path must beat all fallbacks",
         );
 
-        // 2. cwd-local beats XDG + HOME.
-        let got = Settings::resolve_config_path(None);
-        assert_eq!(
-            got.as_deref()
-                .map(|p| p.file_name().unwrap()),
-            Some(std::ffi::OsStr::new("config.toml")),
-            "cwd-local config.toml must beat XDG/HOME",
-        );
-        // (got is "config.toml" relative — fine; it resolves under cwd.)
-
-        // 3. With cwd empty, XDG beats HOME.
-        std::env::set_current_dir(&cwd_empty_dir).unwrap();
         assert_eq!(
             Settings::resolve_config_path(None),
             Some(xdg_path.clone()),
             "XDG_CONFIG_HOME/sbagent/config.toml must beat $HOME fallback",
         );
 
-        // 4. With XDG unset, HOME fallback wins.
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
@@ -994,18 +953,15 @@ mod tests {
             "$HOME/.config/sbagent/config.toml must be the last fallback",
         );
 
-        // 5. With neither XDG nor HOME and no cwd-local: None.
         unsafe {
             std::env::remove_var("HOME");
         }
         assert_eq!(
             Settings::resolve_config_path(None),
             None,
-            "with no env + no cwd-local, resolution returns None",
+            "with no env vars set, resolution returns None",
         );
 
-        // Restore env.
-        std::env::set_current_dir(&prev_cwd).unwrap();
         unsafe {
             if let Some(v) = prev_xdg {
                 std::env::set_var("XDG_CONFIG_HOME", v);

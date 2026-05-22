@@ -200,14 +200,7 @@ impl GitCheckoutManager for FakeGit {
     ) -> anyhow::Result<()> {
         let _ = std::fs::remove_dir_all(checkout);
         std::fs::create_dir_all(checkout)?;
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["config", "user.email", "fake@t"][..],
-            &["config", "user.name", "fake"][..],
-            &["config", "commit.gpgsign", "false"][..],
-        ] {
-            stacks_bench_agent::git::run_git(checkout, args)?;
-        }
+        stacks_bench_agent::git::init_test_repo(checkout)?;
         // Seed an initial commit so HEAD resolves + the coordinator's
         // post-edit commit advances HEAD past a real baseline.
         std::fs::write(checkout.join(".gitignore"), "target/\n")?;

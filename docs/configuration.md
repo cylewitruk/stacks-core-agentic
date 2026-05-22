@@ -9,9 +9,8 @@ All long-lived settings live in a single TOML file. Resolution order
 (first match wins):
 
 1. `-c <path>` / `--config-path <path>` flag.
-2. `./config.toml` in cwd (legacy, kept for back-compat).
-3. `$XDG_CONFIG_HOME/sbagent/config.toml`.
-4. `~/.config/sbagent/config.toml` (the recommended default).
+2. `$XDG_CONFIG_HOME/sbagent/config.toml`.
+3. `~/.config/sbagent/config.toml` (the recommended default).
 
 The XDG/HOME path means operators don't have to commit
 machine-specific paths into their operator repo. Per-invocation
@@ -32,8 +31,6 @@ intentional, because it can add significant chainstate copy time.
 
 ```text
 <operator>                          # the dir `sbagent init` creates
-  config.toml                       # optional; user-level lives at
-                                    #   ~/.config/sbagent/config.toml
   .sbagent/
     prompts/                        # MiniJinja templates + reference
                                     # docs. Operator-tunable (autoresearch

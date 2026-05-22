@@ -233,14 +233,7 @@ impl GitCheckoutManager for ChainGit {
         // chain test needs a real `.git/` so `git status --porcelain`
         // / `git commit` work. Init + one initial commit, signing
         // disabled.
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["config", "user.email", "fake@t"][..],
-            &["config", "user.name", "fake"][..],
-            &["config", "commit.gpgsign", "false"][..],
-        ] {
-            stacks_bench_agent::git::run_git(checkout, args)?;
-        }
+        stacks_bench_agent::git::init_test_repo(checkout)?;
         std::fs::write(checkout.join(".gitignore"), "target/\n")?;
         for args in [&["add", ".gitignore"][..], &["commit", "-q", "-m", "init"][..]] {
             stacks_bench_agent::git::run_git(checkout, args)?;

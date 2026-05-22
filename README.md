@@ -88,8 +88,6 @@ they're seeded into the operator dir by `sbagent init` / `sbagent sync`.
 
 ```text
 <operator>
-  config.toml               # optional; user-level config typically lives at
-                            #   ~/.config/sbagent/config.toml instead
   .sbagent/
     prompts/                # MiniJinja templates + reference docs (tunable)
     schemas/                # JSON Schemas (mirror of binary bundle, do not edit)
@@ -137,7 +135,7 @@ sbagent publish push                       # phase 5: push to GitHub via REST AP
 sbagent publish clean                      # clear publish artifacts
 ```
 
-Config resolution: `-c <path>` wins, else `./config.toml` in cwd, else
+Config resolution: `-c <path>` wins, else
 `$XDG_CONFIG_HOME/sbagent/config.toml`, else `~/.config/sbagent/config.toml`.
 
 ## Quick start

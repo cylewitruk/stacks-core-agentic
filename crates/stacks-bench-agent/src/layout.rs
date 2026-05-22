@@ -240,12 +240,12 @@ impl Layout {
         // Framework root is now optional. Operator deployments don't need
         // a tool-source checkout; only `sbagent schema export`'s default
         // `--out` and the typed-model-vs-committed drift gate care.
-        let framework = settings
-            .framework_root
-            .clone()
-            .or_else(default_framework_root)
-            .map(absolutize)
-            .transpose()?;
+        let framework = absolutize_opt(
+            settings
+                .framework_root
+                .clone()
+                .or_else(default_framework_root),
+        )?;
         // Anchor for writable defaults when framework isn't set: cwd.
         // sbagent never auto-populates dirs at startup, so any
         // command that actually needs these will surface its own
@@ -262,11 +262,11 @@ impl Layout {
         // session bulk OUT of the operator git repo so the `session/<id>`
         // archive branch's tracked files don't get wiped from the
         // working tree on every branch switch.
-        let agent_workspace_root = settings
-            .agent_workspace_root
-            .clone()
-            .map(absolutize)
-            .transpose()?;
+        let agent_workspace_root = absolutize_opt(
+            settings
+                .agent_workspace_root
+                .clone(),
+        )?;
         // Distinguish "operator set sessions_root explicitly" from
         // "we defaulted it" — only the explicit case feeds the
         // operator_repo_root parent fallback below.
@@ -294,20 +294,20 @@ impl Layout {
         // leave operator_repo_root as `None` so
         // `require_operator_repo_root` surfaces a clear config
         // error.
-        let operator_repo_root = settings
-            .operator_repo_root
-            .clone()
-            .map(absolutize)
-            .transpose()?
-            .or_else(|| {
-                if sessions_root_explicit {
-                    sessions_root
-                        .parent()
-                        .map(Path::to_path_buf)
-                } else {
-                    None
-                }
-            });
+        let operator_repo_root = absolutize_opt(
+            settings
+                .operator_repo_root
+                .clone(),
+        )?
+        .or_else(|| {
+            if sessions_root_explicit {
+                sessions_root
+                    .parent()
+                    .map(Path::to_path_buf)
+            } else {
+                None
+            }
+        });
         let stacks_bench_data_dir = absolutize(
             settings
                 .stacks_bench_data_dir
@@ -338,16 +338,12 @@ impl Layout {
         // `base` may legitimately be `None` here — unrelated commands
         // (e.g. `sbagent prompt lint`) don't need a stacks-core checkout.
         // Callers that DO need it use `Layout::require_base`.
-        let base = settings
-            .base
-            .clone()
-            .map(absolutize)
-            .transpose()?;
-        let stacks_bench_shadow_dir = settings
-            .stacks_bench_shadow_dir
-            .clone()
-            .map(absolutize)
-            .transpose()?;
+        let base = absolutize_opt(settings.base.clone())?;
+        let stacks_bench_shadow_dir = absolutize_opt(
+            settings
+                .stacks_bench_shadow_dir
+                .clone(),
+        )?;
         // `agent_workspace_root` is already resolved above (see the
         // sessions-root block). Re-bind for clarity at the
         // construction site below.
@@ -509,6 +505,13 @@ fn absolutize(p: PathBuf) -> Result<PathBuf> {
     }
     let cwd = std::env::current_dir().context("getting current dir to absolutize layout path")?;
     Ok(cwd.join(p))
+}
+
+/// `absolutize` lifted over `Option`. `Some(rel)` → `Some(absolute)`;
+/// `None` → `None`. The 8+ `.clone().map(absolutize).transpose()?`
+/// chains in `from_settings` collapse to one call each.
+fn absolutize_opt(p: Option<PathBuf>) -> Result<Option<PathBuf>> {
+    p.map(absolutize).transpose()
 }
 
 /// Best-effort default for the framework root: walk up from the current cwd

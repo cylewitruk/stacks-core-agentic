@@ -80,6 +80,28 @@ impl StacksBenchCli {
             strict: true,
         }
     }
+
+    /// Non-strict CLI built from a [`Layout`]: workspace release binary
+    /// at `<base>/target/release/stacks-bench`, configured data dir,
+    /// stacks-core base as cwd. Used by read-only post-bench phases
+    /// (finalize, archive, DB-consistency probe) where falling back to
+    /// `cargo stacks-bench` is acceptable if the prebuilt binary is
+    /// missing.
+    pub fn from_layout(layout: &crate::layout::Layout) -> Result<Self> {
+        let base = layout.require_base()?;
+        Ok(Self {
+            release_bin: Some(
+                base.join("target")
+                    .join("release")
+                    .join("stacks-bench"),
+            ),
+            data_dir: layout
+                .stacks_bench_data_dir
+                .clone(),
+            cargo_cwd: base.to_path_buf(),
+            strict: false,
+        })
+    }
 }
 
 impl BenchClient for StacksBenchCli {

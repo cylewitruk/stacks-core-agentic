@@ -797,6 +797,18 @@ pub fn config_set_local(dir: &Path, key: &str, value: &str) -> Result<()> {
         .with_context(|| format!("git config {key} {value} in {}", dir.display()))
 }
 
+/// Init a throwaway repo on branch `main` with a deterministic test
+/// identity (`user.email=t@t`, `user.name=t`, `commit.gpgsign=false`).
+/// Saves the 4-line `init + config × 3` dance from every test that
+/// needs a clean repo independent of the host's gitconfig.
+pub fn init_test_repo(dir: &Path) -> Result<()> {
+    init_repo(dir, "main")?;
+    config_set_local(dir, "user.email", "t@t")?;
+    config_set_local(dir, "user.name", "t")?;
+    config_set_local(dir, "commit.gpgsign", "false")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,10 +920,7 @@ mod tests {
     fn stage_and_commit_returns_nothing_when_clean() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(dir, &["config", "user.email", "test@t"]).unwrap();
-        run_git(dir, &["config", "user.name", "test"]).unwrap();
-        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(dir).unwrap();
         std::fs::write(dir.join("hello.txt"), "hi\n").unwrap();
         run_git(dir, &["add", "hello.txt"]).unwrap();
         run_git(dir, &["commit", "-q", "-m", "init"]).unwrap();
@@ -926,10 +935,7 @@ mod tests {
     fn branch_exists_resolves_local_refs() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
-        run_git(dir, &["config", "user.name", "t"]).unwrap();
-        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(dir).unwrap();
         std::fs::write(dir.join("seed"), "x").unwrap();
         run_git(dir, &["add", "seed"]).unwrap();
         run_git(dir, &["commit", "-q", "-m", "seed"]).unwrap();
@@ -945,10 +951,7 @@ mod tests {
     fn checkout_or_create_branch_is_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
-        run_git(dir, &["config", "user.name", "t"]).unwrap();
-        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(dir).unwrap();
         std::fs::write(dir.join("seed"), "x").unwrap();
         run_git(dir, &["add", "seed"]).unwrap();
         run_git(dir, &["commit", "-q", "-m", "seed"]).unwrap();
@@ -971,10 +974,7 @@ mod tests {
     fn stage_force_and_commit_bypasses_gitignore() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(dir, &["config", "user.email", "t@t"]).unwrap();
-        run_git(dir, &["config", "user.name", "t"]).unwrap();
-        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(dir).unwrap();
         std::fs::write(dir.join(".gitignore"), "/sessions/\n").unwrap();
         run_git(dir, &["add", ".gitignore"]).unwrap();
         run_git(dir, &["commit", "-q", "-m", "ignore sessions"]).unwrap();
@@ -1016,10 +1016,7 @@ mod tests {
 
         let work_a = tmp.path().join("work-a");
         std::fs::create_dir_all(&work_a).unwrap();
-        run_git(&work_a, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(&work_a, &["config", "user.email", "t@t"]).unwrap();
-        run_git(&work_a, &["config", "user.name", "t"]).unwrap();
-        run_git(&work_a, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(&work_a).unwrap();
         run_git(&work_a, &["remote", "add", "origin", remote_dir.to_str().unwrap()]).unwrap();
         std::fs::write(work_a.join("a"), "1").unwrap();
         run_git(&work_a, &["add", "a"]).unwrap();
@@ -1028,9 +1025,9 @@ mod tests {
 
         let work_b = tmp.path().join("work-b");
         run_git(tmp.path(), &["clone", "-q", remote_dir.to_str().unwrap(), "work-b"]).unwrap();
-        run_git(&work_b, &["config", "user.email", "t@t"]).unwrap();
-        run_git(&work_b, &["config", "user.name", "t"]).unwrap();
-        run_git(&work_b, &["config", "commit.gpgsign", "false"]).unwrap();
+        config_set_local(&work_b, "user.email", "t@t").unwrap();
+        config_set_local(&work_b, "user.name", "t").unwrap();
+        config_set_local(&work_b, "commit.gpgsign", "false").unwrap();
         std::fs::write(work_b.join("b"), "2").unwrap();
         run_git(&work_b, &["add", "b"]).unwrap();
         run_git(&work_b, &["commit", "-q", "-m", "b"]).unwrap();
@@ -1067,10 +1064,7 @@ mod tests {
 
         let work_a = tmp.path().join("work-a");
         std::fs::create_dir_all(&work_a).unwrap();
-        run_git(&work_a, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(&work_a, &["config", "user.email", "t@t"]).unwrap();
-        run_git(&work_a, &["config", "user.name", "t"]).unwrap();
-        run_git(&work_a, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(&work_a).unwrap();
         run_git(&work_a, &["remote", "add", "origin", remote_dir.to_str().unwrap()]).unwrap();
         std::fs::write(work_a.join("a"), "1").unwrap();
         run_git(&work_a, &["add", "a"]).unwrap();
@@ -1080,9 +1074,9 @@ mod tests {
         // Peer adds a second commit.
         let work_b = tmp.path().join("work-b");
         run_git(tmp.path(), &["clone", "-q", remote_dir.to_str().unwrap(), "work-b"]).unwrap();
-        run_git(&work_b, &["config", "user.email", "t@t"]).unwrap();
-        run_git(&work_b, &["config", "user.name", "t"]).unwrap();
-        run_git(&work_b, &["config", "commit.gpgsign", "false"]).unwrap();
+        config_set_local(&work_b, "user.email", "t@t").unwrap();
+        config_set_local(&work_b, "user.name", "t").unwrap();
+        config_set_local(&work_b, "commit.gpgsign", "false").unwrap();
         std::fs::write(work_b.join("b"), "2").unwrap();
         run_git(&work_b, &["add", "b"]).unwrap();
         run_git(&work_b, &["commit", "-q", "-m", "b"]).unwrap();
@@ -1099,10 +1093,7 @@ mod tests {
     fn stage_and_commit_produces_commit_when_dirty() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        run_git(dir, &["init", "-q", "-b", "main"]).unwrap();
-        run_git(dir, &["config", "user.email", "test@t"]).unwrap();
-        run_git(dir, &["config", "user.name", "test"]).unwrap();
-        run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        init_test_repo(dir).unwrap();
         // Empty tree won't accept a commit; seed one.
         std::fs::write(dir.join("seed.txt"), "s\n").unwrap();
         run_git(dir, &["add", "seed.txt"]).unwrap();

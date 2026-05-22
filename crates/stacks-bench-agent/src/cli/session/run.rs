@@ -404,27 +404,9 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
 
     // Phase 4: finalize
     {
-        let bench = StacksBenchCli {
-            release_bin: Some(
-                ctx.layout
-                    .require_base()?
-                    .join("target")
-                    .join("release")
-                    .join("stacks-bench"),
-            ),
-            data_dir: ctx
-                .layout
-                .stacks_bench_data_dir
-                .clone(),
-            cargo_cwd: ctx
-                .layout
-                .require_base()?
-                .to_path_buf(),
-            strict: false,
-        };
-        // DB ↔ artifact run-id consistency: warn on dangling refs
-        // BEFORE finalize bakes them into summary.json. Same check
-        // the standalone `session finalize run` wrapper invokes.
+        let bench = StacksBenchCli::from_layout(&ctx.layout)?;
+        // Warn on dangling artifact ↔ DB run-id refs before finalize
+        // bakes them into summary.json.
         crate::session::db_consistency::warn_dangling_refs(&layout, &bench)
             .context("Phase 4: DB consistency check")?;
         finalize::finalize(&FinalizeInputs { layout: &layout, bench: &bench })
@@ -467,28 +449,9 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
 
     // Phase 6 (optional): archive the session.
     if args.archive {
-        // Same DB ↔ artifact consistency warning as the standalone
-        // `session archive` wrapper. Surfaces dangling refs before
-        // the write-once `session/<id>` branch + ledger append bakes
-        // them in permanently.
-        let bench = StacksBenchCli {
-            release_bin: Some(
-                ctx.layout
-                    .require_base()?
-                    .join("target")
-                    .join("release")
-                    .join("stacks-bench"),
-            ),
-            data_dir: ctx
-                .layout
-                .stacks_bench_data_dir
-                .clone(),
-            cargo_cwd: ctx
-                .layout
-                .require_base()?
-                .to_path_buf(),
-            strict: false,
-        };
+        // Warn on dangling artifact ↔ DB refs before the write-once
+        // session/<id> branch + ledger append bakes them in.
+        let bench = StacksBenchCli::from_layout(&ctx.layout)?;
         crate::session::db_consistency::warn_dangling_refs(&layout, &bench)
             .context("Phase 6: pre-archive DB consistency check")?;
         let outputs = crate::session::archive::archive(&crate::session::archive::ArchiveInputs {

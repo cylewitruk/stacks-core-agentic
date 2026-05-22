@@ -36,20 +36,8 @@ pub async fn run(args: ArchiveArgs, ctx: &CliContext, session_id: &SessionId) ->
     // `session run` invokes at Phase 6. Skipped silently when
     // `base` isn't set (archive will fail with a clearer error
     // anyway).
-    if let Ok(base) = ctx.layout.require_base() {
-        let bench = StacksBenchCli {
-            release_bin: Some(
-                base.join("target")
-                    .join("release")
-                    .join("stacks-bench"),
-            ),
-            data_dir: ctx
-                .layout
-                .stacks_bench_data_dir
-                .clone(),
-            cargo_cwd: base.to_path_buf(),
-            strict: false,
-        };
+    if ctx.layout.base.is_some() {
+        let bench = StacksBenchCli::from_layout(&ctx.layout)?;
         db_consistency::warn_dangling_refs(&layout, &bench)
             .context("pre-archive DB consistency check")?;
     }

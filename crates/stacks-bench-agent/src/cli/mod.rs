@@ -27,9 +27,10 @@ pub mod sync;
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct CliArgs {
-    /// Path to the TOML configuration file. When unset, defaults to
-    /// `./config.toml` if present; otherwise falls back to per-command
-    /// defaults.
+    /// Path to the TOML configuration file. When unset, resolution
+    /// falls through to `$XDG_CONFIG_HOME/sbagent/config.toml`, then
+    /// `~/.config/sbagent/config.toml`. See
+    /// [`crate::settings::Settings::load`].
     #[clap(long, short = 'c', global = true)]
     pub config_path: Option<PathBuf>,
 

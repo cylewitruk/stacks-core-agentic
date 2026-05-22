@@ -36,10 +36,13 @@ cylewitruk/stacks-bench-agent           ~/Code/.../stacks-bench-agent/
 
 cylewitruk/stacks-bench-agentic-        ~/Code/.../stacks-bench-agentic-operator/
 operator                                ├─ committable (sessions/, events/,
-(operator state — sessions, config,     │  example.config.toml, roadmap)
-roadmap, etc.)                          ├─ config.toml          (gitignored, machine-local)
-                                        ├─ repos/stacks-core/   (submodule)
+(operator state — sessions, roadmap,    │  example.config.toml, roadmap)
+etc.)                                   ├─ repos/stacks-core/   (submodule)
                                         └─ sessions/<id>/results/  (durable artifacts)
+
+                                        ~/.config/sbagent/config.toml
+                                        └─ per-user config (outside operator repo,
+                                           machine-local)
 
                                         /private/tmp/sbagent-workspaces/
                                         └─ optimizers/<session>/<target>/
@@ -290,7 +293,7 @@ GH_TOKEN=$(cat ~/.config/sbagent/gh_token) gh pr create \
 
   You're cleared.
 
-### 2. Flip two config keys in `<operator>/config.toml`
+### 2. Flip two config keys in `~/.config/sbagent/config.toml`
 
 ```toml
 publish_base_repo   = "stacks-network/stacks-core"  # was stacks-bench-bot/stacks-core
@@ -345,7 +348,7 @@ Not urgent for pilot — at session-end, the operator can run `sbagent session o
 
 | What | Where |
 | ---- | ----- |
-| Operator config | `<operator>/config.toml` (gitignored) |
+| Operator config | `~/.config/sbagent/config.toml` (per-user, outside the operator repo) |
 | Operator config template | `<operator>/.sbagent/example.config.toml` (committed) |
 | Bot PAT | `~/.config/sbagent/gh_token` (mode 0600) |
 | Operator's stacks-core submodule | `<operator>/repos/stacks-core/` |

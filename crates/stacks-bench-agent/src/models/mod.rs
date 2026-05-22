@@ -12,6 +12,7 @@
 //! hotspot, lens disposition, schema-version sentinel) live in [`common`].
 
 pub mod analyze;
+pub mod baseline_binary_manifest;
 pub mod candidates;
 pub mod common;
 pub mod coordinator_provenance;

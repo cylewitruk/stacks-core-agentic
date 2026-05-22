@@ -1,26 +1,14 @@
 //! `optimize/<target-id>/coordinator-provenance.json` — typed sidecar
-//! recording the git state the coordinator observed when committing the
-//! optimizer agent's changes.
+//! recording the git state the coordinator observed when committing
+//! the optimizer agent's changes. Separate from `OptimizerReport`
+//! because ownership differs: agent owns its report, coordinator
+//! owns provenance.
 //!
-//! Separate from [`crate::models::optimizer_report::OptimizerReport`]
-//! because ownership is different: the agent owns its report
-//! (describes what IT did); the coordinator owns provenance (observed
-//! git facts post-commit). Mixing them would either ask the agent to
-//! emit data it can get wrong, or mutate an agent-owned artifact after
-//! the fact. Two artifacts, two owners.
-//!
-//! Lifecycle:
-//!
-//! - Written by `coordinator_commit_if_kept` (in
-//!   [`crate::session::optimizers`]) AFTER the per-target `git commit` lands.
-//!   Never written for aborted experiments (no commit → no `head_sha`) or for
-//!   consensus_issue targets (coordinator skips the optimizer entirely).
-//! - Read by the optimizer's `--resume` gate to verify the on-disk commit was
-//!   built against the same source SHA Phase 0a archived. Read by finalize to
-//!   populate `Experiment.{base_sha, head_sha}` for the audit trail + future
-//!   PR-body provenance.
-//! - Cleared by `clear_optimizer_artifacts` alongside the agent's report when a
-//!   target is re-run from scratch.
+//! Written post-commit by `coordinator_commit_if_kept`. Read by the
+//! `--resume` gate (verifies `base_sha` against the session's
+//! archived baseline) and finalize (propagates SHAs into
+//! `Experiment` for the audit trail). Cleared by
+//! `clear_optimizer_artifacts` on re-run.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -24,24 +24,7 @@ pub struct FinalizeRunArgs {}
 pub async fn run(args: FinalizeRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
-    let bench = StacksBenchCli {
-        release_bin: Some(
-            ctx.layout
-                .require_base()?
-                .join("target")
-                .join("release")
-                .join("stacks-bench"),
-        ),
-        data_dir: ctx
-            .layout
-            .stacks_bench_data_dir
-            .clone(),
-        cargo_cwd: ctx
-            .layout
-            .require_base()?
-            .to_path_buf(),
-        strict: false,
-    };
+    let bench = StacksBenchCli::from_layout(&ctx.layout)?;
 
     // DB ↔ artifact run-id consistency check: surface dangling refs
     // BEFORE finalize bakes them into `summary.json`. Same helper the

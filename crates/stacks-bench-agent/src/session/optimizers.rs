@@ -1064,15 +1064,9 @@ fn coordinator_commit_if_kept(
         return Ok(());
     }
 
-    // Contract step 4: capture coordinator-observed git provenance.
-    // After this point HEAD is the agent's new commit; HEAD^ is the
-    // base the agent's work was applied on top of. Both are recorded
-    // in `coordinator-provenance.json` so (a) the `--resume` gate can
-    // verify the on-disk commit was built against the same source
-    // Phase 0a archived, and (b) finalize / future PR-writer can quote
-    // exact provenance. If rev-parse fails here the commit is on disk
-    // but unprovenanced — demote, since keeping a kept-but-
-    // unprovenanced experiment would poison the audit chain.
+    // Contract step 4: write the coordinator-provenance sidecar
+    // (base + head SHA). Failure demotes — a kept-but-unprovenanced
+    // experiment can't be verified by the resume gate or audit trail.
     if let Err(e) =
         write_coordinator_provenance(exp_dir, checkout, target_id, session_id, delivery_mode, &msg)
     {
@@ -1251,30 +1245,13 @@ fn resume_target_is_complete(
     }
 }
 
-/// Read `source_sha` out of the session's archived
-/// `baseline/bin/manifest.json`. Used by the resume gate to verify
-/// each per-target branch was built on top of the same source the
-/// Phase 0a binary was built from. The manifest is JSON written by
-/// Phase 0a; structure is `{ source_sha, dirty, cargo_version, ... }`.
-/// Returns the 40-char hex SHA on success.
+/// Read `source_sha` out of the session's archived baseline
+/// manifest. Resume gate compares this against each per-target
+/// provenance sidecar's `base_sha` to enforce apples-to-apples.
 fn read_baseline_source_sha(session_results_dir: &Path) -> Result<String> {
     let path = session_results_dir.join("baseline/bin/manifest.json");
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    let sha = v
-        .get("source_sha")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| anyhow::anyhow!("{} missing `source_sha` field", path.display()))?;
-    if sha.len() != 40
-        || !sha
-            .chars()
-            .all(|c| c.is_ascii_hexdigit())
-    {
-        anyhow::bail!("{}: source_sha is not a 40-char hex SHA: {sha:?}", path.display());
-    }
-    Ok(sha.to_owned())
+    let manifest = crate::models::baseline_binary_manifest::BaselineBinaryManifest::read(&path)?;
+    Ok(manifest.source_sha)
 }
 
 /// Read + validate the coordinator-provenance sidecar for the target
@@ -1769,12 +1746,7 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
 
         // git init + one commit (so HEAD has a SHA we can capture).
-        run_git(&base, &["init", "-q", "-b", "main"]);
-        // Local identity / no signing — otherwise this test would inherit
-        // the caller's gpgsign config and need a YubiKey.
-        run_git(&base, &["config", "user.email", "t@t"]);
-        run_git(&base, &["config", "user.name", "t"]);
-        run_git(&base, &["config", "commit.gpgsign", "false"]);
+        crate::git::init_test_repo(&base).unwrap();
         std::fs::write(base.join("x"), "x").unwrap();
         run_git(&base, &["add", "x"]);
         run_git(&base, &["commit", "-q", "-m", "init"]);
@@ -1831,10 +1803,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let base = tmp.path().join("base");
         std::fs::create_dir_all(&base).unwrap();
-        run_git(&base, &["init", "-q", "-b", "main"]);
-        run_git(&base, &["config", "user.email", "t@t"]);
-        run_git(&base, &["config", "user.name", "t"]);
-        run_git(&base, &["config", "commit.gpgsign", "false"]);
+        crate::git::init_test_repo(&base).unwrap();
         std::fs::write(base.join("x"), "x").unwrap();
         run_git(&base, &["add", "x"]);
         run_git(&base, &["commit", "-q", "-m", "init"]);
@@ -1913,10 +1882,7 @@ mod tests {
     /// initial HEAD SHA.
     fn init_test_repo_with_initial_commit(dir: &Path) -> String {
         std::fs::create_dir_all(dir).unwrap();
-        run_git(dir, &["init", "-q", "-b", "main"]);
-        run_git(dir, &["config", "user.email", "t@t"]);
-        run_git(dir, &["config", "user.name", "t"]);
-        run_git(dir, &["config", "commit.gpgsign", "false"]);
+        crate::git::init_test_repo(dir).unwrap();
         std::fs::write(dir.join("x"), "x").unwrap();
         run_git(dir, &["add", "x"]);
         run_git(dir, &["commit", "-q", "-m", "init"]);
@@ -2169,10 +2135,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let base = tmp.path().join("base");
         std::fs::create_dir_all(&base).unwrap();
-        run_git(&base, &["init", "-q", "-b", "main"]);
-        run_git(&base, &["config", "user.email", "t@t"]);
-        run_git(&base, &["config", "user.name", "t"]);
-        run_git(&base, &["config", "commit.gpgsign", "false"]);
+        crate::git::init_test_repo(&base).unwrap();
         std::fs::write(base.join("x"), "x").unwrap();
         run_git(&base, &["add", "x"]);
         run_git(&base, &["commit", "-q", "-m", "init"]);
@@ -2226,10 +2189,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let base = tmp.path().join("base");
         std::fs::create_dir_all(&base).unwrap();
-        run_git(&base, &["init", "-q", "-b", "main"]);
-        run_git(&base, &["config", "user.email", "t@t"]);
-        run_git(&base, &["config", "user.name", "t"]);
-        run_git(&base, &["config", "commit.gpgsign", "false"]);
+        crate::git::init_test_repo(&base).unwrap();
         std::fs::write(base.join("x"), "x").unwrap();
         run_git(&base, &["add", "x"]);
         run_git(&base, &["commit", "-q", "-m", "init"]);

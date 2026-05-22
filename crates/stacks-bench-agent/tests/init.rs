@@ -156,7 +156,10 @@ async fn init_bootstraps_operator_dir_end_to_end() {
     let gitignore = target.join(".gitignore");
     assert!(gitignore.is_file(), ".gitignore should be written");
     let body = std::fs::read_to_string(&gitignore).unwrap();
-    assert!(body.contains("/config.toml"), ".gitignore should exclude /config.toml");
+    assert!(
+        body.contains("/config.toml"),
+        ".gitignore should defensively exclude /config.toml (legacy / -c convenience copies)"
+    );
     assert!(
         body.contains("repos/stacks-core/target/"),
         ".gitignore should exclude submodule target/"

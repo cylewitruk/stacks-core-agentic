@@ -29,8 +29,9 @@
 //!    preserve operator tunes. Default layout: `<prompt_overrides_dir>`
 //!    (typically `.sbagent/prompts/`) + the sibling `.sbagent/schemas/` derived
 //!    from its parent when `schemas_dir` is unset in config.
-//! 8. Drop a `.gitignore` with the conventional excludes (`/config.toml`,
-//!    `repos/<base>/target/`, etc.).
+//! 8. Drop a `.gitignore` with the conventional excludes (defensive
+//!    `/config.toml`, `repos/<base>/target/`, mutable session state, editor
+//!    noise).
 //! 9. Stage ONLY the init-owned paths (`.gitignore`, `.gitmodules`, `<base>`,
 //!    `<prompt_overrides_dir>`, `<schemas_dir>`) — never `git add -A` — then
 //!    commit "chore: initial operator state" authored as the bot via
@@ -438,9 +439,8 @@ fn derive_bot_fork_url(settings: &Settings) -> Option<String> {
 }
 
 /// Write a `.gitignore` template at the target dir if one isn't
-/// already there. Covers the conventional excludes for an operator dir:
-/// the machine-specific config, the submodule's `target/`, mutable
-/// agent scratch state, and editor/OS noise.
+/// already there. Covers the submodule's `target/`, mutable agent
+/// scratch state, and editor/OS noise.
 fn write_default_gitignore(target_dir: &Path, base_path: &Path) -> Result<()> {
     let gitignore = target_dir.join(".gitignore");
     if gitignore.exists() {
@@ -451,9 +451,9 @@ fn write_default_gitignore(target_dir: &Path, base_path: &Path) -> Result<()> {
         .to_string_lossy()
         .into_owned();
     let body = format!(
-        "# Machine-specific operator config. Real values live at\n# \
-         ~/.config/sbagent/config.toml; an in-tree copy is supported\n# for backward compat but \
-         should NOT be committed.\n/config.toml\n\n# stacks-core build artifacts inside the \
+        "# Defensive: not auto-loaded (config lives at ~/.config/sbagent/config.toml),\n# but \
+         ignore any in-tree `config.toml` so legacy or `-c config.toml`\n# convenience copies \
+         don't end up committed.\n/config.toml\n\n# stacks-core build artifacts inside the \
          submodule.\n{base_rel}/target/\n\n# Local-only mutable session state (worktrees from \
          older\n# sbagent versions). Agent scratch state lives under\n# `agent_workspace_root` in \
          /private/tmp/... by default,\n# but old layouts kept it \

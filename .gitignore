@@ -8,3 +8,8 @@ target
 # Runtime lock files produced by stacks-bench-agent (BENCH_LOCK,
 # test-lock, etc.). Live under operator's data dir; never tracked.
 data/run/
+
+# Defensive: a developer iterating locally may keep a `config.toml`
+# at the repo root and pass it via `-c config.toml`. Resolution no
+# longer auto-loads cwd, but ignore in case anyone leaves one here.
+/config.toml
