@@ -56,25 +56,26 @@ cp ~/Code/stacks-bench-agent/assets/example.config.toml \
 chmod 600 ~/.config/sbagent/config.toml
 ```
 
-Edit the minimum required fields:
+Edit the minimum required fields (stanza shape — every key sits under
+its `[section]`):
 
-- `base = "repos/stacks-core"` (submodule path inside the operator dir)
-- `base_repo_url = "https://github.com/<bot>/stacks-core.git"`
-- `publish_base_branch = "feat/stacks-bench"`
-- `prompt_overrides_dir = ".sbagent/prompts"` — sibling
-  `.sbagent/schemas/` and `.sbagent/queries/` auto-derive from this
-- `publish_token_file` (absolute path to step 2's token)
-- `publish_remote`, `publish_base_repo`, `publish_head_owner`,
-  `publish_branch_prefix`, `publish_draft_prs`
-- `git_author_name`, `git_author_email` (the bot's identity)
-- `agent_workspace_root = "/private/tmp/sbagent-workspaces"` on macOS
-  (or `/var/tmp/sbagent-workspaces/` on Linux) — mutable scratch state
-  lives here, NOT in the operator repo.
-- `source_dir`, `stacks_bench_start_at`, `stacks_bench_count` —
-  required by `session baseline run`. See
-  [configuration.md](configuration.md) for tuning.
+- `[stacks_core] base = "repos/stacks-core"` (submodule path inside
+  the operator dir) and `base_repo_url = "https://github.com/<bot>/stacks-core.git"`
+- `[publish] base_branch = "feat/stacks-bench"`,
+  `token_file` (absolute path to step 2's token), plus `remote`,
+  `base_repo`, `head_owner`, `branch_prefix`, `draft_prs`
+- `[layout] prompt_overrides_dir = ".sbagent/prompts"` — sibling
+  `.sbagent/schemas/`, `.sbagent/queries/`, `.sbagent/context/`,
+  and top-level `<operator>/memory/` auto-derive from this
+- `[layout] agent_workspace_root = "/private/tmp/sbagent-workspaces"` on
+  macOS (or `/var/tmp/sbagent-workspaces/` on Linux) — mutable scratch
+  state lives here, NOT in the operator repo
+- `[git] author_name`, `[git] author_email` (the bot's identity)
+- `[stacks_bench] source_dir`, `start_at`, `count` — required by
+  `session baseline run`. See [configuration.md](configuration.md)
+  for tuning.
 
-`framework_root` is OPTIONAL; leave it unset for operator deployments.
+`[dev] framework_root` is OPTIONAL; leave it unset for operator deployments.
 The bundled prompts / schemas / queries inside the `sbagent` binary
 are seeded to `.sbagent/` automatically; no separate framework
 checkout is needed at runtime.
@@ -104,7 +105,7 @@ sbagent init \
 `--push` lands the initial commit on `origin/main` using the same
 PAT-via-env mechanism (token never enters argv, `.git/config`, or
 shell history). The HTTPS origin is validated against
-`git_auth_url_prefix` (defaults to `https://github.com/`); SSH /
+`git.auth_url_prefix` (defaults to `https://github.com/`); SSH /
 other-prefix URLs error up-front rather than silently bypassing the
 header.
 
@@ -121,10 +122,10 @@ sbagent check --with-publish
 
 Probes (all in-process): bundle drift for schemas + queries (fail on
 mismatch with the running binary), prompt drift (warn-only),
-`<publish_token_file>` non-empty + readable (and outside
-`framework_root` when that setting is set — see
+`<publish.token_file>` non-empty + readable (and outside
+`dev.framework_root` when that setting is set — see
 [publishing.md](publishing.md#threat-model-for-the-github-token) for
-the full token-location rules), `publish_base_repo` reachable via
+the full token-location rules), `publish.base_repo` reachable via
 the GitHub API with that token, publish remote URL resolves to
 github.com.
 
@@ -216,8 +217,8 @@ For a quick environment sanity check before the demo, run:
 sbagent check
 ```
 
-Add `--with-publish` to also probe Phase 5 wiring: `publish_token_file`
-is readable + non-empty, and `publish_base_repo` is reachable via the
+Add `--with-publish` to also probe Phase 5 wiring: `publish.token_file`
+is readable + non-empty, and `publish.base_repo` is reachable via the
 GitHub API with that token. See [docs/publishing.md](publishing.md) for
 the full Phase 5 setup.
 
@@ -270,7 +271,7 @@ only for VM lifecycle. Keep the same logical command model:
 6. Copy JSON/stderr/optimization-session artifacts back to
    <operator>/sessions/<session-id>/results/ (per-phase subdirs:
    baseline/, triage/, analysis/, merge/, optimize/, finalize/).
-7. Preserve <stacks_bench_data_dir> (default
+7. Preserve <stacks_bench.data_dir> (default
    <operator>/data/stacks-bench) as the shared benchmark app-data dir.
 8. Destroy VM and delete disposable run dir.
 ```

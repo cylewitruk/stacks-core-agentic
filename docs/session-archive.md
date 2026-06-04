@@ -67,7 +67,7 @@ coordination.
 ## Layout: workspace-based session bulk
 
 Session evidence bundles live **outside** the operator git repo, in a
-workspace dir. Today: `<agent_workspace_root>/sessions/<id>/`. This
+workspace dir. Today: `<layout.agent_workspace_root>/sessions/<id>/`. This
 keeps the operator's main worktree pristine — the archive branch
 holds `sessions/<id>/` paths in its git tree, but those paths exist
 on disk only inside a temporary worktree the archive flow creates
@@ -76,15 +76,15 @@ branch switches can't accidentally wipe them.
 
 The legacy layout (bulk at `<operator>/sessions/<id>/`) is still
 supported for non-archive operations (baseline, triage, optimize,
-bench, finalize) — set `sessions_root` explicitly to opt in.
-**However, archive itself requires `agent_workspace_root` to point
+bench, finalize) — set `layout.sessions_root` explicitly to opt in.
+**However, archive itself requires `layout.agent_workspace_root` to point
 OUTSIDE the operator repo**, since the archive worktree must live
 outside the operator to avoid the branch-switch wipe hazard. An
 operator on the legacy layout who wants to archive must set
-`agent_workspace_root` to a separate path; archive will surface a
+`layout.agent_workspace_root` to a separate path; archive will surface a
 clear error otherwise. New deployments should just accept the
-default workspace-based layout (set `agent_workspace_root` and let
-`sessions_root` derive from it).
+default workspace-based layout (set `layout.agent_workspace_root` and let
+`layout.sessions_root` derive from it).
 
 ## Configuration
 
@@ -92,10 +92,10 @@ Operator must set:
 
 | Setting | Purpose | Default when unset |
 | --- | --- | --- |
-| `operator_repo_root` | Absolute path to the operator git repo (holds `sessions.jsonl` + archive branches). | `sessions_root.parent()` ONLY when `sessions_root` was set explicitly (legacy layout). Otherwise `None` — `sbagent session archive` requires the setting to be explicit and bails with a clear error if missing. |
-| `agent_workspace_root` | Workspace path that holds session bulk + the transient archive worktree. Required by archive (the archive worktree must live outside the operator repo). | None — when also unset, `sessions_root` falls back to `<cwd>/sessions/` (legacy layout) and archive refuses to run. |
+| `layout.operator_repo_root` | Absolute path to the operator git repo (holds `sessions.jsonl` + archive branches). | `sessions_root.parent()` ONLY when `layout.sessions_root` was set explicitly (legacy layout). Otherwise `None` — `sbagent session archive` requires the setting to be explicit and bails with a clear error if missing. |
+| `layout.agent_workspace_root` | Workspace path that holds session bulk + the transient archive worktree. Required by archive (the archive worktree must live outside the operator repo). | None — when also unset, `layout.sessions_root` falls back to `<cwd>/sessions/` (legacy layout) and archive refuses to run. |
 
-The push step uses the same `publish_token_file` + git auth-header
+The push step uses the same `publish.token_file` + git auth-header
 plumbing as Phase 5 publish. With `--dry-run`, the push (and the
 publish-style auth preflight) is skipped — local commits still
 produced.
@@ -105,14 +105,14 @@ produced.
 If your operator currently has bulk at `<operator>/sessions/<id>/`:
 
 ```bash
-# 1. Pick a workspace path (or accept the agent_workspace_root default).
+# 1. Pick a workspace path (or accept the layout.agent_workspace_root default).
 mkdir -p /var/tmp/sbagent-workspaces
 
 # 2. Move existing session dirs out of the operator.
 mv /path/to/operator/sessions/* /var/tmp/sbagent-workspaces/sessions/
 
-# 3. Set agent_workspace_root in ~/.config/sbagent/config.toml.
-# 4. Set operator_repo_root explicitly (the new default derivation
+# 3. Set layout.agent_workspace_root in ~/.config/sbagent/config.toml.
+# 4. Set layout.operator_repo_root explicitly (the new default derivation
 #    points at the workspace dir, not the operator).
 ```
 

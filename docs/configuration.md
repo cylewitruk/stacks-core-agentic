@@ -19,9 +19,10 @@ flag is `SBAGENT_SESSION_ID` (on `--session-id`). No `.env` file.
 
 The annotated template is checked in at
 [assets/example.config.toml](../assets/example.config.toml) — copy it
-to `~/.config/sbagent/config.toml` and edit. The shape (canonical
-Nakamoto-era block ranges, lock paths, publish targets, bundle dirs,
-forge auth) is documented inline in that file.
+to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
+stanzas (`[layout]`, `[stacks_core]`, `[stacks_bench]`, `[triage]`,
+`[analyzer]`, `[optimizer]`, `[codex]`, `[publish]`, `[git]`); each
+stanza's fields are documented inline in that file.
 
 Prefer `--count` on `session baseline run` for bounded demo runs.
 Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is
@@ -43,24 +44,33 @@ intentional, because it can add significant chainstate copy time.
     queries/                        # Triage/analyzer SQL — same contract
                                     # as schemas (mirror, do not edit).
   repos/
-    stacks-core/                    # submodule, tracks publish_base_branch
+    stacks-core/                    # submodule, tracks publish.base_branch
   sessions/<session-id>/results/    # per-session artifacts
   events/                           # append-only event log (operator-side)
 ```
 
 ```text
-<agent_workspace_root>              # default /private/tmp/sbagent-workspaces
+<layout.agent_workspace_root>       # default /private/tmp/sbagent-workspaces
   optimizers/<session-id>/<target>/ # mutable per-target git clones
                                     # — NOT inside the operator repo, so
                                     # `git status` stays clean and Codex
                                     # has a sandbox-friendly scratch root.
 ```
 
-Both bundle dirs (`schemas/`, `queries/`) and the prompt bundle dir
-auto-derive from `prompt_overrides_dir`'s parent when their explicit
-config keys are unset. With `prompt_overrides_dir = ".sbagent/prompts"`
-(the conventional setting), the three sibling dirs land under
-`.sbagent/` with no extra config.
+The bundle dirs (`layout.schemas_dir`, `layout.queries_dir`,
+`layout.context_overrides_dir`) auto-derive from
+`layout.prompt_overrides_dir`'s parent when their explicit config keys
+are unset. With `prompt_overrides_dir = ".sbagent/prompts"` (the
+conventional setting), the three bundle dirs land under `.sbagent/`
+with no extra config.
+
+`layout.memory_dir` is different: it holds accumulated bot knowledge
+(the analyzed-rejections ledger today), not bundled/synced state. When
+unset, the derived path LIFTS out of `.sbagent/` and lands at
+`<operator>/memory/` — so the operator sees memory next to `.sbagent/`,
+not inside it. Setting `memory_dir` explicitly is honored verbatim;
+`.sbagent/memory` is a legitimate operator choice if you want it
+co-located with the bundle dirs.
 
 ## Bundle lifecycle (`sbagent sync`)
 
@@ -95,11 +105,11 @@ config override (injected via `GIT_CONFIG_COUNT` env-vars, never
 persisted) to attach a Basic credential to git pushes. Two settings
 control it:
 
-- `git_auth_username` — defaults to `x-access-token` (GitHub
+- `git.auth_username` — defaults to `x-access-token` (GitHub
   fine-grained PATs). Set to `oauth2` for GitLab project tokens,
   the Bitbucket account username for Bitbucket app passwords,
   `git` for self-hosted Gitea / Forgejo.
-- `git_auth_url_prefix` — defaults to `https://github.com/`. Set to
+- `git.auth_url_prefix` — defaults to `https://github.com/`. Set to
   your forge's HTTPS root for non-GitHub hosts (e.g.
   `https://gitlab.com/`). Trailing slash is normalized internally
   so `https://gitlab.com` and `https://gitlab.com/` resolve
@@ -113,20 +123,20 @@ to `""` is **expert / advanced mode**: the auth header is attached
 unqualified and sent to **any** HTTPS remote git contacts during the
 invocation. Use only after auditing every remote.
 
-## Tool-developer mode (optional `framework_root`)
+## Tool-developer mode (optional `dev.framework_root`)
 
-`framework_root` was required pre-bundle. With prompts / schemas /
+`dev.framework_root` was required pre-bundle. With prompts / schemas /
 queries embedded, operator deployments leave it unset. The remaining
 consumers:
 
 - `sbagent schema export` defaults `--out` to `<framework>/schemas/`
   so a tool dev regenerating schemas writes back to the source tree.
 - `sbagent check`'s typed-model-vs-committed-schema drift gate runs
-  only when `framework_root` is set (catches "edited a Rust model,
+  only when `dev.framework_root` is set (catches "edited a Rust model,
   forgot to commit the regenerated schema"; irrelevant for operators).
 
-Set `framework_root` to your `stacks-bench-agent` source checkout if
-you're iterating on the tool itself. Otherwise omit it.
+Set `dev.framework_root` to your `stacks-bench-agent` source checkout
+if you're iterating on the tool itself. Otherwise omit it.
 
 ## Recommended Codex config
 
@@ -145,7 +155,7 @@ web_search = "cached"
 network_access = true
 writable_roots = [
   "/absolute/path/to/<bot>/<operator>",
-  "/private/tmp/sbagent-workspaces",   # match `agent_workspace_root`
+  "/private/tmp/sbagent-workspaces",   # match `layout.agent_workspace_root`
 ]
 
 [projects."/absolute/path/to/<bot>/<operator>/repos/stacks-core"]
@@ -191,7 +201,7 @@ tool_timeout_sec    = 600
 enabled = true
 ```
 
-`--db` points at `stacks_bench_data_dir` from your config.toml. The
+`--db` points at `stacks_bench.data_dir` from your config.toml. The
 bootstrap step that pre-builds `stacks-bench` (see
 [setup.md](setup.md)) is what makes this safe. If you ever wipe
 `target/release/`, re-run `cargo stacks-bench --help >/dev/null` from

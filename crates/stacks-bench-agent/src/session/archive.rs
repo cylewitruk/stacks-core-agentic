@@ -136,7 +136,7 @@ pub fn archive(inputs: &ArchiveInputs<'_>) -> Result<ArchiveOutputs> {
     // actually need it. We need it iff: not dry-run AND the
     // operator repo has a configured remote. A purely local
     // operator repo (no remote) goes through the archive flow
-    // without ever pushing, so requiring `publish_token_file` there
+    // without ever pushing, so requiring `publish.token_file` there
     // would be a regression. Both push sites (archive branch + main
     // ledger) read from this single bundle so they can't drift.
     let push_auth = if inputs.dry_run {
@@ -403,8 +403,8 @@ fn run_in_archive_worktree(
 /// from settings and reused for both the archive-branch push (inside
 /// the worktree) and the main-branch ledger push. Splitting the
 /// resolution previously meant the archive-branch push silently
-/// ignored `publish_token_file`, `git_auth_username`, and
-/// `git_auth_url_prefix` — meaning custom token paths or non-GitHub
+/// ignored `publish.token_file`, `git.auth_username`, and
+/// `git.auth_url_prefix` — meaning custom token paths or non-GitHub
 /// forges broke on the archive branch but worked on main.
 struct PushAuth {
     token: String,
@@ -419,24 +419,23 @@ struct PushAuth {
 fn load_push_auth(inputs: &ArchiveInputs<'_>) -> Result<PushAuth> {
     let token_file = match &inputs
         .settings
-        .publish_token_file
+        .publish
+        .token_file
     {
         Some(p) => p.clone(),
         None => crate::session::publish::default_publish_token_path(),
     };
     let token = crate::session::publish::read_publish_token(&token_file)
-        .context("reading publish_token_file for archive push (set publish_token_file)")?;
+        .context("archive push (set `publish.token_file` to override the default location)")?;
     let username = inputs
         .settings
-        .git_auth_username
-        .clone()
-        .unwrap_or_else(|| crate::settings::DEFAULT_GIT_AUTH_USERNAME.to_owned());
-    let url_prefix_raw = inputs
+        .git
+        .effective_auth_username()
+        .to_owned();
+    let url_prefix = inputs
         .settings
-        .git_auth_url_prefix
-        .as_deref()
-        .unwrap_or(crate::settings::DEFAULT_GIT_AUTH_URL_PREFIX);
-    let url_prefix = crate::settings::normalize_auth_url_prefix(url_prefix_raw);
+        .git
+        .effective_auth_url_prefix()?;
     Ok(PushAuth { token, username, url_prefix })
 }
 
@@ -559,8 +558,7 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
             .layout
             .optimization_targets_json(),
         || loader::read_optimization_targets(inputs.layout),
-    )
-    .context("loading optimization-targets.json (treated as required if it exists)")?;
+    )?;
 
     let (status, failure_phase, failure_reason) = derive_session_status(inputs.layout);
     let started_at = derive_started_at_from_id(&session_id_str);
@@ -571,22 +569,26 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
     let range = SessionRange {
         start_at: inputs
             .settings
-            .stacks_bench_start_at,
+            .stacks_bench
+            .start_at,
         count: inputs
             .settings
-            .stacks_bench_count,
+            .stacks_bench
+            .count,
         warmup: inputs
             .settings
-            .stacks_bench_warmup,
+            .stacks_bench
+            .warmup,
         filter: inputs
             .settings
-            .stacks_bench_filter
+            .stacks_bench
+            .filter
             .clone(),
         network: inputs
             .settings
-            .stacks_bench_network
-            .clone()
-            .unwrap_or_else(|| "mainnet".to_owned()),
+            .stacks_bench
+            .effective_network()
+            .to_owned(),
     };
 
     let stacks_core_base_sha = inputs
@@ -934,13 +936,13 @@ fn primary_remote(repo: &Path) -> Result<Option<String>> {
 /// publish-specific helper.
 fn bot_identity_env(settings: &Settings) -> Vec<(String, String)> {
     let name = settings
-        .git_author_name
-        .clone()
-        .unwrap_or_else(|| "stacks-bench-bot".to_owned());
+        .git
+        .effective_author_name()
+        .to_owned();
     let email = settings
-        .git_author_email
-        .clone()
-        .unwrap_or_else(|| "stacks-bench-bot@users.noreply.github.com".to_owned());
+        .git
+        .effective_author_email()
+        .to_owned();
     vec![
         ("GIT_AUTHOR_NAME".into(), name.clone()),
         ("GIT_AUTHOR_EMAIL".into(), email.clone()),

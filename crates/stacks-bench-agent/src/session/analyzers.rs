@@ -7,7 +7,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use tokio::sync::Semaphore;
@@ -69,10 +68,12 @@ where
     // more permits than there are families to analyze).
     let configured = inputs
         .parallel
-        .or(inputs
-            .settings
-            .analyzer_concurrency_cap)
-        .unwrap_or(4)
+        .unwrap_or_else(|| {
+            inputs
+                .settings
+                .analyzer
+                .effective_concurrency_cap()
+        })
         .max(1);
     let parallel = configured.min(candidates.candidates.len());
     let semaphore = Arc::new(Semaphore::new(parallel));
@@ -239,21 +240,21 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
 
     let timeout = state
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let model = state
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.5");
+        .codex
+        .effective_model();
     let reasoning_effort = state
         .settings
-        .codex_reasoning_effort
+        .codex
+        .reasoning_effort
         .as_deref();
     let dangerous = state
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
     let mut add_dirs: Vec<PathBuf> = vec![
         state
@@ -289,7 +290,8 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
     add_dirs.extend(
         state
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );

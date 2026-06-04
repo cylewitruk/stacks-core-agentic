@@ -24,7 +24,7 @@ use crate::types::SessionId;
 pub struct PublishArgs {
     /// Skip the push step: generate per-target publish artifacts but
     /// don't push branches, open PRs, or open issues. Skips the
-    /// publish-wiring preflight too (token / `publish_base_repo` /
+    /// publish-wiring preflight too (token / `publish.base_repo` /
     /// remote auth are only needed by the push path).
     #[clap(long)]
     pub dry_run: bool,
@@ -48,8 +48,7 @@ pub async fn run(args: PublishArgs, ctx: &CliContext, session_id: &SessionId) ->
         settings: &ctx.settings,
         harness: harness.as_ref(),
     })
-    .await
-    .context("publish generate")?;
+    .await?;
     println!(
         "publish generate: pr={} issue={} skipped={}",
         gen_outputs.pr_count, gen_outputs.issue_count, gen_outputs.skip_count
@@ -68,9 +67,8 @@ pub async fn run(args: PublishArgs, ctx: &CliContext, session_id: &SessionId) ->
             .as_deref()
             .map(|p| p as &std::path::Path),
     )?;
-    let token = publish::read_publish_token(&publish_config.publish_token_file)
-        .context("reading publish_token_file")?;
-    let gh = publish::StdGhClient::from_token(&token).context("building octocrab client")?;
+    let token = publish::read_publish_token(&publish_config.publish_token_file)?;
+    let gh = publish::StdGhClient::from_token(&token)?;
     let push_outputs = publish::push(&publish::PushInputs {
         layout: &layout,
         framework: &ctx.layout,

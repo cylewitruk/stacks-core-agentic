@@ -19,11 +19,14 @@ use stacks_bench_agent::settings::Settings;
 /// Build a `CliContext` whose layout points at a tempdir's `.sbagent/`.
 fn ctx_for(target: &std::path::Path) -> CliContext {
     let settings = Settings {
-        prompt_overrides_dir: Some(
-            target
-                .join(".sbagent")
-                .join("prompts"),
-        ),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(
+                target
+                    .join(".sbagent")
+                    .join("prompts"),
+            ),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
         ..Settings::default()
     };
     let layout = Layout::from_settings(&settings).expect("layout");
@@ -123,11 +126,14 @@ async fn sync_default_requires_prompt_overrides_dir() {
     // Settings WITHOUT prompt_overrides_dir but with schemas_dir set so
     // we don't trip on missing prompts during the schemas write.
     let settings = Settings {
-        schemas_dir: Some(
-            target
-                .join(".sbagent")
-                .join("schemas"),
-        ),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            schemas_dir: Some(
+                target
+                    .join(".sbagent")
+                    .join("schemas"),
+            ),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
         ..Settings::default()
     };
     let layout = Layout::from_settings(&settings).expect("layout");
@@ -263,19 +269,25 @@ async fn sync_commit_produces_one_bot_authored_commit() {
     let prev_cwd = stage_operator_git_repo(&target);
 
     let mut settings = Settings {
-        prompt_overrides_dir: Some(
-            target
-                .join(".sbagent")
-                .join("prompts"),
-        ),
-        git_author_name: Some("test-bot".into()),
-        git_author_email: Some("test-bot@example".into()),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(
+                target
+                    .join(".sbagent")
+                    .join("prompts"),
+            ),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
+        git: stacks_bench_agent::settings::GitSettings {
+            author_name: Some("test-bot".into()),
+            author_email: Some("test-bot@example".into()),
+            ..stacks_bench_agent::settings::GitSettings::default()
+        },
         ..Settings::default()
     };
     // Force lock_dir somewhere that doesn't collide with the test
     // tempdir's git repo (Layout would otherwise hang lock state on
     // cwd in unhelpful ways for this minimal integration test).
-    settings.lock_dir = Some(tmp.path().join("locks"));
+    settings.layout.lock_dir = Some(tmp.path().join("locks"));
     let layout = Layout::from_settings(&settings).expect("layout");
     let ctx = CliContext { settings, layout };
 
@@ -331,14 +343,20 @@ async fn sync_commit_is_noop_on_clean_tree() {
     let prev_cwd = stage_operator_git_repo(&target);
 
     let settings = Settings {
-        prompt_overrides_dir: Some(
-            target
-                .join(".sbagent")
-                .join("prompts"),
-        ),
-        git_author_name: Some("test-bot".into()),
-        git_author_email: Some("test-bot@example".into()),
-        lock_dir: Some(tmp.path().join("locks")),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(
+                target
+                    .join(".sbagent")
+                    .join("prompts"),
+            ),
+            lock_dir: Some(tmp.path().join("locks")),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
+        git: stacks_bench_agent::settings::GitSettings {
+            author_name: Some("test-bot".into()),
+            author_email: Some("test-bot@example".into()),
+            ..stacks_bench_agent::settings::GitSettings::default()
+        },
         ..Settings::default()
     };
     let layout = Layout::from_settings(&settings).expect("layout");
@@ -395,15 +413,24 @@ async fn sync_push_rejects_ssh_origin() {
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
     let settings = Settings {
-        prompt_overrides_dir: Some(
-            target
-                .join(".sbagent")
-                .join("prompts"),
-        ),
-        git_author_name: Some("test-bot".into()),
-        git_author_email: Some("test-bot@example".into()),
-        publish_token_file: Some(token_path),
-        lock_dir: Some(tmp.path().join("locks")),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(
+                target
+                    .join(".sbagent")
+                    .join("prompts"),
+            ),
+            lock_dir: Some(tmp.path().join("locks")),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
+        git: stacks_bench_agent::settings::GitSettings {
+            author_name: Some("test-bot".into()),
+            author_email: Some("test-bot@example".into()),
+            ..stacks_bench_agent::settings::GitSettings::default()
+        },
+        publish: stacks_bench_agent::settings::PublishSettings {
+            token_file: Some(token_path),
+            ..stacks_bench_agent::settings::PublishSettings::default()
+        },
         ..Settings::default()
     };
     let layout = Layout::from_settings(&settings).expect("layout");

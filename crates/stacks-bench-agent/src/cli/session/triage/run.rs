@@ -14,7 +14,7 @@ use crate::types::SessionId;
 pub struct TriageRunArgs {
     /// Operator weights for the three triage selection lenses, comma-separated
     /// `tx_latency,tenure_throughput,commit_time`. Defaults to
-    /// `settings.stacks_bench_axis_weights` from `config.toml`, then
+    /// `settings.triage.axis_weights` from `config.toml`, then
     /// `0.4,0.4,0.2`.
     #[clap(long)]
     pub axis_weights: Option<String>,
@@ -27,12 +27,12 @@ pub async fn run(args: TriageRunArgs, ctx: &CliContext, session_id: &SessionId) 
     let axis_weights = args
         .axis_weights
         .clone()
-        .or_else(|| {
+        .unwrap_or_else(|| {
             ctx.settings
-                .stacks_bench_axis_weights
-                .clone()
-        })
-        .unwrap_or_else(|| "0.4,0.4,0.2".to_owned());
+                .triage
+                .effective_axis_weights()
+                .to_owned()
+        });
 
     let outputs = triage::run(&Inputs {
         layout: &layout,

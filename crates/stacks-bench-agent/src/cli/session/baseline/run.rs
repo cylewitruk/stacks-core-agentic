@@ -4,7 +4,7 @@
 //! [`crate::cli::session::bench_range::BenchRangeArgs`]) so the
 //! closed-loop can sample different windows without mutating config.
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use clap::Args;
 
 use crate::cli::CliContext;
@@ -32,14 +32,12 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
 
     let source_dir = ctx
         .settings
-        .source_dir
-        .as_deref()
-        .context("settings.source_dir is required (or env $SOURCE_DIR)")?;
+        .stacks_bench
+        .source_dir_required()?;
     let network = ctx
         .settings
-        .stacks_bench_network
-        .as_deref()
-        .unwrap_or("mainnet");
+        .stacks_bench
+        .effective_network();
     let range = args
         .range
         .resolve(&ctx.settings)?;
@@ -93,6 +91,7 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         bench_lock: &ctx.layout.bench_lock,
         single_run_noise_floor_pct: ctx
             .settings
+            .triage
             .single_run_noise_floor_pct
             .unwrap_or(1.0),
     })?;

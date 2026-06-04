@@ -38,8 +38,7 @@ pub async fn run(args: ArchiveArgs, ctx: &CliContext, session_id: &SessionId) ->
     // anyway).
     if ctx.layout.base.is_some() {
         let bench = StacksBenchCli::from_layout(&ctx.layout)?;
-        db_consistency::warn_dangling_refs(&layout, &bench)
-            .context("pre-archive DB consistency check")?;
+        db_consistency::warn_dangling_refs(&layout, &bench)?;
     }
 
     let outputs = archive(&ArchiveInputs {

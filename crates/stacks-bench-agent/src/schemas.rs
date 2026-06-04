@@ -2,7 +2,8 @@
 //!
 //! The canonical JSON Schemas are embedded into the binary via
 //! `include_str!` at compile time. [`seed_to`] writes them to the
-//! operator's [`Settings::schemas_dir`](crate::settings::Settings::schemas_dir)
+//! operator's
+//! [`LayoutSettings::schemas_dir`](crate::settings::LayoutSettings::schemas_dir)
 //! on `sbagent init` and at every CLI startup (with don't-replace
 //! semantics); [`sync`] re-writes them unconditionally; [`drift`]
 //! reports any operator-disk copy that doesn't byte-match the bundle.

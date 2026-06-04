@@ -5,7 +5,7 @@
   "baseline_rerun_id": 101,
   "noise_floor_pct": 0.8,
   "merge_method": "llm",
-  "merge_model": "gpt-5.3-codex-spark",
+  "merge_model": "gpt-5.5",
   "targets": [
     {
       "id": "marf-read-cache-rollback-wrapper",

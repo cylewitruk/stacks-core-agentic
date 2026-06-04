@@ -9,7 +9,7 @@
 //! - `sync --force` — overwrites every on-disk template with the bundled
 //!   defaults. Destructive (clobbers operator edits); requires `--force`.
 //!
-//! Both operate on the directory at `settings.prompt_overrides_dir` (or
+//! Both operate on the directory at `settings.layout.prompt_overrides_dir` (or
 //! whatever is passed via `--dir`). `sbagent` startup seeds this dir if
 //! it's set in config, so lint normally has files to inspect.
 
@@ -43,7 +43,7 @@ pub enum PromptCommand {
 #[derive(Debug, Args)]
 pub struct LintArgs {
     /// Override the prompts dir to lint. Defaults to
-    /// `settings.prompt_overrides_dir`.
+    /// `settings.layout.prompt_overrides_dir`.
     #[clap(long)]
     pub dir: Option<PathBuf>,
 }
@@ -52,7 +52,7 @@ pub struct LintArgs {
 #[derive(Debug, Args)]
 pub struct SyncArgs {
     /// Override the destination dir. Defaults to
-    /// `settings.prompt_overrides_dir`.
+    /// `settings.layout.prompt_overrides_dir`.
     #[clap(long)]
     pub dir: Option<PathBuf>,
 

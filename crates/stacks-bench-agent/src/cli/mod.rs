@@ -93,16 +93,18 @@ pub struct CliContext {
 
 impl CliContext {
     /// Construct a context from the parsed CLI args. Loads settings, then
-    /// derives the on-disk layout from them. If `settings.prompt_overrides_dir`
-    /// is set, seeds bundled templates into it with
-    /// don't-replace-if-exists semantics so a fresh operator gets a
-    /// working baseline while a tuned operator keeps their edits. Missing
-    /// `prompt_overrides_dir` is not an error here — render-time helpers
-    /// surface that with a clearer message at the appropriate phase.
+    /// derives the on-disk layout from them. If
+    /// `settings.layout.prompt_overrides_dir` is set, seeds bundled
+    /// templates into it with don't-replace-if-exists semantics so a fresh
+    /// operator gets a working baseline while a tuned operator keeps their
+    /// edits. Missing `prompt_overrides_dir` is not an error here —
+    /// render-time helpers surface that with a clearer message at the
+    /// appropriate phase.
     pub fn from_args(args: &CliArgs) -> Result<Self> {
         let settings = Settings::load(args.config_path.as_deref())?;
         let layout = Layout::from_settings(&settings)?;
         if let Some(dir) = settings
+            .layout
             .prompt_overrides_dir
             .as_deref()
         {
@@ -191,6 +193,7 @@ impl CliContext {
 /// legacy location to migrate from). Idempotent.
 fn migrate_legacy_context_docs(settings: &Settings, layout: &Layout) -> Result<()> {
     let prompts_dir = match settings
+        .layout
         .prompt_overrides_dir
         .as_deref()
     {

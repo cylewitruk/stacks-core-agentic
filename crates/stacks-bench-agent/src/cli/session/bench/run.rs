@@ -23,8 +23,7 @@ pub struct BenchRunArgs {
 /// Run the bench-experiments phase.
 pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
-    let targets =
-        loader::read_optimization_targets(&layout).context("loading optimization-targets.json")?;
+    let targets = loader::read_optimization_targets(&layout)?;
     if targets.targets.is_empty() {
         println!("No targets to benchmark; phase is a no-op.");
         return Ok(());
@@ -32,14 +31,12 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
 
     let source_dir = ctx
         .settings
-        .source_dir
-        .as_deref()
-        .context("settings.source_dir is required (or env $SOURCE_DIR)")?;
+        .stacks_bench
+        .source_dir_required()?;
     let network = ctx
         .settings
-        .stacks_bench_network
-        .as_deref()
-        .unwrap_or("mainnet");
+        .stacks_bench
+        .effective_network();
     // start_at / count are only consumed by the full-range bench
     // fallback (no `verification_replay` on the target). Make the
     // requireds **conditional** on whether any target actually needs
@@ -49,16 +46,18 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
     let (start_at, count) = if needs_full_range {
         let s = ctx
             .settings
-            .stacks_bench_start_at
+            .stacks_bench
+            .start_at
             .context(
-                "settings.stacks_bench_start_at is required (or env $STACKS_BENCH_START_AT) when \
+                "settings.stacks_bench.start_at is required (or env $STACKS_BENCH_START_AT) when \
                  at least one target lacks a `verification_replay` recipe",
             )?;
         let c = ctx
             .settings
-            .stacks_bench_count
+            .stacks_bench
+            .count
             .context(
-                "settings.stacks_bench_count is required (or env $STACKS_BENCH_COUNT) when at \
+                "settings.stacks_bench.count is required (or env $STACKS_BENCH_COUNT) when at \
                  least one target lacks a `verification_replay` recipe",
             )?;
         (Some(s), Some(c))
@@ -99,10 +98,12 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
             count,
             warmup: ctx
                 .settings
-                .stacks_bench_warmup,
+                .stacks_bench
+                .warmup,
             filter: ctx
                 .settings
-                .stacks_bench_filter
+                .stacks_bench
+                .filter
                 .as_deref(),
             shadow_dir_root: ctx
                 .layout
@@ -147,8 +148,8 @@ fn print_summary(outcomes: &[(String, TargetOutcome)], _worktrees_root: &PathBuf
 /// True iff at least one target would fall through to the full-range
 /// bench fallback — i.e. has no `verification_replay`, OR has one
 /// whose `txids` and `blocks` are both absent or empty. Used by the
-/// CLI preflight to decide whether `stacks_bench_start_at` and
-/// `stacks_bench_count` are required for this session.
+/// CLI preflight to decide whether `stacks_bench.start_at` and
+/// `stacks_bench.count` are required for this session.
 fn any_target_needs_full_range(targets: &[crate::models::targets::MergedTarget]) -> bool {
     targets
         .iter()

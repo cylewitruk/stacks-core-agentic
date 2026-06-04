@@ -5,7 +5,7 @@
 //!   target, validates the produced sections, and writes
 //!   `optimize/<id>/{pr,issue}-{title.txt,body.md}`. Codex receives no token in
 //!   any rendered prompt.
-//! - [`push`] reads `publish_token_file` into the [`StdGhClient`] (octocrab) at
+//! - [`push`] reads `publish.token_file` into the [`StdGhClient`] (octocrab) at
 //!   call time, then performs PR/issue creation via the GitHub REST API and
 //!   `git` for the worktree → branch → push hop. The token never leaves
 //!   `sbagent`'s memory, never enters its env, and is never written to disk.
@@ -27,7 +27,6 @@
 //!   issue body.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 
@@ -72,8 +71,7 @@ pub struct GenerateOutputs {
 /// Generate per-target publish artifacts. Mirrors
 /// `scripts/generate-pr-artifacts.sh`.
 pub async fn generate<H: AgentHarness>(inputs: &GenerateInputs<'_, H>) -> Result<GenerateOutputs> {
-    let targets = loader::read_optimization_targets(inputs.layout)
-        .context("loading optimization-targets.json")?;
+    let targets = loader::read_optimization_targets(inputs.layout)?;
     if targets.targets.is_empty() {
         return Ok(GenerateOutputs::default());
     }
@@ -227,21 +225,21 @@ async fn run_pr_writer<H: AgentHarness>(
 
     let timeout = inputs
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let model = inputs
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.5");
+        .codex
+        .effective_model();
     let reasoning_effort = inputs
         .settings
-        .codex_reasoning_effort
+        .codex
+        .reasoning_effort
         .as_deref();
     let dangerous = inputs
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
     // pr-writer's rendered prompt is passed inline to codex; the agent
     // writes `pr-title.txt`/`pr-body.md` to cwd (the experiment dir)
@@ -252,7 +250,8 @@ async fn run_pr_writer<H: AgentHarness>(
     add_dirs.extend(
         inputs
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );
@@ -327,21 +326,21 @@ async fn run_issue_writer<H: AgentHarness>(
 
     let timeout = inputs
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let model = inputs
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.5");
+        .codex
+        .effective_model();
     let reasoning_effort = inputs
         .settings
-        .codex_reasoning_effort
+        .codex
+        .reasoning_effort
         .as_deref();
     let dangerous = inputs
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
     // Issue-writer reads `consensus-issue.md` from cwd (the experiment
     // dir) and writes the rendered issue body alongside it. No extra
@@ -351,7 +350,8 @@ async fn run_issue_writer<H: AgentHarness>(
     add_dirs.extend(
         inputs
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );
@@ -515,34 +515,42 @@ impl PublishConfig {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             publish_remote: settings
-                .publish_remote
+                .publish
+                .remote
                 .clone()
                 .unwrap_or_else(|| "origin".to_owned()),
             publish_base_repo: settings
-                .publish_base_repo
+                .publish
+                .base_repo
                 .clone()
                 .unwrap_or_else(|| "cylewitruk/stacks-core".to_owned()),
             publish_base_branch: settings
-                .publish_base_branch
+                .publish
+                .base_branch
                 .clone()
                 .unwrap_or_else(|| "feat/stacks-bench".to_owned()),
             publish_draft_prs: settings
-                .publish_draft_prs
+                .publish
+                .draft_prs
                 .unwrap_or(true),
             publish_pr_labels: settings
-                .publish_pr_labels
+                .publish
+                .pr_labels
                 .clone()
                 .unwrap_or_default(),
             publish_branch_prefix: settings
-                .publish_branch_prefix
+                .publish
+                .branch_prefix
                 .clone()
                 .unwrap_or_else(|| "agentic".to_owned()),
             publish_token_file: settings
-                .publish_token_file
+                .publish
+                .token_file
                 .clone()
                 .unwrap_or_else(default_publish_token_path),
             publish_head_owner: settings
-                .publish_head_owner
+                .publish
+                .head_owner
                 .clone(),
         }
     }
@@ -757,8 +765,7 @@ const CONSENSUS_PR_LABELS: &[&str] = &["consensus-change", "needs-HIP", "do-not-
 const CONSENSUS_ISSUE_LABELS: &[&str] = &["consensus-change", "needs-HIP"];
 
 pub async fn push<G: GhClient>(inputs: &PushInputs<'_, G>) -> Result<PushOutputs> {
-    let targets = loader::read_optimization_targets(inputs.layout)
-        .context("loading optimization-targets.json")?;
+    let targets = loader::read_optimization_targets(inputs.layout)?;
     if targets.targets.is_empty() {
         return Ok(PushOutputs::default());
     }
@@ -820,7 +827,7 @@ pub async fn push<G: GhClient>(inputs: &PushInputs<'_, G>) -> Result<PushOutputs
     Ok(outputs)
 }
 
-/// Read `<publish_token_file>` and return the trimmed token. Bails if
+/// Read `<publish.token_file>` and return the trimmed token. Bails if
 /// the file is missing, unreadable, or empty. Used by both
 /// `cli::publish::push` and `cli::session::run` (Phase 5) to construct
 /// the [`StdGhClient`] without ever exporting the token into the
@@ -835,7 +842,7 @@ pub fn read_publish_token(path: &Path) -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
-/// Default path for `publish_token_file` when unset:
+/// Default path for `publish.token_file` when unset:
 /// `${HOME}/.config/sbagent/gh_token`. Falls back to a relative
 /// `.config/sbagent/gh_token` if `HOME` isn't set, which will surface
 /// a clear "file not found" at read time.
@@ -884,7 +891,7 @@ pub fn ensure_token_outside_framework(
         std::fs::canonicalize(framework_root).unwrap_or_else(|_| framework_root.to_path_buf());
     if token_canon.starts_with(&frame_canon) {
         bail!(
-            "publish_token_file ({}) is inside the framework root ({}). `publish generate` passes \
+            "publish.token_file ({}) is inside the framework root ({}). `publish generate` passes \
              the framework root to Codex via --add-dir, so the token would be reachable by the \
              LLM. Move it outside the framework — the default `~/.config/sbagent/gh_token` is the \
              recommended location.",

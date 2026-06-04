@@ -118,15 +118,15 @@ Phase 5 publish — for each kept + accepted target T:
      │                                 ⇒ draft PR lives in stacks-bench-bot/stacks-core
 ```
 
-The agent's branch (`agent/<sid>/<T>` — singular) and the published branch (`agentic/<sid>/<T>` — prefix from `publish_branch_prefix`) are intentionally different names. The agent works on `agent/`; publish does a fresh push to `agentic/` so the bot fork's pushed-branch namespace stays distinct from any in-flight per-session local branches.
+The agent's branch (`agent/<sid>/<T>` — singular) and the published branch (`agentic/<sid>/<T>` — prefix from `publish.branch_prefix`) are intentionally different names. The agent works on `agent/`; publish does a fresh push to `agentic/` so the bot fork's pushed-branch namespace stays distinct from any in-flight per-session local branches.
 
 ---
 
 ## Phase-swap config
 
-Only **`publish_base_repo`** and **`publish_base_branch`** change between phases. Everything else stays put.
+Only **`publish.base_repo`** and **`publish.base_branch`** change between phases. Everything else stays put.
 
-| Stage | `publish_remote` | `publish_base_repo` | `publish_base_branch` | `publish_head_owner` | Trigger to swap |
+| Stage | `publish.remote` | `publish.base_repo` | `publish.base_branch` | `publish.head_owner` | Trigger to swap |
 | ----- | ---------------- | ------------------- | --------------------- | -------------------- | ---------------- |
 | **Pilot (now)** | `bot` | `stacks-bench-bot/stacks-core` | `feat/stacks-bench` | `stacks-bench-bot` | Bot fork exists + substrate seeded |
 | **Upstream-ready** | `bot` | `stacks-network/stacks-core` | `main` (or canonical target) | `stacks-bench-bot` | `stacks-bench` lands in `stacks-network`; manual draft-PR confirms bot PAT has cross-owner permission |
@@ -180,7 +180,7 @@ echo "<the-bot-pat>" > ~/.config/sbagent/gh_token
 chmod 600 ~/.config/sbagent/gh_token
 ```
 
-The operator's `config.toml` already points `publish_token_file` at this path. sbagent enforces it lives **outside** the framework root (so codex's `--add-dir` paths never expose it).
+The operator's `config.toml` already points `publish.token_file` at this path. sbagent enforces it lives **outside** the framework root (so codex's `--add-dir` paths never expose it).
 
 ### 5. Verify the operator's local stacks-core checkout has the `bot` remote
 
@@ -257,7 +257,7 @@ Without this, the bot fork's substrate goes stale and new sessions' agent branch
 cd <operator>/repos/stacks-core
 
 # Create a tiny no-op branch on the bot fork, rooted on the bot's
-# upstream-tracking branch (whatever `publish_base_branch` is going
+# upstream-tracking branch (whatever `publish.base_branch` is going
 # to be after the swap — main in this example). The PR needs SOME
 # diff to exist or `gh pr create` will refuse.
 git fetch upstream main
@@ -296,9 +296,10 @@ GH_TOKEN=$(cat ~/.config/sbagent/gh_token) gh pr create \
 ### 2. Flip two config keys in `~/.config/sbagent/config.toml`
 
 ```toml
-publish_base_repo   = "stacks-network/stacks-core"  # was stacks-bench-bot/stacks-core
-publish_base_branch = "main"                        # or whatever upstream target is correct
-# publish_remote + publish_head_owner unchanged
+[publish]
+base_repo   = "stacks-network/stacks-core"  # was stacks-bench-bot/stacks-core
+base_branch = "main"                        # or whatever upstream target is correct
+# publish.remote + publish.head_owner unchanged
 ```
 
 ### 3. Adjust substrate-sync (probably no-op if upstream uses `main`)

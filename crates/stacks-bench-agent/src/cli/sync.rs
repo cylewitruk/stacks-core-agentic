@@ -72,14 +72,14 @@ pub struct SyncArgs {
 
     /// After writing the bundles, stage the changed `.sbagent/` paths
     /// and produce a single commit authored as the bot (identity from
-    /// `git_author_name` / `git_author_email`). Skipped silently when
+    /// `git.author_name` / `git.author_email`). Skipped silently when
     /// nothing changed. Implied by `--push`.
     #[clap(long)]
     pub commit: bool,
 
     /// Implies `--commit`. After committing, push the current branch
-    /// to `origin` using the bot's PAT (read from `publish_token_file`).
-    /// Origin must match `git_auth_url_prefix` (default
+    /// to `origin` using the bot's PAT (read from `publish.token_file`).
+    /// Origin must match `git.auth_url_prefix` (default
     /// `https://github.com/`) — same validation as `sbagent init --push`.
     #[clap(long)]
     pub push: bool,
@@ -225,6 +225,7 @@ fn commit_bundles(ctx: &CliContext, refresh_tunables: bool) -> Result<()> {
     if refresh_tunables {
         if let Some(dir) = ctx
             .settings
+            .layout
             .prompt_overrides_dir
             .as_deref()
         {
@@ -257,14 +258,14 @@ fn commit_bundles(ctx: &CliContext, refresh_tunables: bool) -> Result<()> {
 fn push_current_branch(ctx: &CliContext) -> Result<()> {
     let cwd = std::env::current_dir().context("getting cwd for `sbagent sync --push`")?;
 
-    // Same precondition order as `init --push`: `publish_token_file`
+    // Same precondition order as `init --push`: `publish.token_file`
     // configured + readable, origin present + HTTPS-matching.
     let token_path = ctx
         .settings
-        .publish_token_file
-        .as_deref()
-        .context("`--push` requires `publish_token_file` in config")?;
-    let token = publish::read_publish_token(token_path).context("reading publish_token_file")?;
+        .publish
+        .token_file_required()
+        .context("`sbagent sync --push`")?;
+    let token = publish::read_publish_token(token_path)?;
 
     if !git::run_git_check(&cwd, &["remote", "get-url", "origin"]) {
         bail!(
@@ -278,11 +279,12 @@ fn push_current_branch(ctx: &CliContext) -> Result<()> {
         .context("reading origin URL")?;
     let auth_username = ctx
         .settings
-        .effective_git_auth_username();
+        .git
+        .effective_auth_username();
     let auth_url_prefix = ctx
         .settings
-        .effective_git_auth_url_prefix()
-        .context("validating `git_auth_url_prefix` from config")?;
+        .git
+        .effective_auth_url_prefix()?;
     git::validate_auth_url(&origin_url, &auth_url_prefix, "`--push`'s `origin`")?;
 
     let branch = git::run_git_output(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])

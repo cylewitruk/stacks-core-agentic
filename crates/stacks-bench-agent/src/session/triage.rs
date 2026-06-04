@@ -7,7 +7,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 
@@ -170,21 +169,21 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // 4. Invoke harness.
     let timeout = inputs
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let model = inputs
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.5");
+        .codex
+        .effective_model();
     let reasoning_effort = inputs
         .settings
-        .codex_reasoning_effort
+        .codex
+        .reasoning_effort
         .as_deref();
     let dangerous = inputs
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
 
     // Ensure the operator memory dir exists BEFORE handing it to
@@ -241,7 +240,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     add_dirs.extend(
         inputs
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );
@@ -310,14 +310,14 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // spawning N analyzer subagents.
     let soft_cap = inputs
         .settings
-        .triage_candidate_soft_cap
-        .unwrap_or(20);
+        .triage
+        .effective_candidate_soft_cap();
     if candidate_count > soft_cap {
         tracing::warn!(
             count = candidate_count,
             soft_cap,
             "triage emitted {candidate_count} candidates, exceeding soft cap of {soft_cap}; \
-             analyzer phase may be slow. Tune `triage_candidate_soft_cap` to silence, or expect \
+             analyzer phase may be slow. Tune `triage.candidate_soft_cap` to silence, or expect \
              the ledger to converge over the next few sessions.",
         );
     }

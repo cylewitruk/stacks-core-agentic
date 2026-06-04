@@ -71,8 +71,8 @@ pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &Sessio
     if outputs.single_run_fallback {
         let pct = ctx
             .settings
-            .single_run_noise_floor_pct
-            .unwrap_or(1.0);
+            .triage
+            .effective_single_run_noise_floor_pct();
         eprintln!("WARNING: imported a single run only; using fallback noise floor {pct}%.");
     }
     Ok(())

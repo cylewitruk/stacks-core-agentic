@@ -6,7 +6,7 @@
 //! is [`StacksBenchCli`](crate::session::bench::StacksBenchCli), which
 //! shells out to `cargo stacks-bench` (or the prebuilt release binary).
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use clap::Args;
 
 use crate::cli::CliContext;
@@ -29,7 +29,7 @@ pub async fn run(args: FinalizeRunArgs, ctx: &CliContext, session_id: &SessionId
     // DB ↔ artifact run-id consistency check: surface dangling refs
     // BEFORE finalize bakes them into `summary.json`. Same helper the
     // full-pipeline `session run` invokes at Phase 4.
-    db_consistency::warn_dangling_refs(&layout, &bench).context("DB consistency check")?;
+    db_consistency::warn_dangling_refs(&layout, &bench)?;
 
     let summary = finalize(&FinalizeInputs { layout: &layout, bench: &bench })?;
     println!(

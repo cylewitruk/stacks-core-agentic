@@ -39,10 +39,8 @@ pub struct FinalizeInputs<'a> {
 /// merge artifact, the per-experiment markers on disk, and the bench client.
 /// Returns the in-memory [`Summary`] in addition to writing it.
 pub fn finalize(inputs: &FinalizeInputs<'_>) -> Result<Summary> {
-    let targets = loader::read_optimization_targets(inputs.layout)
-        .context("loading optimization-targets.json")?;
-    let analyses =
-        loader::read_all_analyses(inputs.layout).context("loading analysis/*/analysis.json")?;
+    let targets = loader::read_optimization_targets(inputs.layout)?;
+    let analyses = loader::read_all_analyses(inputs.layout)?;
 
     let summary = compute_summary(&targets, inputs)?;
     let notes = render::load_experiment_notes(inputs.layout, &targets);

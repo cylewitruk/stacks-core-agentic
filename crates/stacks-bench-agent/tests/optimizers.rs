@@ -381,7 +381,10 @@ async fn optimizers_routes_three_delivery_modes() {
     let prompts_dir = tmp.path().join("prompts");
     stacks_bench_agent::prompts::seed_to(&prompts_dir).expect("seed prompts");
     let settings = Settings {
-        prompt_overrides_dir: Some(prompts_dir),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(prompts_dir),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
         ..Settings::default()
     };
     let outputs = optimizers::run(Inputs {
@@ -470,7 +473,10 @@ async fn optimizers_aborts_clear_implementation_marker() {
     let prompts_dir = tmp.path().join("prompts");
     stacks_bench_agent::prompts::seed_to(&prompts_dir).expect("seed prompts");
     let settings = Settings {
-        prompt_overrides_dir: Some(prompts_dir),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(prompts_dir),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
         ..Settings::default()
     };
     let outputs = optimizers::run(Inputs {

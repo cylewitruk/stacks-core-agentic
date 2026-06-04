@@ -26,7 +26,7 @@ Reach a state where `sbagent` runs as a closed-loop autonomous service: schedule
 ## Architectural shape (decided)
 
 - **State of record**: append-only JSONL event log at `events/*.jsonl`, committed to repo.
-- **Read-side cache**: SQLite projection at `<sessions_root>/.cache/history.db`, gitignored, rebuilt by replaying events.
+- **Read-side cache**: SQLite projection at `<layout.sessions_root>/.cache/history.db`, gitignored, rebuilt by replaying events.
 - **Per-target branches**: `agent/<session-id>/<target-id>` (already implemented).
 - **PR lifecycle**: reconciliation loop via `sbagent maintain`, polling GitHub and emitting state-change events.
 - **Schedule**: GitHub Actions cron + concurrency-gated, bot identity for commits.
@@ -61,7 +61,7 @@ The current proposal puts the autonomous lifecycle (events, schedule, secrets, t
 - Bundled default prompt templates.
 - Tests, fixtures, docs.
 - **Loses**: `sessions/` archive, `events/`, `.github/workflows/sbagent-*.yml`, operator config, `autonomous-roadmap.md` (mostly).
-- **Gains**: a `prompt_overrides_dir` config knob so operators can override bundled templates.
+- **Gains**: a `layout.prompt_overrides_dir` config knob so operators can override bundled templates.
 
 **New sister repo (working name `stacks-bench-operator`)** holds the autonomous lifecycle:
 
@@ -81,7 +81,7 @@ stacks-bench-operator/
 
 ### Layer allocation if split is taken
 
-- **Stays in `stacks-bench-agent` (tool)**: Layer 0 (already done), Layer 1A (schema + analyzer prompt + caller branch), Layer 1B (optimizer inner-loop mode), the `prompt_overrides_dir` mechanism.
+- **Stays in `stacks-bench-agent` (tool)**: Layer 0 (already done), Layer 1A (schema + analyzer prompt + caller branch), Layer 1B (optimizer inner-loop mode), the `layout.prompt_overrides_dir` mechanism.
 - **Moves to operator repo**: Layer 2 (event log, projection cache, dedup, commit/push), Layer 3 (`sbagent maintain`, Actions, hygiene, observability), the roadmap doc itself, `sessions/` archive, scheduling config.
 
 ### Decisions taken
@@ -110,7 +110,7 @@ Foundational mechanisms in `stacks-bench-agent` that aren't tied to a single Lay
 | ------ | ---- | ----- |
 | `[x]` | Operator repo created + bootstrapped | `cylewitruk/stacks-bench-agentic-operator` bootstrapped 2026-05-12 with skeleton (README, `.gitignore`, `.sbagent/example.config.toml`, `events/`, `sessions/`, `reports/`, `.github/workflows/` placeholders). |
 | `[x]` | Submodule migrated tool → operator | `repos/stacks-core` removed from tool repo on 2026-05-12; lives in operator repo, pinned to `6ec953ee94`. Tool's `Settings::base` made lazy (`Option<PathBuf>` + `Layout::require_base()`); ~25 callsites updated. |
-| `[x]` | Disk-first prompt templates + `prompt_overrides_dir` mechanism | Templates now live on disk in `<settings.prompt_overrides_dir>/`. Tool seeds bundled defaults on startup with don't-replace-if-exists. Askama replaced by MiniJinja (runtime parser, strict-undefined mode, keeps trailing newlines). Reference docs (`non-targets.md`, `bucket-anchors.md`) seed alongside templates — symmetric tuning surface. |
+| `[x]` | Disk-first prompt templates + `layout.prompt_overrides_dir` mechanism | Templates now live on disk in `<settings.prompt_overrides_dir>/`. Tool seeds bundled defaults on startup with don't-replace-if-exists. Askama replaced by MiniJinja (runtime parser, strict-undefined mode, keeps trailing newlines). Reference docs (`non-targets.md`, `bucket-anchors.md`) seed alongside templates — symmetric tuning surface. |
 | `[x]` | `sbagent prompt lint` / `sbagent prompt sync --force` | Lint dry-renders every disk template against the matching prompt struct's field-complete synthetic context; exits non-zero on any finding. Sync force-rewrites every template from bundled defaults (refuses without `--force`). End-to-end verified on 2026-05-12. |
 
 ---
@@ -177,7 +177,7 @@ Status: `[ ]` · Estimate: ~1 day
   - Publish (Phase 5): `pr_opened`, `pr_opened_failed`, `issue_opened`.
 - Every event carries `event_version: 1` (versioning enforced from day one).
 - Writer: append-only JSONL to `events/<session-id>.jsonl`. Use `OpenOptions::append(true)` so concurrent writes can't corrupt.
-- Replay: `crates/stacks-bench-agent/src/session/history.rs` (new module) reads all `events/*.jsonl` and builds a `<sessions_root>/.cache/history.db` SQLite projection. Cache is gitignored, disposable.
+- Replay: `crates/stacks-bench-agent/src/session/history.rs` (new module) reads all `events/*.jsonl` and builds a `<layout.sessions_root>/.cache/history.db` SQLite projection. Cache is gitignored, disposable.
 - Projection schema: one indexed row per `(fix_signature, session_id)` with current PR state, baseline_head, improvement_pct, latest event timestamp.
 - Subcommand: `sbagent history show [--format=markdown|tsv]` renders the projection.
 
@@ -378,7 +378,7 @@ Followup to pass-(a) (linked worktrees → per-target clones): the clones still 
 - New `Settings::agent_workspace_root: Option<PathBuf>` — generic root for mutable agent scratch state, NOT optimizer-specific. Today only the optimizer phase populates it; future phases (analyzers, merge, publish, future per-phase scratch state) get sibling subdirs as needed without rearranging the operator's setup.
 - Layout method `Layout::session_optimizer_checkouts_dir(id)` encapsulates the resolution:
   - Set: `<agent_workspace_root>/optimizers/<session_id>/<target_id>/`
-  - Unset (legacy default): `<sessions_root>/<id>/worktrees/<target>/`
+  - Unset (legacy default): `<layout.sessions_root>/<id>/worktrees/<target>/`
 - Every callsite that previously joined `session_worktrees_dir` for optimizer checkouts now goes through `session_optimizer_checkouts_dir`: `optimizers::run_one`, `cli/session/optimize/clean.rs`, `cli/session/run.rs` session-end prune + Phase 3 chained bench, `cli/session/bench/run.rs`, `publish.rs` push + render. Single point of truth — pass-b can read the same method for coordinator-side bench.
 - macOS recommendation documented as `/private/tmp/sbagent-workspaces` (cleared on boot, outside Spotlight + Time Machine, codex Seatbelt writes there cleanly). NOT platform-magic — operator-configured.
 - Three new path-resolution tests: unset = legacy path, set = workspace root, relative root gets absolutized.
@@ -529,7 +529,7 @@ Per-attempt hard timeout (Codex finding 5b) remains v2 work — codex doesn't ex
 ### 2026-05-12 (latest)
 
 - **Submodule migration**: `repos/stacks-core` removed from tool repo; added to this operator repo at `feat/stacks-bench` pinned to `6ec953ee94`. Tool's `Settings::base` relaxed from "required at startup" to "required at use" (`Option<PathBuf>` + `Layout::require_base()` helper); ~25 callsites updated. Unblocks `sbagent prompt lint` / `sync` for users who haven't set up a stacks-core checkout yet.
-- **Disk-first prompts shipped**: Askama replaced with **MiniJinja** (runtime template engine, Jinja2-compatible syntax, strict-undefined mode, `keep_trailing_newline=true`). Bundled templates seeded into operator's `prompt_overrides_dir` on every `sbagent` startup with `O_CREAT|O_EXCL` (don't-replace-if-exists). Operator's edited templates survive seeding; force-sync available via explicit subcommand.
+- **Disk-first prompts shipped**: Askama replaced with **MiniJinja** (runtime template engine, Jinja2-compatible syntax, strict-undefined mode, `keep_trailing_newline=true`). Bundled templates seeded into operator's `layout.prompt_overrides_dir` on every `sbagent` startup with `O_CREAT|O_EXCL` (don't-replace-if-exists). Operator's edited templates survive seeding; force-sync available via explicit subcommand.
 - **`sbagent prompt {lint,sync}` subcommands added**: lint parses + dry-renders every disk template against a field-complete synthetic context (replaces Askama's compile-time drift check); sync force-rewrites all templates from bundled defaults (requires `--force`). Verified end-to-end on 2026-05-12.
 - **Reference docs (`non-targets.md`, `bucket-anchors.md`) consolidated** into the operator's prompts dir alongside renderable templates; agent prompts reference them via `prompts_dir/<name>` instead of `<framework>/prompts/<name>`. Kills the asymmetry between tunable-via-overrides templates and ad-hoc-tunable reference docs.
 - 78/78 tests pass. lint clean.

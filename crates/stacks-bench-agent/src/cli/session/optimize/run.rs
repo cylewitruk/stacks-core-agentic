@@ -22,11 +22,11 @@ pub struct OptimizeRunArgs {
     /// Base branch the per-target worktrees check out from.
     #[clap(long, default_value = "feat/stacks-bench")]
     pub base_branch: String,
-    /// Override `settings.optimizer_attempts` (Layer 1B inner-loop
+    /// Override `settings.optimizer.attempts` (Layer 1B inner-loop
     /// attempt cap). Defaults to settings → `5`.
     #[clap(long)]
     pub optimizer_attempts: Option<u32>,
-    /// Override `settings.optimizer_budget_minutes` (Layer 1B
+    /// Override `settings.optimizer.budget_minutes` (Layer 1B
     /// inner-loop wall-clock budget). Defaults to settings → `60`.
     #[clap(long)]
     pub optimizer_budget_minutes: Option<u32>,
@@ -56,10 +56,12 @@ pub async fn run(args: OptimizeRunArgs, ctx: &CliContext, session_id: &SessionId
 
     let mut settings = ctx.settings.clone();
     if let Some(n) = args.optimizer_attempts {
-        settings.optimizer_attempts = Some(n);
+        settings.optimizer.attempts = Some(n);
     }
     if let Some(m) = args.optimizer_budget_minutes {
-        settings.optimizer_budget_minutes = Some(m);
+        settings
+            .optimizer
+            .budget_minutes = Some(m);
     }
 
     let outputs = optimizers::run(Inputs {

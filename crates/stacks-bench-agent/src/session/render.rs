@@ -1094,7 +1094,7 @@ mod tests {
             baseline_rerun_id: 4,
             noise_floor_pct: 1.0,
             merge_method: MergeMethod::Llm,
-            merge_model: "gpt-5.3-codex-spark".into(),
+            merge_model: "gpt-5.5".into(),
             targets: vec![
                 MergedTarget {
                     id: "sqlite-side-store-batched-replace".into(),

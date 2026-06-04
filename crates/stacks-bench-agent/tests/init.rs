@@ -37,15 +37,28 @@ fn settings_for(base_dir: PathBuf, base_url: String, branch: String) -> Settings
         // `init` writes to target_dir but doesn't read framework dirs
         // until later commands. Provide a placeholder so settings load
         // doesn't fail mid-test.
-        framework_root: Some(base_dir.join("framework")),
-        base: Some(PathBuf::from("repos/stacks-core")),
-        base_repo_url: Some(base_url),
-        publish_base_branch: Some(branch),
-        prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
-        git_author_name: Some("test-bot".into()),
-        git_author_email: Some("test-bot@example".into()),
-        publish_base_repo: Some("test-bot/stacks-core".into()),
-        publish_head_owner: Some("test-bot".into()),
+        dev: stacks_bench_agent::settings::DevSettings {
+            framework_root: Some(base_dir.join("framework")),
+        },
+        stacks_core: stacks_bench_agent::settings::StacksCoreSettings {
+            base: Some(PathBuf::from("repos/stacks-core")),
+            base_repo_url: Some(base_url),
+        },
+        publish: stacks_bench_agent::settings::PublishSettings {
+            base_branch: Some(branch),
+            base_repo: Some("test-bot/stacks-core".into()),
+            head_owner: Some("test-bot".into()),
+            ..stacks_bench_agent::settings::PublishSettings::default()
+        },
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
+        git: stacks_bench_agent::settings::GitSettings {
+            author_name: Some("test-bot".into()),
+            author_email: Some("test-bot@example".into()),
+            ..stacks_bench_agent::settings::GitSettings::default()
+        },
         ..Settings::default()
     }
 }
@@ -308,7 +321,7 @@ async fn init_push_rejects_ssh_origin() {
     std::fs::write(&token_path, "fake-pat").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    settings.publish_token_file = Some(token_path);
+    settings.publish.token_file = Some(token_path);
 
     let prev = std::env::var_os("GIT_CONFIG_COUNT");
     unsafe {
@@ -475,7 +488,7 @@ async fn init_seed_from_rejects_non_github_base_repo_url() {
     std::fs::write(&token_path, "fake-pat").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    settings.publish_token_file = Some(token_path);
+    settings.publish.token_file = Some(token_path);
 
     let err = init::run(
         InitArgs {
@@ -507,12 +520,12 @@ async fn init_push_rejects_url_outside_configured_prefix() {
     let target = tmp.path().join("operator");
     std::fs::create_dir_all(&target).unwrap();
     let mut settings = settings_for(target.clone(), base_url, branch);
-    settings.git_auth_url_prefix = Some("https://gitlab.com/".into());
+    settings.git.auth_url_prefix = Some("https://gitlab.com/".into());
     let token_path = tmp.path().join("gh_token");
     std::fs::write(&token_path, "fake-pat").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    settings.publish_token_file = Some(token_path);
+    settings.publish.token_file = Some(token_path);
 
     let prev = std::env::var_os("GIT_CONFIG_COUNT");
     unsafe {
@@ -570,12 +583,12 @@ async fn init_push_normalizes_prefix_against_typosquat() {
     std::fs::create_dir_all(&target).unwrap();
     let mut settings = settings_for(target.clone(), base_url, branch);
     // Operator forgot the trailing slash — normalization MUST handle it.
-    settings.git_auth_url_prefix = Some("https://gitlab.com".into());
+    settings.git.auth_url_prefix = Some("https://gitlab.com".into());
     let token_path = tmp.path().join("gh_token");
     std::fs::write(&token_path, "fake-pat").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    settings.publish_token_file = Some(token_path);
+    settings.publish.token_file = Some(token_path);
 
     let prev = std::env::var_os("GIT_CONFIG_COUNT");
     unsafe {
@@ -635,12 +648,12 @@ async fn init_push_expert_mode_rejects_ssh_origin() {
     std::fs::create_dir_all(&target).unwrap();
     let mut settings = settings_for(target.clone(), base_url, branch);
     // Expert mode: drop the prefix qualifier from the git config key.
-    settings.git_auth_url_prefix = Some(String::new());
+    settings.git.auth_url_prefix = Some(String::new());
     let token_path = tmp.path().join("gh_token");
     std::fs::write(&token_path, "fake-pat").unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    settings.publish_token_file = Some(token_path);
+    settings.publish.token_file = Some(token_path);
 
     let prev = std::env::var_os("GIT_CONFIG_COUNT");
     unsafe {

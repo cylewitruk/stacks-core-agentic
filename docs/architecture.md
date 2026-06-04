@@ -17,13 +17,13 @@ Benchmark run
 Optimization-session artifacts
   JSON snapshots, stderr logs, Codex JSONL event streams, notes, and
   summaries for one optimization session.
-  Stored under <sessions_root>/<session-id>/results (defaults to
+  Stored under <layout.sessions_root>/<session-id>/results (defaults to
   <operator>/sessions/<session-id>/results).
 
 Persistent benchmark data
   stacks-bench application data and SQLite database shared across
   optimization sessions.
-  Stored under <stacks_bench_data_dir> (defaults to
+  Stored under <stacks_bench.data_dir> (defaults to
   <operator>/data/stacks-bench).
 ```
 
@@ -207,7 +207,7 @@ $FAMILY_JSON            # the family object: kind, representative_ids,
 $OPT_SESSION_ID $OPT_SESSION_DIR
 $BASELINE_RUN_ID $BASELINE_RERUN_ID $NOISE_FLOOR_PCT
 $OPTIMIZATION_TARGETS_SCHEMA_PATH
-$CODEX_MERGE_MODEL          # configurable; default gpt-5.3-codex-spark
+$CODEX_MERGE_MODEL          # configurable; default gpt-5.5
 $ACCEPTED_ANALYSES_JSON     # JSON array of accepted analysis objects
 ```
 

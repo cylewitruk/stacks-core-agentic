@@ -68,14 +68,14 @@ checkout, never in the primary one.
 
 | Where | Default | What it holds |
 | --- | --- | --- |
-| **Session bulk** | `<sessions_root>/<id>/results/`, where `sessions_root` defaults to `<agent_workspace_root>/sessions/` (so the bulk dir is `<agent_workspace_root>/sessions/<id>/results/`) | All phase outputs (baseline, triage, analyses, merge, optimize, finalize). The audit trail. |
-| **Per-target optimizer clones** | `<agent_workspace_root>/optimizers/<id>/<target-id>/` | Stand-alone git clones of the operator's `repos/stacks-core` submodule (`git clone --reference --branch --local`, sharing the base's object store), one per merged target. Each holds an `agent/<id>/<target-id>` branch. |
-| **Archive worktree (transient)** | `<agent_workspace_root>/archive-worktrees/<id>/` | Created during Phase 6 as a `git worktree add` of the operator repo, torn down at the end. The only place `sessions/<id>/` ever appears tracked in an operator-repo working tree. |
-| **Persistent stacks-bench app data** | `<stacks_bench_data_dir>/appdata/stacks-bench.db` | Indexed chainstate + cross-session `benchmark_run` rows. Never per-session. |
+| **Session bulk** | `<layout.sessions_root>/<id>/results/`, where `layout.sessions_root` defaults to `<layout.agent_workspace_root>/sessions/` (so the bulk dir is `<layout.agent_workspace_root>/sessions/<id>/results/`) | All phase outputs (baseline, triage, analyses, merge, optimize, finalize). The audit trail. |
+| **Per-target optimizer clones** | `<layout.agent_workspace_root>/optimizers/<id>/<target-id>/` | Stand-alone git clones of the operator's `repos/stacks-core` submodule (`git clone --reference --branch --local`, sharing the base's object store), one per merged target. Each holds an `agent/<id>/<target-id>` branch. |
+| **Archive worktree (transient)** | `<layout.agent_workspace_root>/archive-worktrees/<id>/` | Created during Phase 6 as a `git worktree add` of the operator repo, torn down at the end. The only place `sessions/<id>/` ever appears tracked in an operator-repo working tree. |
+| **Persistent stacks-bench app data** | `<stacks_bench.data_dir>/appdata/stacks-bench.db` | Indexed chainstate + cross-session `benchmark_run` rows. Never per-session. |
 | **Coordination lockfiles** | `<lock_dir>/{benchmark.lock,test.lock}` | `fd-lock`-held during bench runs (cross-process) and optimizer `cargo nextest` (cross-clone). |
-| **Operator git repo** | `<operator_repo_root>/` (no default; explicit setting required for archive) | Primary worktree holds `sessions.jsonl` ledger on `main` + serves as the source for `session/<id>` archive branches. Never holds session bulk in its **primary** working tree (the transient archive worktree above is the exception). |
+| **Operator git repo** | `<layout.operator_repo_root>/` (no default; explicit setting required for archive) | Primary worktree holds `sessions.jsonl` ledger on `main` + serves as the source for `session/<id>` archive branches. Never holds session bulk in its **primary** working tree (the transient archive worktree above is the exception). |
 
-`<agent_workspace_root>` should be a path OUTSIDE the operator repo
+`<layout.agent_workspace_root>` should be a path OUTSIDE the operator repo
 (e.g. `/private/tmp/sbagent-workspaces/`). Anchoring session bulk
 outside the operator repo avoids the "branch switch wipes
 tracked-on-source-not-on-dest-but-ignored files" hazard the archive
@@ -89,7 +89,7 @@ phases produce git effects:
 | Phase | Git ops |
 | --- | --- |
 | **2 (optimize)** | For each merged target, `git clone --reference <base> --branch <base_branch> --local <base> <checkout>` into `<workspace>/optimizers/<id>/<target>/` (shares the base's object store, fresh refs), then `git switch -c agent/<id>/<target>`. The optimizer agent edits files inside the clone but does NOT commit — the coordinator runs `coordinator_commit_if_kept` AFTER validating `optimizer-report.json`, and only then stages + commits the change authored as `Stacks BenchBot`. This sandbox/coordinator boundary keeps a misbehaving agent from producing arbitrary commits. Aborted targets' clones are pruned at session end; accepted ones stay until manually cleaned. |
-| **5 (publish)**, when run with PAT | Per accepted normal-PR / consensus-PoC-PR target, `git push -u <publish_remote> agent/<id>/<target>` from inside the optimizer clone. PAT travels via `http.<prefix>.extraheader` env override — never argv, never `.git/config`. Then octocrab opens the PR / issue against `publish_base_repo` (defaults: `cylewitruk/stacks-core`). |
+| **5 (publish)**, when run with PAT | Per accepted normal-PR / consensus-PoC-PR target, `git push -u <publish.remote> agent/<id>/<target>` from inside the optimizer clone. PAT travels via `http.<prefix>.extraheader` env override — never argv, never `.git/config`. Then octocrab opens the PR / issue against `publish.base_repo` (defaults: `cylewitruk/stacks-core`). |
 | **6 (archive)** | `git worktree add <workspace>/archive-worktrees/<id>` against the operator repo, branched as `session/<id>`. Bulk is COPIED (not moved) into the worktree's `sessions/<id>/`, force-added, committed as `Stacks BenchBot` (no GPG signing). Worktree pushed to operator's `origin`. Worktree torn down. Then on the operator's main worktree: pull-rebase, append one line to `sessions.jsonl`, commit, push with retry on race. |
 
 `agent/<id>/<target-id>` branches stay in their per-target clones —
@@ -173,7 +173,7 @@ sbagent session run \
 Phase 2 (optimizer) fan-out parallelism is set by `--parallel-agents`
 (with an internal clamp on top of whatever the operator requested).
 Analyzer fan-out is set by `--parallel-analyzers`, capped by the
-optional `analyzer_concurrency_cap` setting. Phase 3 benchmarks are
+optional `analyzer.concurrency_cap` setting. Phase 3 benchmarks are
 always serialized under the bench lock. Phase 5 push and Phase 6
 push both use the same PAT-via-env mechanism — the token never
 enters argv, `.git/config`, or shell history.
@@ -189,8 +189,8 @@ reports `OK`.
 
 The first session should:
 
-1. Materialize the workspace at `<agent_workspace_root>/sessions/<id>/results/`.
-2. Use `<stacks_bench_data_dir>` as the shared stacks-bench app-data
+1. Materialize the workspace at `<layout.agent_workspace_root>/sessions/<id>/results/`.
+2. Use `<stacks_bench.data_dir>` as the shared stacks-bench app-data
    dir (indexed chainstate persists across sessions).
 3. Set benchmark parameters explicitly on the CLI (or in
    `config.toml`); reuse them for the baseline + every experiment.
@@ -219,7 +219,7 @@ runs and artifacts land in the right places.
 ### Ongoing optimization
 
 Re-run `sbagent session run` for each subsequent session. The
-persistent stacks-bench DB at `<stacks_bench_data_dir>/appdata/stacks-bench.db`
+persistent stacks-bench DB at `<stacks_bench.data_dir>/appdata/stacks-bench.db`
 accumulates baseline + experiment runs across sessions, so `bench
 list` / `bench show` work cross-session. The operator's
 `sessions.jsonl` ledger accumulates one line per archived session,
@@ -228,10 +228,10 @@ branch.
 
 ## Results: what to inspect and how to decide
 
-Cross-session bench data: `<stacks_bench_data_dir>/appdata/stacks-bench.db`.
+Cross-session bench data: `<stacks_bench.data_dir>/appdata/stacks-bench.db`.
 
-Per-session artifacts: `<sessions_root>/<id>/results/` (defaults to
-`<agent_workspace_root>/sessions/<id>/results/`).
+Per-session artifacts: `<layout.sessions_root>/<id>/results/` (defaults to
+`<layout.agent_workspace_root>/sessions/<id>/results/`).
 
 Per-target inspection:
 
@@ -248,7 +248,7 @@ Use these sources for comparison:
 - `bench show --json --run-id <id>`
 - `bench show --json --run-id <id> --profiler-hot 50`
 - `bench list --json --all --with-args`
-- direct SQL against `<stacks_bench_data_dir>/appdata/stacks-bench.db`
+- direct SQL against `<stacks_bench.data_dir>/appdata/stacks-bench.db`
 
 Accept an experiment only if:
 

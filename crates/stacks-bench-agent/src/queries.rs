@@ -4,7 +4,7 @@
 //! candidate-ranking, drilldown) plus the operator-facing `README.md`
 //! are embedded into the binary via `include_str!`. [`seed_to`] writes
 //! them to the operator's
-//! [`Settings::queries_dir`](crate::settings::Settings::queries_dir) on
+//! [`LayoutSettings::queries_dir`](crate::settings::LayoutSettings::queries_dir) on
 //! `sbagent init` and at every CLI startup (don't-replace); [`sync`]
 //! rewrites them unconditionally; [`drift`] reports any operator-disk
 //! copy that doesn't byte-match the bundle.

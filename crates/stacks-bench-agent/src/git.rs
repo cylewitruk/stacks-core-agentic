@@ -106,7 +106,7 @@ pub fn run_git_output(dir: &Path, args: &[&str]) -> Result<String> {
 /// Validate that `url` will actually receive the PAT-via-extraheader
 /// auth callers rely on. With a non-empty `auth_url_prefix`, the URL
 /// must start with that prefix verbatim — so a
-/// `git_auth_url_prefix = "https://gitlab.com/"` config rejects
+/// `git.auth_url_prefix = "https://gitlab.com/"` config rejects
 /// `git@github.com:...`, `https://github.com/...`, AND
 /// `https://gitlab.com.evil.example/...`. In expert / empty-prefix
 /// mode, we still demand `https://` (git won't send
@@ -124,7 +124,7 @@ pub fn validate_auth_url(url: &str, auth_url_prefix: &str, label: &str) -> Resul
     if auth_url_prefix.is_empty() {
         bail!(
             "{label} must be an `https://` URL (got `{url}`); the PAT-via-env auth mechanism only \
-             attaches a Basic credential over HTTPS. (`git_auth_url_prefix = \"\"` is set, so any \
+             attaches a Basic credential over HTTPS. (`git.auth_url_prefix = \"\"` is set, so any \
              HTTPS host is accepted — fix the URL to use HTTPS or switch to SSH and authenticate \
              out-of-band.)",
         );
@@ -132,8 +132,8 @@ pub fn validate_auth_url(url: &str, auth_url_prefix: &str, label: &str) -> Resul
     bail!(
         "{label} must start with `{auth_url_prefix}` (got `{url}`); the PAT-via-env auth \
          mechanism uses `http.{auth_url_prefix}.extraheader` and git won't apply it to URLs \
-         outside that prefix. Either change the URL to match `git_auth_url_prefix`, change \
-         `git_auth_url_prefix` in config to your forge's HTTPS root, or authenticate manually.",
+         outside that prefix. Either change the URL to match `git.auth_url_prefix`, change \
+         `git.auth_url_prefix` in config to your forge's HTTPS root, or authenticate manually.",
     )
 }
 

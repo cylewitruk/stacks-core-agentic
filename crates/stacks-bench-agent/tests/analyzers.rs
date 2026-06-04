@@ -228,7 +228,10 @@ async fn analyzers_fan_out_writes_analysis_per_family_and_tallies() {
     let prompts_dir = tmp.path().join("prompts");
     stacks_bench_agent::prompts::seed_to(&prompts_dir).expect("seed prompts");
     let settings = Settings {
-        prompt_overrides_dir: Some(prompts_dir),
+        layout: stacks_bench_agent::settings::LayoutSettings {
+            prompt_overrides_dir: Some(prompts_dir),
+            ..stacks_bench_agent::settings::LayoutSettings::default()
+        },
         ..Settings::default()
     };
     let outputs = analyzers::run(Inputs {

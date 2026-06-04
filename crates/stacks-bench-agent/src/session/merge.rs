@@ -21,7 +21,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 
@@ -68,8 +67,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         .context("loading candidates.json (required for session-level fields)")?;
 
     // Load every analysis and pre-validate.
-    let analyses_map =
-        loader::read_all_analyses(layout).context("loading analysis/*/analysis.json")?;
+    let analyses_map = loader::read_all_analyses(layout)?;
     for (fid, a) in &analyses_map {
         a.validate_model()
             .with_context(|| format!("analysis/{fid}/analysis.json failed validation"))?;
@@ -121,20 +119,15 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let accepted_json = accepted
         .to_json_pretty()
         .context("serializing accepted analyses for merge prompt")?;
-    let merge_model = inputs
+    let merge_reasoning_effort = inputs
         .settings
-        .codex_merge_reasoning_effort
-        .as_deref()
-        .or(inputs
-            .settings
-            .codex_reasoning_effort
-            .as_deref())
+        .codex
+        .effective_merge_reasoning_effort()
         .unwrap_or("");
     let merge_model_id = inputs
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.3-codex-spark");
+        .codex
+        .effective_model();
 
     let prompts_dir = inputs
         .settings
@@ -199,12 +192,12 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
 
     let timeout = inputs
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let dangerous = inputs
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
     // Agent reads the schema file + bucket-anchors.md (both rendered
     // into the prompt as absolute paths). The schema file is under
@@ -224,7 +217,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     add_dirs.extend(
         inputs
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );
@@ -246,7 +240,11 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             last_message: &layout.merge_final_message(),
             timeout,
             model: merge_model_id,
-            reasoning_effort: if merge_model.is_empty() { None } else { Some(merge_model) },
+            reasoning_effort: if merge_reasoning_effort.is_empty() {
+                None
+            } else {
+                Some(merge_reasoning_effort)
+            },
             skip_git_repo_check: true,
             dangerously_bypass_sandbox: dangerous,
             enable_web_search: false,
@@ -286,8 +284,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     }
 
     // Parse + validate the LLM output.
-    let targets =
-        loader::read_optimization_targets(layout).context("parsing optimization-targets.json")?;
+    let targets = loader::read_optimization_targets(layout)?;
     validate_merge_output(&targets, &accepted)?;
 
     Ok(Outputs {

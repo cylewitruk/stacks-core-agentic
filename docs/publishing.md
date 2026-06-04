@@ -4,7 +4,7 @@ After `finalize/summary.json` is written, the coordinator can optionally
 publish autonomous-run artifacts to GitHub. The router branches per
 target's `delivery_mode`:
 
-- `normal_pr` → draft PR (or non-draft per `publish_draft_prs`) with
+- `normal_pr` → draft PR (or non-draft per `publish.draft_prs`) with
   operator-configured labels.
 - `consensus_poc_pr` → draft PR ALWAYS, with operator labels plus the
   hardcoded safety set `consensus-change,needs-HIP,do-not-merge`.
@@ -22,11 +22,11 @@ worktree → branch → push hop still shells `git`.
 | Subcommand | What it does |
 | ---------- | ------------ |
 | `sbagent publish generate` | Iterates `merge/optimization-targets.json` and dispatches per `delivery_mode`. For PR modes, runs `pr-writer.md` and writes `optimize/<target>/pr-title.txt` + `pr-body.md`; the prompt branches on `${DELIVERY_MODE}` so consensus PoC PRs frame benchmark-skipped/scoped-tests/HIP-coordination explicitly. For `consensus_issue`, runs `issue-writer.md` and writes `optimize/<target>/issue-title.txt` + `issue-body.md` from the analyzer's `consensus_writeup`. Section validators enforce the required body shape per mode. The token is never inlined into any rendered prompt. |
-| `sbagent publish push` | Reads `publish_token_file` into memory at call time, builds an authenticated `octocrab` client, and dispatches per `delivery_mode`. PR modes: switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u`), commits, pushes, then creates a draft PR via the API — `consensus_poc_pr` is forced draft and gets the safety label set. `consensus_issue`: no branch / no commit / no push; creates an issue with a hidden trace tag (`<!-- agentic-<session>-<target> -->`) in the body for idempotent re-runs. Skips on existing PR/issue. |
+| `sbagent publish push` | Reads `publish.token_file` into memory at call time, builds an authenticated `octocrab` client, and dispatches per `delivery_mode`. PR modes: switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u`), commits, pushes, then creates a draft PR via the API — `consensus_poc_pr` is forced draft and gets the safety label set. `consensus_issue`: no branch / no commit / no push; creates an issue with a hidden trace tag (`<!-- agentic-<session>-<target> -->`) in the body for idempotent re-runs. Skips on existing PR/issue. |
 
 ## Threat model for the GitHub token
 
-The token sits at `<publish_token_file>` (default
+The token sits at `<publish.token_file>` (default
 `${HOME}/.config/sbagent/gh_token`), mode 0600, owned by the agent
 user. Codex never sees it because:
 
@@ -34,13 +34,13 @@ user. Codex never sees it because:
    Codex via `--add-dir`.** Recommended location: the user's
    `~/.config/sbagent/` (the default), which is outside every path
    the publish prompts ever pass through `--add-dir`. The
-   `sbagent` hard guard fires only when `framework_root` is set
+   `sbagent` hard guard fires only when `dev.framework_root` is set
    (tool-developer mode) and refuses to start Phase 5 if the token
    sits inside that framework checkout. For operator deployments
-   (the default — `framework_root` unset) there is no automatic
+   (the default — `dev.framework_root` unset) there is no automatic
    guard against putting the token inside the operator dir, so
    keep it outside the operator dir and outside
-   `agent_workspace_root` by convention.
+   `layout.agent_workspace_root` by convention.
 2. **The token's directory is not in
    `[sandbox_workspace_write].writable_roots`** in
    `~/.codex/config.toml`.
@@ -48,7 +48,7 @@ user. Codex never sees it because:
    runs in a separate process and cannot inspect that memory.
 
 If you change Codex's sandbox to grant a broader read scope, move
-`publish_token_file` somewhere outside the new scope, or revoke and
+`publish.token_file` somewhere outside the new scope, or revoke and
 rotate the token.
 
 ## One-time setup
@@ -60,10 +60,10 @@ mkdir -p "$HOME/.config/sbagent"
 install -m 0600 /tmp/your-token "$HOME/.config/sbagent/gh_token"
 ```
 
-Or override `publish_token_file` in `config.toml` to a different
+Or override `publish.token_file` in `config.toml` to a different
 absolute path. Keep it outside the operator dir and outside
-`agent_workspace_root` by convention — `sbagent`'s hard preflight
-guard only catches tokens inside `framework_root` (tool-developer
+`layout.agent_workspace_root` by convention — `sbagent`'s hard preflight
+guard only catches tokens inside `dev.framework_root` (tool-developer
 mode), so operator deployments rely on you to pick a sane location.
 Whatever path you choose, drop the token there with mode 0600 owned
 by the agent user.
@@ -80,7 +80,7 @@ by the agent user.
 
 For upstream-mode (cross-owner PRs to `stacks-network/stacks-core`),
 a classic PAT with the `public_repo` scope may be required —
-verify with a manual draft-PR test before flipping `publish_base_repo`.
+verify with a manual draft-PR test before flipping `publish.base_repo`.
 
 ## Forge-agnostic auth
 
@@ -89,11 +89,11 @@ credential pair `x-access-token:<token>` and attaches it via
 `http.https://github.com/.extraheader`. Two settings cover non-GitHub
 forges:
 
-- `git_auth_username` — defaults to `x-access-token` (GitHub
+- `git.auth_username` — defaults to `x-access-token` (GitHub
   fine-grained PATs accept this magic name). Set to `oauth2` for
   GitLab PATs, the Bitbucket username for Bitbucket Cloud app
   passwords, or `git` for self-hosted Gitea / Forgejo.
-- `git_auth_url_prefix` — defaults to `https://github.com/`. Set to
+- `git.auth_url_prefix` — defaults to `https://github.com/`. Set to
   the forge's HTTPS root (with or without trailing slash —
   normalized internally) to scope the credential header to that host.
 
@@ -107,15 +107,16 @@ Pass `--publish-accepted-prs` to `sbagent session run`, and configure
 publishing targets in `config.toml`:
 
 ```toml
-publish_draft_prs = true                       # false to publish ready-for-review PRs
-publish_base_repo = "cylewitruk/stacks-core"   # default — your fork, low blast radius
-publish_base_branch = "feat/stacks-bench"
-publish_remote = "origin"
-publish_pr_labels = ["needs-bench-review"]     # optional
-# publish_token_file = "/abs/path/outside/operator"   # default ${HOME}/.config/sbagent/gh_token
+[publish]
+draft_prs   = true                         # false to publish ready-for-review PRs
+base_repo   = "cylewitruk/stacks-core"     # default — your fork, low blast radius
+base_branch = "feat/stacks-bench"
+remote      = "origin"
+pr_labels   = ["needs-bench-review"]       # optional
+# token_file = "/abs/path/outside/operator"  # default ${HOME}/.config/sbagent/gh_token
 ```
 
-The default `publish_base_repo` targets your fork, not
+The default `publish.base_repo` targets your fork, not
 `stacks-network/stacks-core`, so a runaway autonomous flow lands PRs
 in your own UI rather than upstream. Override only when you've
 reviewed a session and want to escalate.
@@ -128,18 +129,18 @@ sbagent check --with-publish
 
 Probes (all in-process):
 
-- `<publish_token_file>` lives outside `framework_root` when that
+- `<publish.token_file>` lives outside `dev.framework_root` when that
   setting is in use (hard guard; tool-developer mode only). For
   operator deployments the check is informational — keep the token
   outside the operator dir by convention.
-- `<publish_token_file>` is non-empty and readable.
+- `<publish.token_file>` is non-empty and readable.
 - `octocrab.repos(owner, repo).get()` succeeds against
-  `publish_base_repo` with that token (catches a wrong repo or an
+  `publish.base_repo` with that token (catches a wrong repo or an
   unauthorized token before any PR is opened).
-- `git -C <base> remote get-url <publish_remote>` succeeds and
+- `git -C <base> remote get-url <publish.remote>` succeeds and
   resolves to a github.com URL (catches a missing/typoed remote
   before Phase 5 attempts to push).
-- `git -C <base> ls-remote <publish_remote>` succeeds with
+- `git -C <base> ls-remote <publish.remote>` succeeds with
   `GIT_TERMINAL_PROMPT=0` and `GIT_SSH_COMMAND="ssh -oBatchMode=yes"`
   — validates the SSH key / HTTPS credentials the eventual `git push`
   will use, without prompting (a missing credential, unknown SSH

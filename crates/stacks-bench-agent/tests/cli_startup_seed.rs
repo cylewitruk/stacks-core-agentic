@@ -39,7 +39,7 @@ fn stage_operator_dir(
     std::fs::write(
         &config,
         format!(
-            "prompt_overrides_dir = \"{}\"\nschemas_dir = \"{}\"\nqueries_dir = \"{}\"\n",
+            "[layout]\nprompt_overrides_dir = \"{}\"\nschemas_dir = \"{}\"\nqueries_dir = \"{}\"\n",
             prompts.display(),
             schemas.display(),
             queries.display(),

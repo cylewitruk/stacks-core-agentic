@@ -32,7 +32,7 @@ run `sbagent sync --push` after each binary upgrade without spelling
 out the git + auth dance in shell — the resulting commit message is
 `chore: sync sbagent bundles (<sbagent-version>)` so `git log .sbagent/`
 becomes an audit trail of which binary version was on disk for each
-session. `--push` validates `origin` against `git_auth_url_prefix`
+session. `--push` validates `origin` against `git.auth_url_prefix`
 (default `https://github.com/`) up-front; SSH or other-prefix URLs
 error rather than silently falling back to a different auth path.
 
@@ -155,7 +155,7 @@ Recover by one of:
    wider hotspot file. Spans below the top-50 cutoff sometimes
    contain real opportunities once the obvious ones are exhausted.
 2. **Different block range** — pick the next canonical range and
-   update `stacks_bench_start_at` / `stacks_bench_count` in
+   update `stacks_bench.start_at` / `stacks_bench.count` in
    `config.toml` (`5_000_000–5_025_000` → `6_500_000–6_525_000` →
    `7_300_000–7_325_000`). Different transaction mixes light up
    different hotspots. Run a fresh baseline against the new range
@@ -276,14 +276,14 @@ persistent SQLite benchmark DB.
 `sbagent` holds a cross-process exclusive lock around every
 `cargo stacks-bench bench run`, `bench rerun`, and expensive
 `chainstate index` command. The lockfile lives under sbagent's
-`lock_dir` (default `<operator>/data/run/`):
+`layout.lock_dir` (default `<operator>/data/run/`):
 
 ```text
-<lock_dir>/benchmark.lock     # default sbagent bench lock
-<lock_dir>/test.lock          # default sbagent test (cargo nextest) lock
+<layout.lock_dir>/benchmark.lock     # default sbagent bench lock
+<layout.lock_dir>/test.lock          # default sbagent test (cargo nextest) lock
 ```
 
-Override the directory via `lock_dir` in `config.toml`. Hand-running
+Override the directory via `layout.lock_dir` in `config.toml`. Hand-running
 a benchmark outside `sbagent`? Use `flock` against the same path so
 you serialize against any concurrent `sbagent session run`.
 
@@ -300,11 +300,11 @@ OPERATOR_DIR="$(pwd)"      # the dir `sbagent init` created
 SBAGENT_SESSION_ID="${SBAGENT_SESSION_ID:-$(date +%Y%m%d-%H%M%S)}"
 SESSION_DIR="$OPERATOR_DIR/sessions/$SBAGENT_SESSION_ID/results"
 
-# Per-target optimizer checkouts. If `agent_workspace_root` is set in
+# Per-target optimizer checkouts. If `layout.agent_workspace_root` is set in
 # config.toml (the recommended layout), checkouts live at
-# `<agent_workspace_root>/optimizers/<session>/<target>/` — outside
+# `<layout.agent_workspace_root>/optimizers/<session>/<target>/` — outside
 # the operator repo so `git status` stays clean. With
-# `agent_workspace_root` unset, sbagent falls back to
+# `layout.agent_workspace_root` unset, sbagent falls back to
 # `$OPERATOR_DIR/sessions/<session>/worktrees/<target>/`.
 AGENT_WORKSPACE_ROOT="${AGENT_WORKSPACE_ROOT:-/private/tmp/sbagent-workspaces}"
 WORKTREES="$AGENT_WORKSPACE_ROOT/optimizers/$SBAGENT_SESSION_ID"

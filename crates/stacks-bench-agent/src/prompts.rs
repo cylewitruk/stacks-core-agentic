@@ -1,7 +1,7 @@
 //! Disk-first prompt rendering via MiniJinja.
 //!
 //! Templates always live on disk in the operator's
-//! [`Settings::prompt_overrides_dir`](crate::settings::Settings::prompt_overrides_dir).
+//! [`LayoutSettings::prompt_overrides_dir`](crate::settings::LayoutSettings::prompt_overrides_dir).
 //! The tool binary carries each template as `include_str!` content and
 //! seeds the operator's directory on startup with **don't-replace-if-exists**
 //! semantics, so a freshly cloned operator gets a working baseline and a
@@ -25,8 +25,8 @@
 //!
 //! # Lifecycle
 //!
-//! 1. `sbagent` startup → [`seed_to`] populates `prompt_overrides_dir` with any
-//!    missing templates from the bundled defaults.
+//! 1. `sbagent` startup → [`seed_to`] populates `layout.prompt_overrides_dir`
+//!    with any missing templates from the bundled defaults.
 //! 2. Phase invocation → [`render`] reads `<dir>/<FILE_NAME>` and renders with
 //!    MiniJinja strict mode, populating fields from the struct's
 //!    [`serde::Serialize`] output.
@@ -46,7 +46,7 @@ use serde::Serialize;
 /// filename of its template + the bundled default content. Implementations
 /// are mechanical (one per struct, below).
 pub trait Prompt: Serialize {
-    /// Template filename inside the operator's `prompt_overrides_dir`.
+    /// Template filename inside the operator's `layout.prompt_overrides_dir`.
     const FILE_NAME: &'static str;
     /// Bundled-as-`include_str!` default content. Used by [`seed_to`] to
     /// populate the operator's dir on first run, and by [`lint`] as the
@@ -63,7 +63,7 @@ pub fn render<T: Prompt>(label: &str, t: &T, dir: &Path) -> Result<String> {
     let src = std::fs::read_to_string(&path).with_context(|| {
         format!(
             "reading {label} template at {} — has the operator's prompts dir been seeded? \
-             (`sbagent` seeds it on startup if `prompt_overrides_dir` is set)",
+             (`sbagent` seeds it on startup if `layout.prompt_overrides_dir` is set)",
             path.display(),
         )
     })?;

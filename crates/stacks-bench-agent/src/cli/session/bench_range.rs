@@ -27,28 +27,28 @@ use crate::settings::Settings;
 #[derive(Debug, Args, Clone, Default)]
 pub struct BenchRangeArgs {
     /// First block height to replay. Defaults to
-    /// `settings.stacks_bench_start_at`. CLI / env override exists so
+    /// `settings.stacks_bench.start_at`. CLI / env override exists so
     /// the closed-loop can sample different ranges per session without
     /// mutating `config.toml`.
     #[clap(long, env = "SBAGENT_BENCH_START_AT")]
     pub start_at: Option<u64>,
 
     /// Number of blocks to replay AFTER `warmup`. Defaults to
-    /// `settings.stacks_bench_count`. The measured count is exactly
+    /// `settings.stacks_bench.count`. The measured count is exactly
     /// this — `warmup` blocks are advanced through to settle caches
     /// + JIT but don't count toward the sample size.
     #[clap(long, env = "SBAGENT_BENCH_COUNT")]
     pub count: Option<u64>,
 
     /// Pre-window blocks to advance through before measurement starts.
-    /// Defaults to `settings.stacks_bench_warmup` (no warmup when
+    /// Defaults to `settings.stacks_bench.warmup` (no warmup when
     /// unset). Useful when the run is small enough that cold caches
     /// dominate the first few hundred blocks.
     #[clap(long, env = "SBAGENT_BENCH_WARMUP")]
     pub warmup: Option<u64>,
 
     /// Filter expression passed to `stacks-bench bench run --filter`
-    /// (e.g. `contract-call`). Defaults to `settings.stacks_bench_filter`
+    /// (e.g. `contract-call`). Defaults to `settings.stacks_bench.filter`
     /// (no filter when unset). Useful when the chainstate carries
     /// non-canonical forks or when sampling a specific tx subset.
     #[clap(long, env = "SBAGENT_BENCH_FILTER")]
@@ -78,27 +78,28 @@ impl BenchRangeArgs {
     pub fn resolve(&self, settings: &Settings) -> Result<ResolvedBenchRange> {
         let start_at = self
             .start_at
-            .or(settings.stacks_bench_start_at)
+            .or(settings.stacks_bench.start_at)
             .context(
                 "start block height missing: pass `--start-at <N>`, set `SBAGENT_BENCH_START_AT`, \
-                 or populate `stacks_bench_start_at` in config",
+                 or populate `stacks_bench.start_at` in config",
             )?;
         let count = self
             .count
-            .or(settings.stacks_bench_count)
+            .or(settings.stacks_bench.count)
             .context(
                 "block count missing: pass `--count <N>`, set `SBAGENT_BENCH_COUNT`, or populate \
-                 `stacks_bench_count` in config",
+                 `stacks_bench.count` in config",
             )?;
         let warmup = self
             .warmup
-            .or(settings.stacks_bench_warmup);
+            .or(settings.stacks_bench.warmup);
         let filter = self
             .filter
             .clone()
             .or_else(|| {
                 settings
-                    .stacks_bench_filter
+                    .stacks_bench
+                    .filter
                     .clone()
             });
         Ok(ResolvedBenchRange {
@@ -121,10 +122,13 @@ mod tests {
         filter: Option<&str>,
     ) -> Settings {
         Settings {
-            stacks_bench_start_at: start_at,
-            stacks_bench_count: count,
-            stacks_bench_warmup: warmup,
-            stacks_bench_filter: filter.map(str::to_owned),
+            stacks_bench: crate::settings::StacksBenchSettings {
+                start_at,
+                count,
+                warmup,
+                filter: filter.map(str::to_owned),
+                ..crate::settings::StacksBenchSettings::default()
+            },
             ..Settings::default()
         }
     }
@@ -180,7 +184,7 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("--start-at"), "{msg}");
         assert!(msg.contains("SBAGENT_BENCH_START_AT"), "{msg}");
-        assert!(msg.contains("stacks_bench_start_at"), "{msg}");
+        assert!(msg.contains("stacks_bench.start_at"), "{msg}");
     }
 
     /// Optional fields stay `None` when neither CLI nor config sets

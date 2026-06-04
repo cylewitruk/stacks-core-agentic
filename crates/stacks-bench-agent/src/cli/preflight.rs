@@ -7,7 +7,7 @@
 //!
 //! With Phase 5 now in-process (no sudo, no separate publisher user),
 //! the publish preflight checks the token file (location, readability),
-//! API access for `publish_base_repo`, and the git-side push path
+//! API access for `publish.base_repo`, and the git-side push path
 //! (remote configured, github.com URL, auth works via `ls-remote`).
 
 use anyhow::{Result, bail};
@@ -17,18 +17,18 @@ use crate::session::publish::{self, PublishConfig, StdGhClient};
 
 /// Append publish-wiring findings to `findings`. Probes:
 ///
-/// 1. `<publish_token_file>` lives outside the framework root (Codex can read
+/// 1. `<publish.token_file>` lives outside the framework root (Codex can read
 ///    anything inside it during `publish generate`).
-/// 2. `<publish_token_file>` exists, is readable by `sbagent`, and is
+/// 2. `<publish.token_file>` exists, is readable by `sbagent`, and is
 ///    non-empty.
-/// 3. `octocrab.repos(owner, repo).get()` succeeds against `publish_base_repo`
+/// 3. `octocrab.repos(owner, repo).get()` succeeds against `publish.base_repo`
 ///    with the token (catches a wrong repo or an unauthorized token before any
 ///    PR is opened).
-/// 4. `git -C <base> remote get-url <publish_remote>` succeeds (catches a
+/// 4. `git -C <base> remote get-url <publish.remote>` succeeds (catches a
 ///    missing remote or a path-not-a-checkout case before Phase 5 attempts to
 ///    push).
 /// 5. The remote URL parses to a github.com `owner/repo`.
-/// 6. `git -C <base> ls-remote <publish_remote>` succeeds — validates the SSH
+/// 6. `git -C <base> ls-remote <publish.remote>` succeeds — validates the SSH
 ///    key / HTTPS credentials the eventual `git push` will use, so fresh VMs
 ///    with a correctly-named remote but missing auth fail at preflight rather
 ///    than late in Phase 5.
@@ -50,7 +50,7 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
         Ok(t) => t,
         Err(e) => {
             findings.push(format!(
-                "publish_token_file at {} is unreadable or empty: {e:#}",
+                "publish.token_file at {} is unreadable or empty: {e:#}",
                 cfg.publish_token_file
                     .display()
             ));
@@ -69,7 +69,7 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
         .split_once('/')
     else {
         findings.push(format!(
-            "publish_base_repo `{}` is not in `owner/repo` form",
+            "publish.base_repo `{}` is not in `owner/repo` form",
             cfg.publish_base_repo
         ));
         return;
@@ -81,7 +81,7 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
         .await
     {
         findings.push(format!(
-            "GET repos/{}/{} via octocrab failed: {e:#}; confirm `publish_base_repo` is correct \
+            "GET repos/{}/{} via octocrab failed: {e:#}; confirm `publish.base_repo` is correct \
              and the token has access",
             owner, repo
         ));
@@ -95,8 +95,8 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
         Some(p) => p,
         None => {
             findings.push(
-                "`base` (stacks-core checkout path) not set in settings; cannot probe git remote \
-                 / ls-remote. Configure `base` in config.toml and re-run."
+                "`stacks_core.base` (stacks-core checkout path) not set in settings; cannot probe \
+                 git remote / ls-remote. Configure `stacks_core.base` in config.toml and re-run."
                     .to_owned(),
             );
             return;
@@ -104,7 +104,7 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
     };
     match crate::git::get_remote_url(base, &cfg.publish_remote) {
         Err(e) => findings.push(format!(
-            "{e:#}; configure the remote or set `publish_remote` to the correct name",
+            "{e:#}; configure the remote or set `publish.remote` to the correct name",
         )),
         Ok(url) if !is_github_url(&url) => findings.push(format!(
             "remote `{}` resolves to {url}, which is not a github.com URL; the publish path can \

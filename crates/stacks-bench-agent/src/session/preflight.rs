@@ -177,6 +177,7 @@ fn check_critical_prompt_drift(ctx: &CliContext, findings: &mut Vec<Finding>) ->
 
     let dir = match ctx
         .settings
+        .layout
         .prompt_overrides_dir
         .as_deref()
     {
@@ -244,7 +245,8 @@ fn check_submodule_reachable(ctx: &CliContext, findings: &mut Vec<Finding>) -> R
     };
     let branch = match ctx
         .settings
-        .publish_base_branch
+        .publish
+        .base_branch
         .as_deref()
     {
         Some(b) => b,

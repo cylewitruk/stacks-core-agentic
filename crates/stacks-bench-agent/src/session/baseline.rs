@@ -14,8 +14,8 @@
 //!   `bench` invocation under Pass 1a — see
 //!   [baseline-verification-agent-plan.md](../../../../
 //!   baseline-verification-agent-plan.md) Sub-step B). The noise floor falls
-//!   back to `settings.single_run_noise_floor_pct`. Serialized via BENCH_LOCK,
-//!   then captures bench-list + profiler hotspots metadata.
+//!   back to `settings.triage.single_run_noise_floor_pct`. Serialized via
+//!   BENCH_LOCK, then captures bench-list + profiler hotspots metadata.
 //! - [`import`] → `scripts/import-baseline.sh` — reconstructs the baseline
 //!   artifact set from existing run ids in the persistent stacks-bench db.
 //!   Phase 0a still runs (Phase 1.8 needs the archived binary regardless of how
@@ -307,8 +307,8 @@ pub fn run(inputs: &RunInputs<'_>) -> Result<RunOutputs> {
     //    now provides the apples-to-apples noise basis for the dominant comparison
     //    path. Full-range comparisons that DO need an empirical noise floor wait
     //    for Pass 1b (lazy in-phase calibration). Until then, the noise floor for
-    //    full-range comparisons falls back to `single_run_noise_floor_pct`, the
-    //    existing single-run-fallback path the framework supports.
+    //    full-range comparisons falls back to `triage.single_run_noise_floor_pct`,
+    //    the existing single-run-fallback path the framework supports.
     //
     //    Both `baseline-run-id` and `baseline-rerun-id` files are
     //    populated with the same value so existing consumers
@@ -396,7 +396,7 @@ pub struct ImportInputs<'a> {
     /// Run id to import as the baseline.
     pub run_id: i64,
     /// Run id to import as the rerun. When equal to `run_id`, writes the
-    /// `single_run_noise_floor_pct` fallback file.
+    /// `triage.single_run_noise_floor_pct` fallback file.
     pub rerun_id: i64,
     /// Conservative noise-floor fallback used when `run_id == rerun_id`.
     /// Defaults to 1.0% (mirrors the bash
@@ -425,6 +425,7 @@ impl<'a> ImportInputs<'a> {
             run_id,
             rerun_id: rerun_id.unwrap_or(run_id),
             single_run_noise_floor_pct: settings
+                .triage
                 .single_run_noise_floor_pct
                 .unwrap_or(1.0),
             bench_lock,

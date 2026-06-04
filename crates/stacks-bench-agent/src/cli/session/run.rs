@@ -6,20 +6,28 @@
 //! already implements it. Phase 5 (`publish`) used to fork through
 //! `sudo` to a separate publisher user; that split is gone — the token
 //! is read into `sbagent`'s memory at Phase 5 startup and never leaves.
+//!
+//! Internally each phase is its own `fn phase_*` so `run()` reads as a
+//! linear phase list. Cross-phase state (resolved layout, harness, bench
+//! range, etc.) is bundled in [`PhaseEnv`] and passed by `&` to every
+//! phase. The only inter-phase value that isn't in `PhaseEnv` is the
+//! [`baseline::ArchiveBinaryOutputs`] Phase 0a produces and Phase 0
+//! consumes.
 
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use clap::Args;
 
-use crate::cli::session::bench_range::BenchRangeArgs;
+use crate::cli::session::bench_range::{BenchRangeArgs, ResolvedBenchRange};
 use crate::cli::{CliContext, preflight};
 use crate::harnesses::codex::CodexHarness;
 use crate::session::bench::StacksBenchCli;
 use crate::session::cargo::StdCargoRunner;
 use crate::session::finalize::{self, FinalizeInputs};
 use crate::session::{
-    SessionLayout, analyzers, baseline, bench_experiments, merge, optimizers, publish, triage,
+    SessionLayout, analyzers, baseline, bench_experiments, db_consistency, loader, merge,
+    optimizers, publish, triage,
 };
 use crate::types::SessionId;
 
@@ -45,20 +53,20 @@ pub struct RunSessionArgs {
     /// inner-loop benches share the stacks-bench DB).
     #[clap(long)]
     pub parallel_agents: Option<usize>,
-    /// Override `settings.optimizer_attempts` (Layer 1B inner-loop
+    /// Override `settings.optimizer.attempts` (Layer 1B inner-loop
     /// attempt cap). Defaults to settings → `5`.
     #[clap(long)]
     pub optimizer_attempts: Option<u32>,
-    /// Override `settings.optimizer_budget_minutes` (Layer 1B
+    /// Override `settings.optimizer.budget_minutes` (Layer 1B
     /// inner-loop wall-clock budget). Defaults to settings → `60`.
     #[clap(long)]
     pub optimizer_budget_minutes: Option<u32>,
     /// Operator weights for the triage selection lenses (e.g. `0.4,0.4,0.2`).
-    /// Defaults from `settings.stacks_bench_axis_weights`, then `0.4,0.4,0.2`.
+    /// Defaults from `settings.triage.axis_weights`, then `0.4,0.4,0.2`.
     #[clap(long)]
     pub axis_weights: Option<String>,
     /// Base branch for optimizer worktrees. Defaults from
-    /// `settings.publish_base_branch`, then `feat/stacks-bench`.
+    /// `settings.publish.base_branch`, then `feat/stacks-bench`.
     #[clap(long)]
     pub base_branch: Option<String>,
     /// Enable Phase 5 publish (generate + push).
@@ -98,6 +106,68 @@ pub struct RunSessionArgs {
     pub range: BenchRangeArgs,
 }
 
+/// Shared cross-phase state. Built once at the top of [`run`] and passed
+/// by `&` to every `phase_*` function so each phase is a self-contained
+/// unit of work with explicit inputs.
+struct PhaseEnv<'a> {
+    args: &'a RunSessionArgs,
+    ctx: &'a CliContext,
+    session_id: &'a SessionId,
+    layout: SessionLayout,
+    harness: Arc<CodexHarness>,
+    range: ResolvedBenchRange,
+    axis_weights: String,
+    base_branch: String,
+}
+
+impl<'a> PhaseEnv<'a> {
+    /// Resolve every cross-phase value (block range, axis weights, base
+    /// branch) once, applying CLI → settings → default precedence.
+    fn resolve(
+        args: &'a RunSessionArgs,
+        ctx: &'a CliContext,
+        session_id: &'a SessionId,
+    ) -> Result<Self> {
+        // Phase 0 (baseline) AND Phase 3 (per-target experiments) must
+        // replay the same blocks — candidate selection during triage /
+        // analysis talks about the baseline run, so the experiments
+        // need to match. Even with `--import-baseline-run-id` set we
+        // still need the range for Phase 3.
+        let range = args
+            .range
+            .resolve(&ctx.settings)?;
+        let axis_weights = args
+            .axis_weights
+            .clone()
+            .unwrap_or_else(|| {
+                ctx.settings
+                    .triage
+                    .effective_axis_weights()
+                    .to_owned()
+            });
+        let base_branch = args
+            .base_branch
+            .clone()
+            .or_else(|| {
+                ctx.settings
+                    .publish
+                    .base_branch
+                    .clone()
+            })
+            .unwrap_or_else(|| "feat/stacks-bench".to_owned());
+        Ok(Self {
+            args,
+            ctx,
+            session_id,
+            layout: SessionLayout::from_layout(&ctx.layout, session_id.clone()),
+            harness: Arc::new(CodexHarness::new()),
+            range,
+            axis_weights,
+            base_branch,
+        })
+    }
+}
+
 /// Run the full pipeline.
 pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     // Session-start preflight runs FIRST so drift modes that would
@@ -111,378 +181,425 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
         crate::session::preflight::report(&findings)?;
     }
 
-    let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
-    let harness = Arc::new(CodexHarness::new());
-
-    // Resolve the block range once. Phase 0 (baseline) AND Phase 3
-    // (per-target experiments) must replay the same blocks —
-    // candidate selection during triage / analysis talks about the
-    // baseline run, so the experiments need to match. Even with
-    // `--import-baseline-run-id` set we still need the range for
-    // Phase 3; the operator is responsible for setting it to match
-    // whatever the imported baseline used.
-    let range = args
-        .range
-        .resolve(&ctx.settings)?;
-
-    let axis_weights = args
-        .axis_weights
-        .clone()
-        .or_else(|| {
-            ctx.settings
-                .stacks_bench_axis_weights
-                .clone()
-        })
-        .unwrap_or_else(|| "0.4,0.4,0.2".to_owned());
-    let base_branch = args
-        .base_branch
-        .clone()
-        .or_else(|| {
-            ctx.settings
-                .publish_base_branch
-                .clone()
-        })
-        .unwrap_or_else(|| "feat/stacks-bench".to_owned());
-    println!("session: {}", layout.results_dir.display());
+    let env = PhaseEnv::resolve(&args, ctx, session_id)?;
+    println!(
+        "session: {}",
+        env.layout
+            .results_dir
+            .display()
+    );
 
     // When Phase 5 is requested, validate publish wiring NOW — before
     // Phases 0-4 burn an hour of compute. Catches an unreadable/empty
-    // token file and an unauthorized or wrong `publish_base_repo`.
-    if args.publish_accepted_prs {
-        preflight::ensure_publish_wiring(ctx)
-            .await
-            .context("preflight: publish wiring (--publish-accepted-prs)")?;
+    // token file and an unauthorized or wrong `publish.base_repo`.
+    if env.args.publish_accepted_prs {
+        preflight::ensure_publish_wiring(env.ctx).await?;
     }
 
-    // Phase 0a: build + archive baseline binary BEFORE either
-    // baseline branch (fresh run OR import). Phase 1.8 calibration
-    // and Phase 3 full-range fallback both depend on
-    // `baseline/bin/stacks-bench` existing — including in
-    // imported-baseline sessions where Phase 0b is skipped.
-    let stacks_core_base = ctx
+    let archive_outputs = phase_0a_archive_baseline(&env)?;
+    phase_0_baseline(&env, &archive_outputs)?;
+    phase_1_triage(&env).await?;
+    phase_1_5_analyzers(&env).await?;
+    phase_1_7_merge(&env).await?;
+    phase_1_8_calibration(&env)?;
+    phase_2_optimizers(&env).await?;
+    phase_3_bench_experiments(&env)?;
+    phase_4_finalize(&env)?;
+    if env.args.publish_accepted_prs {
+        phase_5_publish(&env).await?;
+    }
+    if env.args.archive {
+        phase_6_archive(&env)?;
+    }
+    session_end_cleanup(&env)?;
+
+    println!();
+    println!(
+        "session: {}",
+        env.layout
+            .results_dir
+            .display()
+    );
+    println!(
+        "summary: {}",
+        env.layout
+            .summary_md()
+            .display()
+    );
+    Ok(())
+}
+
+/// Phase 0a: build + archive the baseline `stacks-bench` binary BEFORE
+/// either Phase 0 branch (fresh run OR import). Phase 1.8 calibration
+/// and Phase 3 full-range fallback both depend on
+/// `baseline/bin/stacks-bench` existing — including in imported-baseline
+/// sessions where Phase 0b is skipped.
+fn phase_0a_archive_baseline(env: &PhaseEnv<'_>) -> Result<baseline::ArchiveBinaryOutputs> {
+    let stacks_core_base = env
+        .ctx
         .layout
         .require_base()?
         .to_path_buf();
-    let archive_outputs = baseline::archive_baseline_binary(&baseline::ArchiveBinaryInputs {
-        layout: &layout,
+    let outputs = baseline::archive_baseline_binary(&baseline::ArchiveBinaryInputs {
+        layout: &env.layout,
         stacks_core_base: &stacks_core_base,
     })
-    .context("Phase 0a: archive baseline binary")?;
+    .context("Phase 0a")?;
     eprintln!(
         "Phase 0a: archived baseline stacks-bench binary at {} (source_sha={})",
-        archive_outputs
+        outputs
             .archived_path
             .display(),
-        archive_outputs.source_sha,
+        outputs.source_sha,
     );
+    Ok(outputs)
+}
 
-    // Phase 0
-    if let Some(run_id) = args.import_baseline_run_id {
-        // Even though Phase 0b is skipped under import, we still use
-        // the strict archived binary for any DB lookups (bench show,
-        // bench list) so the import path doesn't silently fall back
-        // to a stale `target/release/stacks-bench`.
-        let bench = StacksBenchCli::strict_archived(
-            archive_outputs
-                .archived_path
-                .clone(),
-            ctx.layout
-                .stacks_bench_data_dir
-                .clone(),
-            stacks_core_base.clone(),
-        );
+/// Phase 0: import an existing baseline run id, or run a fresh
+/// baseline benchmark. Always reads the archived binary from Phase 0a
+/// (no fallback to `target/release/stacks-bench`).
+fn phase_0_baseline(
+    env: &PhaseEnv<'_>,
+    archive_outputs: &baseline::ArchiveBinaryOutputs,
+) -> Result<()> {
+    let stacks_core_base = env
+        .ctx
+        .layout
+        .require_base()?
+        .to_path_buf();
+    let bench = StacksBenchCli::strict_archived(
+        archive_outputs
+            .archived_path
+            .clone(),
+        env.ctx
+            .layout
+            .stacks_bench_data_dir
+            .clone(),
+        stacks_core_base,
+    );
+    if let Some(run_id) = env
+        .args
+        .import_baseline_run_id
+    {
         let inputs = baseline::ImportInputs::from_settings(
-            &layout,
+            &env.layout,
             &bench,
             run_id,
-            args.import_baseline_rerun_id,
-            &ctx.settings,
-            &ctx.layout.bench_lock,
+            env.args
+                .import_baseline_rerun_id,
+            &env.ctx.settings,
+            &env.ctx.layout.bench_lock,
         );
         baseline::import(&inputs).context("Phase 0: baseline import")?;
     } else {
-        let source_dir = ctx
+        let source_dir = env
+            .ctx
             .settings
-            .source_dir
-            .as_deref()
-            .context("settings.source_dir is required for `baseline run`")?;
-        let network = ctx
-            .settings
-            .stacks_bench_network
-            .as_deref()
-            .unwrap_or("mainnet");
-        let bench = StacksBenchCli::strict_archived(
-            archive_outputs
-                .archived_path
-                .clone(),
-            ctx.layout
-                .stacks_bench_data_dir
-                .clone(),
-            stacks_core_base.clone(),
-        );
+            .stacks_bench
+            .source_dir_required()
+            .context("Phase 0: baseline run")?;
         baseline::run(&baseline::RunInputs {
-            layout: &layout,
+            layout: &env.layout,
             bench: &bench,
             source_dir,
-            network,
-            start_at: range.start_at,
-            count: range.count,
-            warmup: range.warmup,
-            filter: range.filter.as_deref(),
-            shadow_dir_root: ctx
+            network: env
+                .ctx
+                .settings
+                .stacks_bench
+                .effective_network(),
+            start_at: env.range.start_at,
+            count: env.range.count,
+            warmup: env.range.warmup,
+            filter: env.range.filter.as_deref(),
+            shadow_dir_root: env
+                .ctx
                 .layout
                 .stacks_bench_shadow_dir
                 .as_deref(),
-            single_run_noise_floor_pct: ctx
+            single_run_noise_floor_pct: env
+                .ctx
                 .settings
-                .single_run_noise_floor_pct
-                .unwrap_or(1.0),
-            bench_lock: &ctx.layout.bench_lock,
+                .triage
+                .effective_single_run_noise_floor_pct(),
+            bench_lock: &env.ctx.layout.bench_lock,
         })
         .context("Phase 0: baseline run")?;
     }
+    Ok(())
+}
 
-    // Phase 1: triage
+/// Phase 1: triage. Produces `candidates.json` listing the workload
+/// families worth optimizing.
+async fn phase_1_triage(env: &PhaseEnv<'_>) -> Result<()> {
     triage::run(&triage::Inputs {
-        layout: &layout,
-        framework: &ctx.layout,
-        settings: &ctx.settings,
-        axis_weights: &axis_weights,
-        harness: harness.as_ref(),
+        layout: &env.layout,
+        framework: &env.ctx.layout,
+        settings: &env.ctx.settings,
+        axis_weights: &env.axis_weights,
+        harness: env.harness.as_ref(),
     })
     .await
     .context("Phase 1: triage")?;
+    Ok(())
+}
 
-    // Phase 1.5: analyzer fan-out
+/// Phase 1.5: one analyzer subagent per triage candidate. Per-family
+/// `analysis.json` files land under `analysis/<family-id>/`.
+async fn phase_1_5_analyzers(env: &PhaseEnv<'_>) -> Result<()> {
     analyzers::run(analyzers::Inputs {
-        layout: layout.clone(),
-        framework: ctx.layout.clone(),
-        settings: ctx.settings.clone(),
-        parallel: args.parallel_analyzers,
-        harness: harness.clone(),
+        layout: env.layout.clone(),
+        framework: env.ctx.layout.clone(),
+        settings: env.ctx.settings.clone(),
+        parallel: env.args.parallel_analyzers,
+        harness: env.harness.clone(),
     })
     .await
     .context("Phase 1.5: analyzers")?;
+    Ok(())
+}
 
-    // Phase 1.7: merge
+/// Phase 1.7: LLM merge of accepted analyses → `optimization-targets.json`.
+async fn phase_1_7_merge(env: &PhaseEnv<'_>) -> Result<()> {
     merge::run(&merge::Inputs {
-        layout: &layout,
-        framework: &ctx.layout,
-        settings: &ctx.settings,
-        harness: harness.as_ref(),
+        layout: &env.layout,
+        framework: &env.ctx.layout,
+        settings: &env.ctx.settings,
+        harness: env.harness.as_ref(),
     })
     .await
     .context("Phase 1.7: merge")?;
+    Ok(())
+}
 
-    // Phase 1.8: per-target targeted baseline calibration. For each
-    // normal_pr target with verification_replay, run one bench
-    // invocation per replay phase against the strict archived
-    // baseline binary. The resulting baseline-run-ids feed Phase 4
-    // finalize's apples-to-apples improvement_pct comparison.
-    {
-        let targets = crate::session::loader::read_optimization_targets(&layout)
-            .context("Phase 1.8: loading optimization-targets.json")?;
-        let stacks_core_base = ctx
+/// Phase 1.8: per-target targeted baseline calibration. For each
+/// normal_pr target with verification_replay, run one bench invocation
+/// per replay phase against the strict archived baseline binary. The
+/// resulting baseline-run-ids feed Phase 4 finalize's apples-to-apples
+/// improvement_pct comparison.
+fn phase_1_8_calibration(env: &PhaseEnv<'_>) -> Result<()> {
+    let targets = loader::read_optimization_targets(&env.layout).context("Phase 1.8")?;
+    let stacks_core_base = env
+        .ctx
+        .layout
+        .require_base()?
+        .to_path_buf();
+    let bench = StacksBenchCli::strict_archived(
+        env.layout.baseline_bin_path(),
+        env.ctx
             .layout
-            .require_base()?
-            .to_path_buf();
-        let archived_path = layout.baseline_bin_path();
-        let bench = crate::session::bench::StacksBenchCli::strict_archived(
-            archived_path,
-            ctx.layout
-                .stacks_bench_data_dir
-                .clone(),
-            stacks_core_base,
-        );
-        let source_dir = ctx
-            .settings
-            .source_dir
-            .as_deref()
-            .context("settings.source_dir is required for Phase 1.8 calibration")?;
-        let network = ctx
-            .settings
-            .stacks_bench_network
-            .as_deref()
-            .unwrap_or("mainnet");
-        crate::session::calibration::run(&crate::session::calibration::Inputs {
-            layout: &layout,
-            bench: &bench,
-            source_dir,
-            network,
-            shadow_dir_root: ctx
-                .layout
-                .stacks_bench_shadow_dir
-                .as_deref(),
-            bench_lock: &ctx.layout.bench_lock,
-            targets: &targets,
-        })
+            .stacks_bench_data_dir
+            .clone(),
+        stacks_core_base,
+    );
+    let source_dir = env
+        .ctx
+        .settings
+        .stacks_bench
+        .source_dir_required()
         .context("Phase 1.8: targeted baseline calibration")?;
-    }
+    crate::session::calibration::run(&crate::session::calibration::Inputs {
+        layout: &env.layout,
+        bench: &bench,
+        source_dir,
+        network: env
+            .ctx
+            .settings
+            .stacks_bench
+            .effective_network(),
+        shadow_dir_root: env
+            .ctx
+            .layout
+            .stacks_bench_shadow_dir
+            .as_deref(),
+        bench_lock: &env.ctx.layout.bench_lock,
+        targets: &targets,
+    })
+    .context("Phase 1.8: targeted baseline calibration")?;
+    Ok(())
+}
 
-    // Phase 2: optimizer fan-out. CLI flags override settings, then
-    // optimizers::run applies a final clamp to enforce the inner-loop
-    // bench's single-writer constraint.
-    let mut settings_for_optimize = ctx.settings.clone();
-    if let Some(n) = args.optimizer_attempts {
-        settings_for_optimize.optimizer_attempts = Some(n);
+/// Phase 2: optimizer fan-out. CLI flags override `settings.optimizer.*`;
+/// `optimizers::run` applies a final clamp to enforce the inner-loop
+/// bench's single-writer constraint.
+async fn phase_2_optimizers(env: &PhaseEnv<'_>) -> Result<()> {
+    let mut settings = env.ctx.settings.clone();
+    if let Some(n) = env.args.optimizer_attempts {
+        settings.optimizer.attempts = Some(n);
     }
-    if let Some(m) = args.optimizer_budget_minutes {
-        settings_for_optimize.optimizer_budget_minutes = Some(m);
+    if let Some(m) = env
+        .args
+        .optimizer_budget_minutes
+    {
+        settings
+            .optimizer
+            .budget_minutes = Some(m);
     }
     optimizers::run(optimizers::Inputs {
-        layout: layout.clone(),
-        framework: ctx.layout.clone(),
-        settings: settings_for_optimize,
-        parallel: args.parallel_agents,
-        base_branch: base_branch.clone(),
-        harness: harness.clone(),
+        layout: env.layout.clone(),
+        framework: env.ctx.layout.clone(),
+        settings,
+        parallel: env.args.parallel_agents,
+        base_branch: env.base_branch.clone(),
+        harness: env.harness.clone(),
         git: Arc::new(optimizers::StdGitCheckoutManager),
-        resume: args.resume,
+        resume: env.args.resume,
     })
     .await
     .context("Phase 2: optimizers")?;
+    Ok(())
+}
 
-    // Phase 3: bench experiments
-    {
-        let data_dir = ctx
-            .layout
-            .stacks_bench_data_dir
-            .clone();
-        let cargo_cwd = ctx
-            .layout
-            .require_base()?
-            .to_path_buf();
-        let bench_for_target = move |bin: &std::path::Path| {
-            bench_experiments::stacks_bench_for(bin, &data_dir, &cargo_cwd)
-        };
-        let bench_for_target_ref: &dyn Fn(
-            &std::path::Path,
-        ) -> Box<dyn crate::session::bench::BenchClient> = &bench_for_target;
-        let source_dir = ctx
-            .settings
-            .source_dir
-            .as_deref()
-            .context("settings.source_dir is required for `bench`")?;
-        let network = ctx
-            .settings
-            .stacks_bench_network
-            .as_deref()
-            .unwrap_or("mainnet");
-        let worktrees_root = ctx
-            .layout
-            .session_optimizer_checkouts_dir(session_id);
-        let targets = crate::session::loader::read_optimization_targets(&layout)
-            .context("Phase 3: loading optimization-targets.json")?;
-        bench_experiments::run(&bench_experiments::Inputs {
-            layout: &layout,
-            worktrees_root: &worktrees_root,
-            targets: &targets,
-            range: bench_experiments::BenchRange {
-                source_dir,
-                network,
-                // The full-pipeline orchestrator always runs baseline,
-                // so the resolver has already produced concrete values
-                // here. Wrap as Some for BenchRange's Option-typed slot
-                // (which is None-able only on the `session bench run`
-                // standalone path with all-recipe targets).
-                start_at: Some(range.start_at),
-                count: Some(range.count),
-                warmup: range.warmup,
-                filter: range.filter.as_deref(),
-                shadow_dir_root: ctx
-                    .layout
-                    .stacks_bench_shadow_dir
-                    .as_deref(),
-            },
-            bench_lock: &ctx.layout.bench_lock,
-            skip_cargo_clean: args.skip_cargo_clean,
-            cargo: &StdCargoRunner,
-            bench_for_target: bench_for_target_ref,
-        })
-        .context("Phase 3: bench-experiments")?;
-    }
-
-    // Phase 4: finalize
-    {
-        let bench = StacksBenchCli::from_layout(&ctx.layout)?;
-        // Warn on dangling artifact ↔ DB run-id refs before finalize
-        // bakes them into summary.json.
-        crate::session::db_consistency::warn_dangling_refs(&layout, &bench)
-            .context("Phase 4: DB consistency check")?;
-        finalize::finalize(&FinalizeInputs { layout: &layout, bench: &bench })
-            .context("Phase 4: finalize")?;
-    }
-
-    // Phase 5 (optional)
-    if args.publish_accepted_prs {
-        publish::generate(&publish::GenerateInputs {
-            layout: &layout,
-            framework: &ctx.layout,
-            settings: &ctx.settings,
-            harness: harness.as_ref(),
-        })
-        .await
-        .context("Phase 5: publish generate")?;
-
-        // Push in-process. The token never leaves sbagent's address space.
-        let publish_config = publish::PublishConfig::from_settings(&ctx.settings);
-        publish::ensure_token_outside_framework(
-            &publish_config.publish_token_file,
-            ctx.layout
-                .framework
-                .as_deref()
-                .map(|p| p as &std::path::Path),
-        )?;
-        let token = publish::read_publish_token(&publish_config.publish_token_file)
-            .context("Phase 5: reading publish_token_file")?;
-        let gh = publish::StdGhClient::from_token(&token)
-            .context("Phase 5: building octocrab client")?;
-        publish::push(&publish::PushInputs {
-            layout: &layout,
-            framework: &ctx.layout,
-            config: &publish_config,
-            gh: &gh,
-        })
-        .await
-        .context("Phase 5: publish push")?;
-    }
-
-    // Phase 6 (optional): archive the session.
-    if args.archive {
-        // Warn on dangling artifact ↔ DB refs before the write-once
-        // session/<id> branch + ledger append bakes them in.
-        let bench = StacksBenchCli::from_layout(&ctx.layout)?;
-        crate::session::db_consistency::warn_dangling_refs(&layout, &bench)
-            .context("Phase 6: pre-archive DB consistency check")?;
-        let outputs = crate::session::archive::archive(&crate::session::archive::ArchiveInputs {
-            layout: &layout,
-            framework: &ctx.layout,
-            settings: &ctx.settings,
-            dry_run: false,
-        })
-        .context("Phase 6: archive")?;
-        crate::session::archive::print_outputs(&outputs);
-    }
-
-    // Session-end sweep: tear down per-target clones for aborted
-    // experiments so they don't accumulate in the operator's tree.
-    // Kept (implementation.md-marked) checkouts survive — Phase 5
-    // publish pushed from them, and operators may inspect them. With
-    // the clone-based model, teardown is just `rm -rf <clone>` — the
-    // `agent/<session>/<target>` branch lives inside the clone and
-    // goes away with it.
-    let git = optimizers::StdGitCheckoutManager;
-    let checkouts_root = ctx
+/// Phase 3: bench experiments. One bench invocation per merged target;
+/// shared `stacks-bench` DB (single-writer constraint preserved by the
+/// `bench_lock`).
+fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
+    let data_dir = env
+        .ctx
         .layout
-        .session_optimizer_checkouts_dir(session_id);
-    let dropped = optimizers::prune_aborted_experiments(&git, &checkouts_root, &layout)
+        .stacks_bench_data_dir
+        .clone();
+    let cargo_cwd = env
+        .ctx
+        .layout
+        .require_base()?
+        .to_path_buf();
+    let bench_for_target = move |bin: &std::path::Path| {
+        bench_experiments::stacks_bench_for(bin, &data_dir, &cargo_cwd)
+    };
+    let bench_for_target_ref: &dyn Fn(
+        &std::path::Path,
+    ) -> Box<dyn crate::session::bench::BenchClient> = &bench_for_target;
+    let source_dir = env
+        .ctx
+        .settings
+        .stacks_bench
+        .source_dir_required()
+        .context("Phase 3")?;
+    let worktrees_root = env
+        .ctx
+        .layout
+        .session_optimizer_checkouts_dir(env.session_id);
+    let targets = loader::read_optimization_targets(&env.layout).context("Phase 3")?;
+    bench_experiments::run(&bench_experiments::Inputs {
+        layout: &env.layout,
+        worktrees_root: &worktrees_root,
+        targets: &targets,
+        range: bench_experiments::BenchRange {
+            source_dir,
+            network: env
+                .ctx
+                .settings
+                .stacks_bench
+                .effective_network(),
+            // The full-pipeline orchestrator always runs baseline,
+            // so the resolver has already produced concrete values
+            // here. Wrap as Some for BenchRange's Option-typed slot
+            // (which is None-able only on the `session bench run`
+            // standalone path with all-recipe targets).
+            start_at: Some(env.range.start_at),
+            count: Some(env.range.count),
+            warmup: env.range.warmup,
+            filter: env.range.filter.as_deref(),
+            shadow_dir_root: env
+                .ctx
+                .layout
+                .stacks_bench_shadow_dir
+                .as_deref(),
+        },
+        bench_lock: &env.ctx.layout.bench_lock,
+        skip_cargo_clean: env.args.skip_cargo_clean,
+        cargo: &StdCargoRunner,
+        bench_for_target: bench_for_target_ref,
+    })
+    .context("Phase 3")?;
+    Ok(())
+}
+
+/// Phase 4: finalize. Aggregate per-target outcomes into
+/// `summary.json` and `summary.md`. Warn on dangling DB-vs-artifact
+/// run-id refs first so they don't get baked into the immutable
+/// summary.
+fn phase_4_finalize(env: &PhaseEnv<'_>) -> Result<()> {
+    let bench = StacksBenchCli::from_layout(&env.ctx.layout)?;
+    db_consistency::warn_dangling_refs(&env.layout, &bench).context("Phase 4: DB consistency")?;
+    finalize::finalize(&FinalizeInputs {
+        layout: &env.layout,
+        bench: &bench,
+    })
+    .context("Phase 4: finalize")?;
+    Ok(())
+}
+
+/// Phase 5: publish (generate prompts → push PRs/issues). Token is read
+/// into sbagent's process memory at call time; it never leaves.
+async fn phase_5_publish(env: &PhaseEnv<'_>) -> Result<()> {
+    publish::generate(&publish::GenerateInputs {
+        layout: &env.layout,
+        framework: &env.ctx.layout,
+        settings: &env.ctx.settings,
+        harness: env.harness.as_ref(),
+    })
+    .await
+    .context("Phase 5: generate")?;
+
+    let publish_config = publish::PublishConfig::from_settings(&env.ctx.settings);
+    publish::ensure_token_outside_framework(
+        &publish_config.publish_token_file,
+        env.ctx
+            .layout
+            .framework
+            .as_deref()
+            .map(|p| p as &std::path::Path),
+    )?;
+    let token =
+        publish::read_publish_token(&publish_config.publish_token_file).context("Phase 5")?;
+    let gh = publish::StdGhClient::from_token(&token)?;
+    publish::push(&publish::PushInputs {
+        layout: &env.layout,
+        framework: &env.ctx.layout,
+        config: &publish_config,
+        gh: &gh,
+    })
+    .await
+    .context("Phase 5: push")?;
+    Ok(())
+}
+
+/// Phase 6: archive the session into the operator's git repo
+/// (`session/<id>` write-once branch + `sessions.jsonl` append). Warn on
+/// dangling DB ↔ artifact refs first so the archive doesn't bake them
+/// into the immutable branch.
+fn phase_6_archive(env: &PhaseEnv<'_>) -> Result<()> {
+    let bench = StacksBenchCli::from_layout(&env.ctx.layout)?;
+    db_consistency::warn_dangling_refs(&env.layout, &bench).context("Phase 6: DB consistency")?;
+    let outputs = crate::session::archive::archive(&crate::session::archive::ArchiveInputs {
+        layout: &env.layout,
+        framework: &env.ctx.layout,
+        settings: &env.ctx.settings,
+        dry_run: false,
+    })
+    .context("Phase 6")?;
+    crate::session::archive::print_outputs(&outputs);
+    Ok(())
+}
+
+/// Session-end sweep: tear down per-target clones for aborted
+/// experiments so they don't accumulate in the operator's tree. Kept
+/// (implementation.md-marked) checkouts survive — Phase 5 publish
+/// pushed from them, and operators may inspect them. With the
+/// clone-based model, teardown is just `rm -rf <clone>` — the
+/// `agent/<session>/<target>` branch lives inside the clone and goes
+/// away with it.
+fn session_end_cleanup(env: &PhaseEnv<'_>) -> Result<()> {
+    let git = optimizers::StdGitCheckoutManager;
+    let checkouts_root = env
+        .ctx
+        .layout
+        .session_optimizer_checkouts_dir(env.session_id);
+    let dropped = optimizers::prune_aborted_experiments(&git, &checkouts_root, &env.layout)
         .context("session-end experiment cleanup")?;
     if dropped > 0 {
         println!("session-end cleanup: dropped {dropped} aborted experiment(s)");
     }
-
-    println!();
-    println!("session: {}", layout.results_dir.display());
-    println!("summary: {}", layout.summary_md().display());
     Ok(())
 }

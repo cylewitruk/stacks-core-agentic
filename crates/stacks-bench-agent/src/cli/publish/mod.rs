@@ -3,11 +3,11 @@
 //! Two subcommands:
 //! - [`generate`] invokes the pr-writer / issue-writer prompts and writes
 //!   per-target title/body files.
-//! - [`push`] reads the GitHub token from `publish_token_file` in-process, uses
+//! - [`push`] reads the GitHub token from `publish.token_file` in-process, uses
 //!   `octocrab` for PR/issue creation, and shells `git` for worktree → branch →
 //!   push. No sudo, no separate publisher user.
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::cli::CliContext;
@@ -32,7 +32,7 @@ pub enum PublishCommand {
     /// Generate per-target PR/issue text (agent-side; no GitHub access).
     Generate(GenerateCommandArgs),
     /// Push generated PRs/issues to GitHub. Reads the token from
-    /// `publish_token_file`.
+    /// `publish.token_file`.
     Push(PushCommandArgs),
     /// Clear per-target PR/issue artifacts so the next `publish generate`
     /// re-renders from scratch. Does NOT touch already-pushed PRs/issues
@@ -138,8 +138,7 @@ async fn run_push(args: PushCommandArgs, ctx: &CliContext) -> Result<()> {
         config: &config,
         gh: &gh,
     })
-    .await
-    .context("publish push failed")?;
+    .await?;
     println!(
         "publish-accepted: {} PR(s), {} issue(s); {} skipped.",
         outputs.pr_count, outputs.issue_count, outputs.skip_count

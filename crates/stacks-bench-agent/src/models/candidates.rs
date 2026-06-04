@@ -232,7 +232,7 @@ pub struct LensCoverage {
     /// Number of accepted candidates whose
     /// `selection_lens == "commit_time"`.
     pub commit_time: u32,
-    /// Operator weights applied (the `stacks_bench_axis_weights`
+    /// Operator weights applied (the `triage.axis_weights`
     /// setting passed to triage, verbatim — comma-separated triple
     /// `tx_latency,tenure_throughput,commit_time`).
     pub weights_applied: String,

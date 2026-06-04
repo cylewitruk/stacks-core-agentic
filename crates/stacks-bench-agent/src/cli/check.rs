@@ -17,14 +17,14 @@
 //! 5. **Bundle drift (prompts)**: each operator-on-disk template / reference
 //!    doc is compared against the embedded bundle. Drift is **warned only**
 //!    (operator edits are legitimate — autoresearch's `program.md` model).
-//! 6. **Tool-dev drift** (only when `framework_root` is set): every committed
-//!    `<framework>/schemas/*.schema.json` matches what `sbagent schema export`
-//!    would emit. Catches "edited a Rust model, forgot to regenerate." This
-//!    runs in tool-developer checkouts; operator deployments skip it
-//!    automatically.
+//! 6. **Tool-dev drift** (only when `dev.framework_root` is set): every
+//!    committed `<framework>/schemas/*.schema.json` matches what `sbagent
+//!    schema export` would emit. Catches "edited a Rust model, forgot to
+//!    regenerate." This runs in tool-developer checkouts; operator deployments
+//!    skip it automatically.
 //! 7. **Publish wiring** (only with `--with-publish`): the configured
-//!    `publish_token_file` is non-empty and readable, and the configured
-//!    `publish_base_repo` is reachable via the GitHub API with that token.
+//!    `publish.token_file` is non-empty and readable, and the configured
+//!    `publish.base_repo` is reachable via the GitHub API with that token.
 //!
 //! Exits 0 on success; non-zero with a per-finding error report on failure.
 
@@ -46,8 +46,8 @@ pub struct CheckArgs {
     /// `schemas/`.
     #[clap(long)]
     pub skip_schema_drift: bool,
-    /// Also verify Phase 5 publish wiring: `publish_token_file` is
-    /// readable and the configured `publish_base_repo` is reachable via
+    /// Also verify Phase 5 publish wiring: `publish.token_file` is
+    /// readable and the configured `publish.base_repo` is reachable via
     /// the GitHub API with that token.
     #[clap(long)]
     pub with_publish: bool,

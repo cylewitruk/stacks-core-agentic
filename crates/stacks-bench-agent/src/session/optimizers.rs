@@ -22,7 +22,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use tokio::sync::Semaphore;
@@ -377,14 +376,12 @@ pub fn prune_aborted_experiments(
 /// identity with its own signing key, this can be relaxed.
 pub fn optimizer_git_env(settings: &Settings) -> Vec<(String, String)> {
     let name = settings
-        .git_author_name
-        .as_deref()
-        .unwrap_or("stacks-bench-bot")
+        .git
+        .effective_author_name()
         .to_owned();
     let email = settings
-        .git_author_email
-        .as_deref()
-        .unwrap_or("stacks-bench-bot@users.noreply.github.com")
+        .git
+        .effective_author_email()
         .to_owned();
     let overrides: &[(&str, &str)] = &[
         ("user.name", &name),
@@ -455,8 +452,7 @@ where
     H: AgentHarness + 'static,
     G: GitCheckoutManager + 'static,
 {
-    let targets = loader::read_optimization_targets(&inputs.layout)
-        .context("loading optimization-targets.json")?;
+    let targets = loader::read_optimization_targets(&inputs.layout)?;
     if targets.targets.is_empty() {
         return Ok(Outputs::default());
     }
@@ -499,7 +495,8 @@ where
     // stability, but warn if an operator set it > 1.
     if let Some(n) = inputs
         .settings
-        .optimizer_attempts
+        .optimizer
+        .attempts
         && n > 1
     {
         tracing::warn!(
@@ -756,6 +753,7 @@ where
                 .into_owned(),
             bench_source_dir: state
                 .settings
+                .stacks_bench
                 .source_dir
                 .as_deref()
                 .map(|p| {
@@ -769,17 +767,19 @@ where
             // value omits the flag entirely (which is better than `--network ""`).
             bench_network: state
                 .settings
-                .stacks_bench_network
-                .clone()
-                .unwrap_or_else(|| "mainnet".to_owned()),
+                .stacks_bench
+                .effective_network()
+                .to_owned(),
             bench_warmup: state
                 .settings
-                .stacks_bench_warmup
+                .stacks_bench
+                .warmup
                 .map(|w| w.to_string())
                 .unwrap_or_default(),
             bench_filter: state
                 .settings
-                .stacks_bench_filter
+                .stacks_bench
+                .filter
                 .clone()
                 .unwrap_or_default(),
             bench_shadow_dir_root: state
@@ -793,13 +793,13 @@ where
                 .unwrap_or_default(),
             optimizer_attempts: state
                 .settings
-                .optimizer_attempts
-                .unwrap_or(5)
+                .optimizer
+                .effective_attempts()
                 .to_string(),
             optimizer_budget_minutes: state
                 .settings
-                .optimizer_budget_minutes
-                .unwrap_or(60)
+                .optimizer
+                .effective_budget_minutes()
                 .to_string(),
         },
         prompts_dir,
@@ -808,21 +808,21 @@ where
 
     let timeout = state
         .settings
-        .codex_exec_timeout_sec
-        .filter(|n| *n > 0)
-        .map(Duration::from_secs);
+        .codex
+        .effective_exec_timeout();
     let model = state
         .settings
-        .codex_model
-        .as_deref()
-        .unwrap_or("gpt-5.5");
+        .codex
+        .effective_model();
     let reasoning_effort = state
         .settings
-        .codex_reasoning_effort
+        .codex
+        .reasoning_effort
         .as_deref();
     let dangerous = state
         .settings
-        .codex_dangerously_bypass_sandbox
+        .codex
+        .dangerously_bypass_sandbox
         .unwrap_or(false);
     // Codex `--add-dir` paths: every dir the agent might need to write
     // to OUTSIDE its cwd (the per-target clone). The codex sandbox
@@ -864,7 +864,8 @@ where
     add_dirs.extend(
         state
             .settings
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .cloned(),
     );
@@ -1588,8 +1589,11 @@ mod tests {
     #[test]
     fn optimizer_git_env_shape_with_configured_identity() {
         let settings = Settings {
-            git_author_name: Some("bot-name".into()),
-            git_author_email: Some("bot@example.test".into()),
+            git: crate::settings::GitSettings {
+                author_name: Some("bot-name".into()),
+                author_email: Some("bot@example.test".into()),
+                ..crate::settings::GitSettings::default()
+            },
             ..Settings::default()
         };
         let env = optimizer_git_env(&settings);

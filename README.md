@@ -51,13 +51,13 @@ That split is intentional:
   legitimate tuning per autoresearch's `program.md` model).
 - **MiniJinja-on-disk prompts**: operator-editable templates render
   in strict mode at runtime — no rebuild required to retune.
-- **Forge-agnostic auth**: `git_auth_username` + `git_auth_url_prefix`
+- **Forge-agnostic auth**: `git.auth_username` + `git.auth_url_prefix`
   default to GitHub but cover GitLab / Bitbucket / self-hosted forges.
   Trailing-slash normalization defends against typosquat hosts.
 - **In-process GitHub publishing**: PRs and issues created via the
   GitHub REST API (`octocrab`) directly from `sbagent`; no sudo, no
   separate publisher user, no `gh` CLI dependency. Token sits at
-  `<publish_token_file>` (default `${HOME}/.config/sbagent/gh_token`,
+  `<publish.token_file>` (default `${HOME}/.config/sbagent/gh_token`,
   mode 0600); `sbagent` enforces that it lives outside the framework
   root so Codex's `--add-dir` scope can never reach it.
 - **TOML-only configuration**: a single `config.toml` (default
@@ -93,13 +93,13 @@ they're seeded into the operator dir by `sbagent init` / `sbagent sync`.
     schemas/                # JSON Schemas (mirror of binary bundle, do not edit)
     queries/                # triage/analyzer SQL (mirror of binary bundle, do not edit)
   repos/
-    stacks-core/            # submodule, tracks `publish_base_branch`
+    stacks-core/            # submodule, tracks `publish.base_branch`
   sessions/<id>/results/    # per-session artifacts
   events/                   # append-only event log (operator-side only)
 ```
 
 Mutable agent scratch state (per-target git clones during a session) lives
-under `agent_workspace_root` — defaults to `/private/tmp/sbagent-workspaces/`
+under `layout.agent_workspace_root` — defaults to `/private/tmp/sbagent-workspaces/`
 on macOS — NOT under the operator dir. Keeps `git status` clean and avoids
 embedded-repo warnings.
 
@@ -155,26 +155,32 @@ install -m 0600 /tmp/your-pat ~/.config/sbagent/gh_token
 # 3. Write the operator config (see assets/example.config.toml for the
 #    full annotated template).
 cat >~/.config/sbagent/config.toml <<'TOML'
-base                  = "repos/stacks-core"
-base_repo_url         = "https://github.com/<bot>/stacks-core.git"
-publish_base_branch   = "feat/stacks-bench"
-prompt_overrides_dir  = ".sbagent/prompts"
+[layout]
+prompt_overrides_dir = ".sbagent/prompts"
+agent_workspace_root = "/private/tmp/sbagent-workspaces"
 
-publish_token_file    = "/Users/me/.config/sbagent/gh_token"
-publish_remote        = "bot"
-publish_base_repo     = "<bot>/stacks-core"
-publish_head_owner    = "<bot>"
-publish_branch_prefix = "agentic"
-publish_draft_prs     = true
+[stacks_core]
+base          = "repos/stacks-core"
+base_repo_url = "https://github.com/<bot>/stacks-core.git"
 
-git_author_name       = "<bot>"
-git_author_email      = "<NUM>+<bot>@users.noreply.github.com"
-agent_workspace_root  = "/private/tmp/sbagent-workspaces"
+[stacks_bench]
+# Required by `session baseline run`.
+source_dir = "/mnt/chainstate/mainnet"
+start_at   = 5_000_000
+count      = 25_000
 
-# Required by `session baseline run`:
-source_dir            = "/mnt/chainstate/mainnet"
-stacks_bench_start_at = 5_000_000
-stacks_bench_count    = 25_000
+[publish]
+token_file    = "/Users/me/.config/sbagent/gh_token"
+remote        = "bot"
+base_repo     = "<bot>/stacks-core"
+base_branch   = "feat/stacks-bench"
+head_owner    = "<bot>"
+branch_prefix = "agentic"
+draft_prs     = true
+
+[git]
+author_name  = "<bot>"
+author_email = "<NUM>+<bot>@users.noreply.github.com"
 TOML
 
 # 4. Bootstrap a fresh operator dir end-to-end.

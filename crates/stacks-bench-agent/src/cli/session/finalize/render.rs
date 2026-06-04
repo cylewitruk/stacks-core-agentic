@@ -48,10 +48,8 @@ pub async fn run(args: FinalizeRenderArgs, ctx: &CliContext, session_id: &Sessio
                 .display()
         )
     })?;
-    let targets =
-        loader::read_optimization_targets(&layout).context("loading optimization-targets.json")?;
-    let analyses =
-        loader::read_all_analyses(&layout).context("loading analysis/*/analysis.json")?;
+    let targets = loader::read_optimization_targets(&layout)?;
+    let analyses = loader::read_all_analyses(&layout)?;
 
     let notes = render::load_experiment_notes(&layout, &targets);
     let summary_md = render::render_summary_md(&summary, &targets, &analyses, &notes);

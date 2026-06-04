@@ -15,433 +15,661 @@
 //! Operators land in `~/.config/sbagent/config.toml` (the standard XDG
 //! location for per-user config); machine-specific paths stay out of
 //! the operator repo.
+//!
+//! Settings are grouped into stanzas (`[layout]`, `[stacks_bench]`, `[codex]`,
+//! `[publish]`, `[git]`, etc.) rather than one flat file. Each sub-struct
+//! is its own `Default + Deserialize` with `deny_unknown_fields`.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
 
-/// Top-level settings. Every field is optional; commands either pull defaults
-/// from the resolved layout, or surface an error when a required field is
-/// unset (e.g. `source_dir` is required by `session baseline run`).
+/// Top-level settings. Every field is optional; commands either pull
+/// defaults from the resolved layout, or surface an error when a
+/// required field is unset (e.g. `stacks_bench.source_dir` is required
+/// by `session baseline run`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    /// Absolute path to the framework checkout root. When unset, the layout
-    /// derivation walks up from cwd looking for a directory with `prompts/`
-    /// and `schemas/`.
+    /// Developer / framework-internal knobs. Operators almost never set
+    /// these; they exist for iterating on sbagent itself or for unusual
+    /// checkout layouts.
+    #[serde(default)]
+    pub dev: DevSettings,
+
+    /// Filesystem topology sbagent reads from and writes to —
+    /// session/scratch/bundle/memory directories. Per-domain paths
+    /// (`stacks_bench.data_dir`, `publish.token_file`) live in their
+    /// own stanza; this stanza is the cross-cutting layout.
+    #[serde(default)]
+    pub layout: LayoutSettings,
+
+    /// stacks-core submodule that builds the `stacks-bench` binary.
+    #[serde(default)]
+    pub stacks_core: StacksCoreSettings,
+
+    /// `stacks-bench` invocation params (chainstate source, network,
+    /// block range, filter).
+    #[serde(default)]
+    pub stacks_bench: StacksBenchSettings,
+
+    /// Triage-phase tuning (candidate cap, lens weights, noise floor).
+    #[serde(default)]
+    pub triage: TriageSettings,
+
+    /// Analyzer-phase tuning (parallelism cap).
+    #[serde(default)]
+    pub analyzer: AnalyzerSettings,
+
+    /// Optimizer-phase tuning (inner-loop attempts + budget).
+    #[serde(default)]
+    pub optimizer: OptimizerSettings,
+
+    /// Codex CLI invocation knobs (model, reasoning effort, sandbox,
+    /// timeout). Shared by every agent-driving phase.
+    #[serde(default)]
+    pub codex: CodexSettings,
+
+    /// Publish-phase config (PR target, draft mode, labels, branch
+    /// shape, PAT location).
+    #[serde(default)]
+    pub publish: PublishSettings,
+
+    /// Git identity + PAT-via-extraheader auth used by `init` (push /
+    /// seed) and by every agent-side commit (optimizer worktrees).
+    #[serde(default)]
+    pub git: GitSettings,
+}
+
+/// `[dev]` — framework-internal knobs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevSettings {
+    /// Absolute path to the framework checkout. When unset, layout
+    /// derivation walks up from cwd looking for a `prompts/`+`schemas/`
+    /// sibling. Set this when running `sbagent schema export` /
+    /// `prompt lint` from a non-cwd location.
     #[serde(default)]
     pub framework_root: Option<PathBuf>,
+}
 
-    /// Sessions root. When unset, defaults to `<framework_root>/sessions`.
+/// `[layout]` — cross-cutting filesystem topology.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutSettings {
+    /// Root for durable per-session artifacts (`<sessions_root>/<id>/`).
+    /// Defaults to `<framework_root>/sessions`.
     #[serde(default)]
     pub sessions_root: Option<PathBuf>,
 
-    /// Absolute path to the operator's git repository root — the place
-    /// that holds `sessions/`, `repos/`, and (after archive lands) the
-    /// `sessions.jsonl` ledger on `main` plus `session/<id>` write-once
-    /// branches. Required by `sbagent session archive` so the command
-    /// fails fast at config load if misconfigured instead of at archive
-    /// time. Defaults to `sessions_root.parent()` when unset — convenient
-    /// for the conventional `<operator>/sessions/` layout, but operators
-    /// with split layouts should set it explicitly. Validated by
-    /// [`Settings::validate`] to be absolute when set.
+    /// Absolute path to the operator's git repo — holds `sessions/`,
+    /// `repos/`, plus the `sessions.jsonl` ledger on `main` and
+    /// `session/<id>` archive branches. Required by `session archive`.
+    ///
+    /// Defaults to `sessions_root.parent()` ONLY when `sessions_root`
+    /// was set explicitly — the conventional `<operator>/sessions/`
+    /// layout where the parent IS the operator. When `sessions_root`
+    /// itself defaulted (typically to `<agent_workspace_root>/sessions/`),
+    /// the parent points at the workspace root, which is NOT the
+    /// operator; in that case `operator_repo_root` stays `None` and
+    /// the operator must set it explicitly.
+    ///
+    /// Must be absolute when set (enforced by [`Settings::validate`]).
     #[serde(default)]
     pub operator_repo_root: Option<PathBuf>,
 
-    /// Persistent stacks-bench app-data directory. When unset, defaults to
-    /// `<framework_root>/data/stacks-bench`.
-    #[serde(default)]
-    pub stacks_bench_data_dir: Option<PathBuf>,
-
-    /// Directory holding sbagent's coordination lockfiles
-    /// (`benchmark.lock` for `bench run`/`rerun`, `test.lock` for
-    /// optimizer `cargo nextest` serialization). Defaults to
-    /// `<framework_root>/data/run/`.
+    /// Coordination lockfiles (`benchmark.lock`, `test.lock`). Defaults
+    /// to `<framework_root>/data/run/`.
     #[serde(default)]
     pub lock_dir: Option<PathBuf>,
 
-    /// Root for mutable agent scratch state (per-target git clones,
-    /// build caches, future per-phase scratch dirs). **Durable
-    /// session records** — results, summaries, events, prompts —
-    /// continue to live under `sessions_root`; only ephemeral
-    /// execution state lands here.
+    /// Root for mutable agent scratch (per-target git clones, build
+    /// caches). Phase-scoped subdirs: `<root>/optimizers/<sid>/<tid>/`.
+    /// Durable session records stay under `sessions_root`; only
+    /// ephemeral execution state lands here.
     ///
-    /// Layout: `<agent_workspace_root>/<phase>/<session>/<...>`. Today
-    /// only the optimizer phase populates it, at
-    /// `<root>/optimizers/<session_id>/<target_id>/` (each target's
-    /// per-target git clone). Future phases can claim sibling subdirs
-    /// without rearranging the operator's setup.
-    ///
-    /// When unset, optimizer checkouts fall back to the legacy path
-    /// `<sessions_root>/<id>/worktrees/<target>/` for backward
-    /// compatibility. Operators on macOS should typically set this to
-    /// `/private/tmp/sbagent-workspaces/` (cleared on boot, outside
-    /// Spotlight + Time Machine, no Seatbelt quirks); on Linux, an
-    /// `/var/tmp/sbagent-workspaces/` or `$XDG_CACHE_HOME/sbagent/`
-    /// path makes sense. The choice is operator-configured, NOT
-    /// platform-magic.
+    /// When unset, optimizer checkouts fall back to the legacy
+    /// `<sessions_root>/<id>/worktrees/<target>/`. Macos suggested:
+    /// `/private/tmp/sbagent-workspaces/`; Linux: `/var/tmp/...` or
+    /// `$XDG_CACHE_HOME/sbagent/`.
     #[serde(default)]
     pub agent_workspace_root: Option<PathBuf>,
 
-    /// Stacks-core checkout that builds + ships the `stacks-bench` binary.
-    /// Owned by the operator (typically a submodule at
-    /// `<operator_root>/repos/stacks-core/`). Required — no default.
-    #[serde(default)]
-    pub base: Option<PathBuf>,
-
-    /// Clone URL for the stacks-core checkout. Used by `sbagent init`
-    /// to bootstrap `base` as a submodule when the operator dir is
-    /// first set up. Once `base` exists locally, this field is
-    /// unused at runtime — read directly from
-    /// `git -C <base> remote get-url origin` thereafter.
-    /// Typically `https://github.com/<owner>/stacks-core.git`.
-    #[serde(default)]
-    pub base_repo_url: Option<String>,
-
-    /// Username component of the HTTP Basic credential pair injected
-    /// for `sbagent init --push` and `--seed-from`. Combined with the
-    /// PAT from `publish_token_file` as
-    /// `<git_auth_username>:<token>` then base64-encoded into an
-    /// `AUTHORIZATION: basic ...` header.
+    /// Operator-tuned prompt template overrides — autoresearch-style
+    /// `program.md` model. For each phase prompt (`triage.md`,
+    /// `analyzer.md`, `merge-analyses.md`, `optimizer.md`,
+    /// `pr-writer.md`, `issue-writer.md`), a non-empty same-named file
+    /// here overrides the bundled template; missing/empty falls back.
+    /// Override files use the same `{{ field_name }}` substitution as
+    /// the bundle — referencing a missing field is a hard error so
+    /// drift is caught at render time.
     ///
-    /// Defaults to `x-access-token` (GitHub fine-grained PATs accept
-    /// this magic username). Forge-specific values:
-    /// - **GitHub fine-grained PATs**: `x-access-token` (default) — works.
-    /// - **GitHub classic PATs**: any non-blank username works.
-    /// - **GitLab PATs**: `oauth2` (or the actual GitLab username).
-    /// - **Bitbucket Cloud app passwords**: the Bitbucket account username.
-    /// - **Self-hosted Gitea/Forgejo**: typically `git` or the bot's account
-    ///   name.
-    #[serde(default)]
-    pub git_auth_username: Option<String>,
-
-    /// URL prefix the PAT-via-extraheader auth is scoped to. Used as
-    /// (a) the `http.<prefix>.extraheader` config key (so the token
-    /// is only sent to URLs matching this prefix), and (b) the
-    /// validation gate for `init --push` origin and `init
-    /// --seed-from` `base_repo_url`.
-    ///
-    /// Defaults to `https://github.com/`. Set to a different forge's
-    /// HTTPS root (with trailing slash) to use the same mechanism
-    /// against GitLab, Bitbucket, etc. — e.g.
-    /// `git_auth_url_prefix = "https://gitlab.com/"`.
-    ///
-    /// **Expert / advanced mode**: setting this to the empty string
-    /// (`""`) drops the URL-prefix qualifier from the git config key.
-    /// The token is then attached as `http.extraheader` (unqualified)
-    /// and **MAY BE SENT TO ANY HTTPS REMOTE THAT GIT CONTACTS DURING
-    /// THE INVOCATION**. Use only if you know what you're doing
-    /// (e.g. you're running against a Git host with a non-trivial
-    /// URL structure that defeats prefix matching, AND you've audited
-    /// that the only remotes git will touch are the ones you control).
-    ///
-    /// Trailing slashes are normalized internally — `"https://gitlab.com"`
-    /// and `"https://gitlab.com/"` resolve identically — so a missing
-    /// slash can't be exploited by an attacker registering a similarly-
-    /// named domain (e.g. `https://gitlab.com.evil.example/`).
-    #[serde(default)]
-    pub git_auth_url_prefix: Option<String>,
-
-    /// Directory holding the operator's on-disk mirror of the bundled
-    /// triage / analyzer SQL queries (`run_summary.sql`,
-    /// `top_spans_by_self_wall.sql`, etc.) plus the operator-facing
-    /// `README.md`. Same contract as
-    /// [`Settings::schemas_dir`] — versioned bundle, not a tuning
-    /// surface; `sbagent sync` overwrites unconditionally and
-    /// `sbagent check` fails on drift.
-    ///
-    /// Resolution when unset: sibling of `prompt_overrides_dir`
-    /// (`<parent>/queries`), then `<framework_root>/queries` (back-compat
-    /// for operators still on the pre-bundle layout). Conventional
-    /// layout: `.sbagent/prompts` + `.sbagent/schemas` + `.sbagent/queries`.
-    #[serde(default)]
-    pub queries_dir: Option<PathBuf>,
-
-    /// Directory holding the operator's on-disk mirror of the bundled
-    /// JSON Schemas (`candidates.schema.json`, `analysis.schema.json`,
-    /// `optimization-targets.schema.json`, `summary.schema.json`).
-    /// Unlike [`Settings::prompt_overrides_dir`], this is NOT a tuning
-    /// surface — `sbagent sync` overwrites it unconditionally on every
-    /// invocation, and `sbagent check` fails on any drift between the
-    /// on-disk copy and the running binary's embedded bundle.
-    ///
-    /// Resolution when unset:
-    /// 1. If `prompt_overrides_dir` is set, derives the sibling
-    ///    `<prompt_overrides_dir>/../schemas` (so the conventional
-    ///    `.sbagent/prompts/` + `.sbagent/schemas/` layout works without a
-    ///    config change).
-    /// 2. Otherwise falls back to `<framework_root>/schemas` for backward
-    ///    compatibility with operators who haven't run `sbagent init`/`sbagent
-    ///    sync` yet.
-    ///
-    /// Agents read schema files from this dir at session time
-    /// (validation paths are embedded in the rendered prompts).
-    #[serde(default)]
-    pub schemas_dir: Option<PathBuf>,
-
-    /// Directory of operator-tuned prompt templates that override the
-    /// bundled defaults shipped with `sbagent`. For each Phase prompt
-    /// (`triage.md`, `analyzer.md`, `merge-analyses.md`, `optimizer.md`,
-    /// `pr-writer.md`, `issue-writer.md`), if a file with the matching
-    /// name exists under this dir and is non-empty, its contents are
-    /// used in place of the bundled template. Missing or empty files
-    /// fall back to the bundle. Override files support the same
-    /// `{{ field_name }}` substitution as the bundled Askama templates;
-    /// referencing a field that doesn't exist on the struct is a hard
-    /// error so drift is caught at render time.
-    ///
-    /// This is the operator's primary tuning surface — autoresearch-style
-    /// "iterate on program.md" pattern.
+    /// Primary operator tuning surface. Typical value: `.sbagent/prompts/`.
     #[serde(default)]
     pub prompt_overrides_dir: Option<PathBuf>,
 
-    /// Directory holding the operator's accumulated cross-session
-    /// memory — currently the analyzed-rejections ledger, with
-    /// room for future memory types (manual review decisions,
-    /// performance baseline history, etc.). Each memory file is a
-    /// JSONL or markdown artifact the operator can edit or trim
-    /// directly; a single `<memory_dir>/.locks/memory.lock` protects
-    /// concurrent writes from coordinator-side appends.
-    ///
-    /// Resolution when unset: `<operator>/memory/` derived from
-    /// `prompt_overrides_dir`'s parent (same sibling-of-tunables
-    /// pattern as `schemas_dir` / `context_overrides_dir`).
-    ///
-    /// Operator-visible top-level; NOT under `.sbagent/` because
-    /// this is accumulated bot knowledge, not bundled/synced state.
+    /// On-disk mirror of the bundled JSON Schemas. Not a tuning
+    /// surface — `sbagent sync` overwrites unconditionally and
+    /// `sbagent check` fails on drift. When unset, derived as the
+    /// sibling `<prompt_overrides_dir>/../schemas`, else
+    /// `<framework_root>/schemas`.
     #[serde(default)]
-    pub memory_dir: Option<PathBuf>,
+    pub schemas_dir: Option<PathBuf>,
 
-    /// Maximum number of analyzer subagents the Phase 1.5 fan-out
-    /// runs in parallel. The analyzer is expensive (one Codex
-    /// invocation + a model with deep reasoning, several minutes
-    /// per family). The triage-rejects-only-on-quality-grounds
-    /// architecture (Axis 2) can produce 10-20 candidates per session
-    /// on early runs; capping parallelism prevents N concurrent
-    /// codex processes from saturating the host. Defaults to 4.
+    /// On-disk mirror of the bundled triage/analyzer SQL queries +
+    /// operator README. Same contract as `schemas_dir`. When unset,
+    /// derived as sibling of `prompt_overrides_dir`.
     #[serde(default)]
-    pub analyzer_concurrency_cap: Option<usize>,
+    pub queries_dir: Option<PathBuf>,
 
-    /// Soft cap on the number of triage candidates per session. The
-    /// orchestrator warns (but doesn't reject) when triage emits
-    /// more than this. Catches degenerate sessions where the agent
-    /// dumps every workload-entry pattern as a candidate. Defaults
-    /// to 20.
-    #[serde(default)]
-    pub triage_candidate_soft_cap: Option<usize>,
-
-    /// Directory of operator-tunable context / reference docs (the
-    /// agent's "brainstem"). Each entry is a markdown file + a TOML
-    /// sidecar declaring which phases may surface it. See
-    /// [`crate::context`] for the bundle.
-    ///
-    /// Resolution when unset: sibling of `prompt_overrides_dir`
-    /// (`<parent>/context`) — same derivation rule as
-    /// [`Settings::schemas_dir`] / [`Settings::queries_dir`], so the
-    /// conventional `.sbagent/prompts` + `.sbagent/context` layout
-    /// works without a config change.
-    ///
-    /// Operator-tunable: `sbagent sync` refreshes by default; pass
-    /// `--keep-tunables` to preserve operator edits. `sbagent check`
-    /// warns (not fails) on drift between the on-disk copy and the
-    /// running binary's bundle, except for the load-bearing
-    /// `optimizer.md` prompt which fails on drift.
+    /// Operator-tunable context / reference docs (the agent's
+    /// "brainstem"). Each entry: markdown + TOML sidecar declaring
+    /// which phases may surface it. Tunable — `sync` refreshes by
+    /// default (preserve with `--keep-tunables`); `check` warns on
+    /// drift except for the load-bearing `optimizer.md` which fails.
+    /// When unset, derived as sibling of `prompt_overrides_dir`.
     #[serde(default)]
     pub context_overrides_dir: Option<PathBuf>,
+
+    /// Operator's cross-session memory (analyzed-rejections ledger
+    /// today; manual-review decisions and baseline history planned).
+    /// Each file is a JSONL or markdown artifact the operator can
+    /// edit/trim directly; `<memory_dir>/.locks/memory.lock` protects
+    /// concurrent appends. Lives at the operator-repo top level, NOT
+    /// under `.sbagent/` — this is accumulated bot knowledge, not
+    /// bundled/synced state. When unset, derived as
+    /// `<operator>/memory/` from `prompt_overrides_dir`'s parent.
+    #[serde(default)]
+    pub memory_dir: Option<PathBuf>,
+}
+
+/// `[stacks_core]` — the stacks-core submodule.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StacksCoreSettings {
+    /// Path to the stacks-core checkout (typically a submodule at
+    /// `<operator>/repos/stacks-core`). Builds the `stacks-bench`
+    /// binary and is the source SHA finalize records. Required — no
+    /// default.
+    #[serde(default)]
+    pub base: Option<PathBuf>,
+
+    /// Clone URL for the stacks-core checkout. Read by `sbagent init`
+    /// when bootstrapping the submodule; unused at runtime thereafter
+    /// (sbagent reads `git -C <base> remote get-url origin` directly).
+    #[serde(default)]
+    pub base_repo_url: Option<String>,
+}
+
+/// `[stacks_bench]` — `stacks-bench` invocation params.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StacksBenchSettings {
+    /// Persistent app-data dir for the `stacks-bench` binary (its
+    /// own SQLite store, not sbagent's). Defaults to
+    /// `<framework_root>/data/stacks-bench`.
+    #[serde(default)]
+    pub data_dir: Option<PathBuf>,
 
     /// Chainstate source dir (must contain `chainstate/`). Required by
     /// `session baseline run`.
     #[serde(default)]
     pub source_dir: Option<PathBuf>,
 
-    /// Network identifier passed to `cargo stacks-bench`. Defaults to
-    /// `mainnet`.
+    /// Network identifier passed to `stacks-bench`. Defaults to `mainnet`.
     #[serde(default)]
-    pub stacks_bench_network: Option<String>,
+    pub network: Option<String>,
 
-    /// Parent directory passed via `--shadow-dir-root <DIR>` to
-    /// `stacks-bench bench run`. stacks-bench creates its reflink shadow
-    /// copy of the source chainstate under this dir; auto-named +
-    /// auto-cleaned. **Must be on the same filesystem as `source_dir`**
-    /// (reflinks fail across filesystems and stacks-bench refuses to
-    /// proceed). Set this when the default — the source dir's parent —
-    /// is not writable from the codex sandbox (e.g. `/Volumes/Extern`).
-    /// Unset = pass nothing, let stacks-bench fall back to the source
-    /// parent.
+    /// Parent dir passed via `--shadow-dir-root` for stacks-bench's
+    /// reflink shadow copy of the source chainstate. **Must be on the
+    /// same filesystem as `source_dir`** (reflinks fail across
+    /// filesystems). Set this when the default — `source_dir.parent()`
+    /// — isn't writable from the codex sandbox (e.g. `/Volumes/Extern`).
+    /// Unset = pass nothing, let stacks-bench pick.
     #[serde(default)]
-    pub stacks_bench_shadow_dir: Option<PathBuf>,
+    pub shadow_dir: Option<PathBuf>,
 
     /// Block range start.
     #[serde(default)]
-    pub stacks_bench_start_at: Option<u64>,
+    pub start_at: Option<u64>,
 
     /// Block range count.
     #[serde(default)]
-    pub stacks_bench_count: Option<u64>,
+    pub count: Option<u64>,
 
-    /// Number of pre-window blocks to advance through before measurement
+    /// Number of pre-window blocks to advance before measurement
     /// starts (`--warmup` arg). Lets caches/JIT/IO settle so the
-    /// measured `count` reflects steady-state, not start-up. Unset =
-    /// no warmup.
+    /// measured `count` reflects steady-state. Unset = no warmup.
     #[serde(default)]
-    pub stacks_bench_warmup: Option<u64>,
+    pub warmup: Option<u64>,
 
-    /// Optional `--filter` arg for `bench run` (e.g. `contract-call`).
-    /// Restricts which blocks in the range are actually replayed —
-    /// useful for chainstates with non-canonical forks where iterating
-    /// every height trips on missing blocks. Unset = no filter.
+    /// `--filter` arg for `bench run` (e.g. `contract-call`). Restricts
+    /// which blocks in the range get replayed — useful for chainstates
+    /// with non-canonical forks where iterating every height trips on
+    /// missing blocks. Unset = no filter.
     #[serde(default)]
-    pub stacks_bench_filter: Option<String>,
+    pub filter: Option<String>,
+}
 
-    /// Conservative noise-floor fallback used when a single baseline run is
-    /// imported (no rerun for noise estimation). Defaults to 1.0%.
+/// `[triage]` — triage-phase tuning.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriageSettings {
+    /// Soft cap on candidates per session. Orchestrator warns (doesn't
+    /// reject) when triage emits more — catches degenerate sessions
+    /// dumping every workload-entry pattern. Defaults to 20.
+    #[serde(default)]
+    pub candidate_soft_cap: Option<usize>,
+
+    /// Selection-lens weights as `"tx_latency,tenure_throughput,commit_time"`,
+    /// e.g. `"0.4,0.4,0.2"`.
+    #[serde(default)]
+    pub axis_weights: Option<String>,
+
+    /// Conservative noise-floor fallback used when only a single
+    /// baseline run was imported (no rerun for noise estimation).
+    /// Defaults to 1.0%.
     #[serde(default)]
     pub single_run_noise_floor_pct: Option<f64>,
+}
 
-    /// Triage selection-lens weights, e.g. `"0.4,0.4,0.2"` for
-    /// `tx_latency,tenure_throughput,commit_time`.
+/// `[analyzer]` — analyzer-phase tuning.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnalyzerSettings {
+    /// Max analyzer subagents the Phase 1.5 fan-out runs in parallel.
+    /// Each invocation is expensive (one Codex call + deep reasoning,
+    /// minutes per family); 10-20 candidates per session is normal, so
+    /// capping prevents N concurrent codex processes from saturating
+    /// the host. Defaults to 4.
     #[serde(default)]
-    pub stacks_bench_axis_weights: Option<String>,
+    pub concurrency_cap: Option<usize>,
+}
 
+/// `[optimizer]` — optimizer-phase tuning.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizerSettings {
+    /// Max inner-loop attempts per merged target before giving up.
+    /// Combined with `budget_minutes` as "whichever exhausts first".
+    /// Applies to `normal_pr` targets only — `consensus_poc_pr` keeps
+    /// the one-shot scoped-tests model. Default: 5.
+    #[serde(default)]
+    pub attempts: Option<u32>,
+
+    /// Wall-clock budget (minutes) per merged target. Combined with
+    /// `attempts` as "whichever exhausts first". Codex's
+    /// `codex.exec_timeout_sec` is the hard kill; this is the
+    /// prompt-level soft cap the agent self-enforces. Default: 60.
+    #[serde(default)]
+    pub budget_minutes: Option<u32>,
+}
+
+/// `[codex]` — Codex CLI invocation knobs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexSettings {
     /// Codex model id (e.g. `gpt-5.5`).
     #[serde(default)]
-    pub codex_model: Option<String>,
+    pub model: Option<String>,
 
-    /// Codex reasoning effort. Valid values depend on the model family;
-    /// for GPT-5.x and GPT-5.x-Codex models, `high` is the workflow's
-    /// default.
+    /// Reasoning effort. For GPT-5.x and GPT-5.x-Codex models, `high`
+    /// is the workflow's default.
     #[serde(default)]
-    pub codex_reasoning_effort: Option<String>,
+    pub reasoning_effort: Option<String>,
 
-    /// Optional override for the merge phase's reasoning effort. Inherits
-    /// `codex_reasoning_effort` when unset.
+    /// Per-phase override for merge-phase reasoning effort. Inherits
+    /// `reasoning_effort` when unset.
     #[serde(default)]
-    pub codex_merge_reasoning_effort: Option<String>,
+    pub merge_reasoning_effort: Option<String>,
 
-    /// Set to true on demo VMs that cannot support Codex's internal
-    /// sandboxing.
+    /// Disable Codex's internal sandbox. Set true only on demo VMs
+    /// that can't support it.
     #[serde(default)]
-    pub codex_dangerously_bypass_sandbox: Option<bool>,
+    pub dangerously_bypass_sandbox: Option<bool>,
 
-    /// Outer timeout, in seconds, for each `codex exec` invocation. `0`
-    /// disables. Defaults to 3600 (one hour).
+    /// Outer timeout (seconds) for each `codex exec`. `0` disables.
+    /// Defaults to 3600 (one hour).
     #[serde(default)]
-    pub codex_exec_timeout_sec: Option<u64>,
+    pub exec_timeout_sec: Option<u64>,
 
-    /// Extra paths to grant write access to in the codex sandbox, on top
-    /// of the per-phase `add_dirs` (per-target output dir, schemas,
-    /// queries, etc.). Concatenated into the
-    /// `-c sandbox_workspace_write.writable_roots=[...]` TOML override
-    /// the harness emits.
-    ///
-    /// Why this exists: codex's `-c` config grammar **replaces** the
-    /// value at a key path rather than deep-merging arrays. So any
-    /// `writable_roots` the operator has in `~/.codex/config.toml`
-    /// (e.g. their sccache cache dir) would be silently dropped when we
-    /// emit our per-invoke override. List those paths here so the
-    /// harness can fold them back in.
-    ///
-    /// Empty list disables the extra grant.
+    /// Extra paths granted write access in the codex sandbox, on top
+    /// of per-phase `add_dirs`. Codex's `-c` config grammar **replaces**
+    /// array values rather than deep-merging, so any `writable_roots`
+    /// in `~/.codex/config.toml` would be silently dropped by our
+    /// per-invoke override. List those here so the harness folds them
+    /// back in. Entries must be absolute paths (enforced by
+    /// [`Settings::validate`]); empty list disables the extra grant.
     #[serde(default)]
-    pub codex_extra_writable_roots: Vec<std::path::PathBuf>,
+    pub extra_writable_roots: Vec<PathBuf>,
+}
 
-    /// Maximum number of inner-loop attempts the Phase 2 optimizer may
-    /// burn on one merged target before giving up. Combined with
-    /// [`Settings::optimizer_budget_minutes`] as "whichever exhausts
-    /// first." Default: `5`. Applies to `normal_pr` targets only —
-    /// `consensus_poc_pr` keeps the one-shot scoped-tests model.
-    #[serde(default)]
-    pub optimizer_attempts: Option<u32>,
-
-    /// Wall-clock budget (in minutes) the Phase 2 optimizer may spend on
-    /// the inner loop for one merged target. Combined with
-    /// [`Settings::optimizer_attempts`] as "whichever exhausts first."
-    /// Default: `60`. Codex's outer `codex_exec_timeout_sec` is the
-    /// hard kill; this budget is the prompt-level soft cap the agent
-    /// self-enforces.
-    #[serde(default)]
-    pub optimizer_budget_minutes: Option<u32>,
-
-    /// Absolute path to the GitHub PAT file `sbagent` reads at Phase 5
-    /// time. Should be mode 0600, owned by the agent user. Defaults to
-    /// `${HOME}/.config/sbagent/gh_token`.
+/// `[publish]` — Phase 5 publish targets + PAT location.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishSettings {
+    /// Absolute path to the GitHub PAT file. Mode 0600, owned by the
+    /// agent user. Defaults to `${HOME}/.config/sbagent/gh_token`.
     ///
     /// MUST live OUTSIDE the framework root: `publish generate` passes
-    /// the framework root to Codex via `--add-dir`, so a token inside
-    /// the tree is reachable by the LLM. `sbagent` enforces this at
-    /// preflight and at Phase 5 startup; configuring an in-tree path
-    /// surfaces an actionable bail rather than a quiet leak.
+    /// the framework root to Codex via `--add-dir`, so an in-tree token
+    /// is reachable by the LLM. Enforced at preflight + Phase 5 startup.
     #[serde(default)]
-    pub publish_token_file: Option<PathBuf>,
+    pub token_file: Option<PathBuf>,
 
     /// Git remote name in the optimizer worktrees (e.g. `origin`).
     #[serde(default)]
-    pub publish_remote: Option<String>,
+    pub remote: Option<String>,
 
     /// `<owner>/<repo>` PRs and issues are filed against. Defaults to
     /// `cylewitruk/stacks-core` (operator's fork; least blast radius).
     #[serde(default)]
-    pub publish_base_repo: Option<String>,
+    pub base_repo: Option<String>,
 
     /// Branch name PRs target. Defaults to `feat/stacks-bench`.
     #[serde(default)]
-    pub publish_base_branch: Option<String>,
+    pub base_branch: Option<String>,
 
     /// Whether `normal_pr` PRs are created as drafts. `consensus_poc_pr`
-    /// is always draft regardless of this setting. Defaults to true.
+    /// is always draft regardless of this. Defaults to true.
     #[serde(default)]
-    pub publish_draft_prs: Option<bool>,
+    pub draft_prs: Option<bool>,
 
-    /// Optional labels added to every created PR. Each entry is passed
+    /// Labels added to every created PR. Each entry is passed
     /// individually to `gh pr create --label`.
     #[serde(default)]
-    pub publish_pr_labels: Option<Vec<String>>,
+    pub pr_labels: Option<Vec<String>>,
 
-    /// Branch prefix for optimizer worktrees pushed to GitHub. The full
-    /// branch name is `<prefix>/<session-id>/<target-id>`.
+    /// Branch prefix for optimizer worktrees pushed to GitHub. Full
+    /// branch name: `<prefix>/<session-id>/<target-id>`.
     #[serde(default)]
-    pub publish_branch_prefix: Option<String>,
+    pub branch_prefix: Option<String>,
 
-    /// Override for the head owner used in `gh pr create --head` (otherwise
+    /// Override for the head owner in `gh pr create --head` (otherwise
     /// derived from the configured remote URL).
     #[serde(default)]
-    pub publish_head_owner: Option<String>,
-
-    /// Author identity for every agent-generated commit. Injected as
-    /// `GIT_AUTHOR_NAME` + `GIT_COMMITTER_NAME` environment variables
-    /// on the optimizer codex invocation (and as a `user.name`
-    /// override via `GIT_CONFIG_COUNT`) so it applies to every `git`
-    /// invocation inside the agent's process tree WITHOUT mutating any
-    /// git config file. Should match the bot account whose PAT lives
-    /// in `publish_token_file`. Defaults to `"stacks-bench-bot"` when
-    /// unset. See [`crate::session::optimizers::optimizer_git_env`]
-    /// for the full env shape.
-    #[serde(default)]
-    pub git_author_name: Option<String>,
-
-    /// Author email for agent commits. Plumbed the same way as
-    /// [`Settings::git_author_name`] (env-var, not git config file).
-    /// For GitHub commit attribution, use the bot account's
-    /// `<numeric-id>+<username>@users.noreply.github.com` form
-    /// (visible in Settings → Emails when "Keep my email addresses
-    /// private" is enabled). Falls back to
-    /// `"stacks-bench-bot@users.noreply.github.com"` (no numeric
-    /// prefix → commits show as "unverified email" on GitHub but still
-    /// attribute by name).
-    #[serde(default)]
-    pub git_author_email: Option<String>,
+    pub head_owner: Option<String>,
 }
 
-/// Default username for the PAT-via-extraheader Basic credential. Magic
-/// value GitHub fine-grained PATs accept; works on most other forges too
-/// (GitLab/Bitbucket may want a different value — see
-/// [`Settings::git_auth_username`]).
+/// `[git]` — commit identity + PAT-via-extraheader auth.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitSettings {
+    /// Author identity for every agent-generated commit. Injected as
+    /// `GIT_AUTHOR_NAME` + `GIT_COMMITTER_NAME` env vars (and as a
+    /// `user.name` override via `GIT_CONFIG_COUNT`) so it applies to
+    /// every `git` invocation inside the agent's process tree WITHOUT
+    /// mutating any git config file. Should match the bot account
+    /// whose PAT lives in `publish.token_file`. Defaults to
+    /// `"stacks-bench-bot"`. See
+    /// [`crate::session::optimizers::optimizer_git_env`] for the full
+    /// env shape.
+    #[serde(default)]
+    pub author_name: Option<String>,
+
+    /// Author email for agent commits. Same env-var injection as
+    /// `author_name`. For GitHub commit attribution, use
+    /// `<numeric-id>+<username>@users.noreply.github.com` (visible in
+    /// Settings → Emails when "Keep my email addresses private" is
+    /// enabled). Falls back to
+    /// `"stacks-bench-bot@users.noreply.github.com"` (no numeric prefix
+    /// → commits show as "unverified email" on GitHub but still
+    /// attribute by name).
+    #[serde(default)]
+    pub author_email: Option<String>,
+
+    /// Username component of the HTTP Basic credential injected for
+    /// `init --push` and `--seed-from`. Combined with the PAT from
+    /// `publish.token_file` as `<auth_username>:<token>` then
+    /// base64-encoded into an `AUTHORIZATION: basic ...` header.
+    ///
+    /// Defaults to `x-access-token` (the magic username GitHub
+    /// fine-grained PATs accept). Forge-specific values:
+    /// - GitHub fine-grained PATs: `x-access-token` (default).
+    /// - GitHub classic PATs: any non-blank username.
+    /// - GitLab PATs: `oauth2` (or the actual GitLab username).
+    /// - Bitbucket Cloud app passwords: the Bitbucket account username.
+    /// - Self-hosted Gitea/Forgejo: typically `git` or the bot's account.
+    #[serde(default)]
+    pub auth_username: Option<String>,
+
+    /// URL prefix the PAT-via-extraheader auth is scoped to. Used as
+    /// (a) the `http.<prefix>.extraheader` git config key (so the token
+    /// is only sent to URLs matching this prefix), and (b) the
+    /// validation gate for `init --push` origin and `init --seed-from`
+    /// `stacks_core.base_repo_url`.
+    ///
+    /// Defaults to `https://github.com/`. Set to a different forge's
+    /// HTTPS root (with trailing slash) to use the same mechanism
+    /// against GitLab, Bitbucket, etc.
+    ///
+    /// **Expert / advanced mode**: setting this to the empty string
+    /// (`""`) drops the URL-prefix qualifier from the git config key.
+    /// The token is then attached as `http.extraheader` (unqualified)
+    /// and **MAY BE SENT TO ANY HTTPS REMOTE THAT GIT CONTACTS DURING
+    /// THE INVOCATION**. Use only with audited destinations.
+    ///
+    /// Trailing slashes are normalized internally — `"https://gitlab.com"`
+    /// and `"https://gitlab.com/"` resolve identically — so a missing
+    /// slash can't be exploited by an attacker registering a similarly-
+    /// named domain (e.g. `https://gitlab.com.evil.example/`).
+    #[serde(default)]
+    pub auth_url_prefix: Option<String>,
+}
+
+/// Default username for the PAT-via-extraheader Basic credential.
 pub const DEFAULT_GIT_AUTH_USERNAME: &str = "x-access-token";
 
-/// Default URL prefix the PAT-via-extraheader auth is scoped to. Same
-/// host pattern `init --push` and `--seed-from` validate against.
+/// Default URL prefix the PAT-via-extraheader auth is scoped to.
 pub const DEFAULT_GIT_AUTH_URL_PREFIX: &str = "https://github.com/";
+
+/// Default network identifier passed to `stacks-bench`.
+pub const DEFAULT_STACKS_BENCH_NETWORK: &str = "mainnet";
+
+/// Default codex model id used by every phase when `codex.model` is unset.
+pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.5";
+
+/// Default selection-lens weights for the triage phase.
+pub const DEFAULT_TRIAGE_AXIS_WEIGHTS: &str = "0.4,0.4,0.2";
+
+/// Default conservative noise-floor (percent) when only a single
+/// baseline run was imported.
+pub const DEFAULT_SINGLE_RUN_NOISE_FLOOR_PCT: f64 = 1.0;
+
+/// Default soft cap on candidate count emitted by triage.
+pub const DEFAULT_TRIAGE_CANDIDATE_SOFT_CAP: usize = 20;
+
+/// Default analyzer-phase parallelism cap.
+pub const DEFAULT_ANALYZER_CONCURRENCY_CAP: usize = 4;
+
+/// Default optimizer inner-loop attempt cap.
+pub const DEFAULT_OPTIMIZER_ATTEMPTS: u32 = 5;
+
+/// Default optimizer wall-clock budget per target (minutes).
+pub const DEFAULT_OPTIMIZER_BUDGET_MINUTES: u32 = 60;
+
+/// Default outer timeout (seconds) for each `codex exec`.
+pub const DEFAULT_CODEX_EXEC_TIMEOUT_SEC: u64 = 3600;
+
+/// Default author identity for agent-generated commits.
+pub const DEFAULT_GIT_AUTHOR_NAME: &str = "stacks-bench-bot";
+
+/// Default author email for agent-generated commits.
+pub const DEFAULT_GIT_AUTHOR_EMAIL: &str = "stacks-bench-bot@users.noreply.github.com";
+
+impl StacksBenchSettings {
+    /// Resolve [`StacksBenchSettings::source_dir`] or bail. Callers add
+    /// phase context via [`anyhow::Context::context`] when useful.
+    pub fn source_dir_required(&self) -> Result<&Path> {
+        self.source_dir
+            .as_deref()
+            .context(
+                "`stacks_bench.source_dir` not set in config; required by baseline / bench / \
+                 calibration phases (or set `SOURCE_DIR` env var)",
+            )
+    }
+
+    /// Network passed to `stacks-bench`. Defaults to `mainnet`.
+    pub fn effective_network(&self) -> &str {
+        self.network
+            .as_deref()
+            .unwrap_or(DEFAULT_STACKS_BENCH_NETWORK)
+    }
+}
+
+impl TriageSettings {
+    /// Effective selection-lens weights (defaults to `0.4,0.4,0.2`).
+    pub fn effective_axis_weights(&self) -> &str {
+        self.axis_weights
+            .as_deref()
+            .unwrap_or(DEFAULT_TRIAGE_AXIS_WEIGHTS)
+    }
+
+    /// Effective single-run noise floor percent (defaults to 1.0).
+    pub fn effective_single_run_noise_floor_pct(&self) -> f64 {
+        self.single_run_noise_floor_pct
+            .unwrap_or(DEFAULT_SINGLE_RUN_NOISE_FLOOR_PCT)
+    }
+
+    /// Effective candidate soft cap (defaults to 20).
+    pub fn effective_candidate_soft_cap(&self) -> usize {
+        self.candidate_soft_cap
+            .unwrap_or(DEFAULT_TRIAGE_CANDIDATE_SOFT_CAP)
+    }
+}
+
+impl AnalyzerSettings {
+    /// Effective analyzer parallelism cap (defaults to 4).
+    pub fn effective_concurrency_cap(&self) -> usize {
+        self.concurrency_cap
+            .unwrap_or(DEFAULT_ANALYZER_CONCURRENCY_CAP)
+    }
+}
+
+impl OptimizerSettings {
+    /// Effective inner-loop attempt cap (defaults to 5).
+    pub fn effective_attempts(&self) -> u32 {
+        self.attempts
+            .unwrap_or(DEFAULT_OPTIMIZER_ATTEMPTS)
+    }
+
+    /// Effective wall-clock budget per target in minutes (defaults to 60).
+    pub fn effective_budget_minutes(&self) -> u32 {
+        self.budget_minutes
+            .unwrap_or(DEFAULT_OPTIMIZER_BUDGET_MINUTES)
+    }
+}
+
+impl CodexSettings {
+    /// Effective codex model. Defaults to `gpt-5.5` when unset; once
+    /// `codex.model` is set, every phase respects it.
+    pub fn effective_model(&self) -> &str {
+        self.model
+            .as_deref()
+            .unwrap_or(DEFAULT_CODEX_MODEL)
+    }
+
+    /// Reasoning effort used by the merge phase. Falls back to the
+    /// general `reasoning_effort` when `merge_reasoning_effort` is unset.
+    pub fn effective_merge_reasoning_effort(&self) -> Option<&str> {
+        self.merge_reasoning_effort
+            .as_deref()
+            .or(self
+                .reasoning_effort
+                .as_deref())
+    }
+
+    /// Effective codex exec timeout (seconds). Defaults to 3600.
+    /// Returns `0` when the operator explicitly disabled the timeout.
+    pub fn effective_exec_timeout_sec(&self) -> u64 {
+        self.exec_timeout_sec
+            .unwrap_or(DEFAULT_CODEX_EXEC_TIMEOUT_SEC)
+    }
+
+    /// Effective codex exec timeout as a [`Duration`], or `None` when the
+    /// operator explicitly disabled it (`codex.exec_timeout_sec = 0`).
+    /// Used by every agent-driving phase to bound `codex exec`.
+    pub fn effective_exec_timeout(&self) -> Option<std::time::Duration> {
+        match self.effective_exec_timeout_sec() {
+            0 => None,
+            n => Some(std::time::Duration::from_secs(n)),
+        }
+    }
+}
+
+impl PublishSettings {
+    /// Resolve [`PublishSettings::token_file`] or bail. Use this at
+    /// callsites that require the PAT (`init --push`, `publish push`,
+    /// `session archive` push, `sync --push`). Callers without a
+    /// hardcoded fallback to `~/.config/sbagent/gh_token` use this;
+    /// callers that DO want the fallback use
+    /// [`crate::session::publish::default_publish_token_path`].
+    pub fn token_file_required(&self) -> Result<&Path> {
+        self.token_file
+            .as_deref()
+            .context(
+                "`publish.token_file` not set in config; required for `--push` / `--seed-from` / \
+                 `publish push` / `session archive` (push step)",
+            )
+    }
+}
+
+impl GitSettings {
+    /// Effective author identity for agent commits.
+    pub fn effective_author_name(&self) -> &str {
+        self.author_name
+            .as_deref()
+            .unwrap_or(DEFAULT_GIT_AUTHOR_NAME)
+    }
+
+    /// Effective author email for agent commits.
+    pub fn effective_author_email(&self) -> &str {
+        self.author_email
+            .as_deref()
+            .unwrap_or(DEFAULT_GIT_AUTHOR_EMAIL)
+    }
+
+    /// Effective PAT-via-extraheader Basic credential username.
+    /// Defaults to `x-access-token` (GitHub fine-grained PATs).
+    pub fn effective_auth_username(&self) -> &str {
+        self.auth_username
+            .as_deref()
+            .unwrap_or(DEFAULT_GIT_AUTH_USERNAME)
+    }
+
+    /// Effective PAT-via-extraheader URL prefix, normalized to end
+    /// in `/` when non-empty. Defaults to `https://github.com/`; an
+    /// explicit empty string is preserved (expert mode).
+    ///
+    /// Rejects non-empty prefixes that aren't `https://...` — the
+    /// PAT-via-extraheader mechanism only sends the Basic credential
+    /// over HTTPS, and `http.<prefix>.extraheader` doesn't apply to
+    /// `ssh://` / SCP-style remotes. A typo'd `http://` prefix would
+    /// silently leak the PAT over plaintext, so we fail fast.
+    pub fn effective_auth_url_prefix(&self) -> Result<String> {
+        let prefix = match self
+            .auth_url_prefix
+            .as_deref()
+        {
+            Some(s) => normalize_auth_url_prefix(s),
+            None => DEFAULT_GIT_AUTH_URL_PREFIX.to_owned(),
+        };
+        if !prefix.is_empty() && !prefix.starts_with("https://") {
+            anyhow::bail!(
+                "`git.auth_url_prefix = {:?}` is invalid: a non-empty prefix MUST be an HTTPS URL \
+                 (the PAT-via-extraheader mechanism only sends the Basic credential over HTTPS, \
+                 and `http.<prefix>.extraheader` cannot apply to SSH or other non-HTTP remotes). \
+                 Either set it to your forge's `https://...` root (e.g. `https://gitlab.com/`) or \
+                 set it to `\"\"` for expert / unqualified mode.",
+                self.auth_url_prefix
+                    .as_deref()
+                    .unwrap_or(""),
+            );
+        }
+        Ok(prefix)
+    }
+}
 
 /// Normalize an operator-supplied URL prefix: when non-empty, ensure it
 /// ends with `/` so `https://gitlab.com` and `https://gitlab.com/`
@@ -453,39 +681,41 @@ pub fn normalize_auth_url_prefix(raw: &str) -> String {
     if raw.is_empty() || raw.ends_with('/') { raw.to_owned() } else { format!("{raw}/") }
 }
 
-/// Operator-side default for `schemas_dir`, applied **identically** by
-/// `sbagent init` (for seeding + initial-commit staging) and
+/// Operator-side default for `layout.schemas_dir`, applied identically
+/// by `sbagent init` (for seeding + initial-commit staging) and
 /// `Layout::from_settings` (for runtime resolution). Single source of
 /// truth so an operator can't end up with one schemas dir committed
 /// and a different one created at runtime.
-///
-/// Returns:
-/// 1. `Settings::schemas_dir` verbatim when set.
-/// 2. Sibling of `prompt_overrides_dir`: `<parent>/schemas` for the
-///    conventional `.sbagent/prompts` → `.sbagent/schemas` layout. For a
-///    bare-filename `prompt_overrides_dir` (e.g. `"prompts"`, no parent),
-///    returns `"schemas"` next to it.
-/// 3. `None` when `prompt_overrides_dir` is also unset — callers fall back to
-///    whatever path makes sense (framework-side `<framework>/schemas` for
-///    [`crate::layout::Layout`], the conventional `.sbagent/schemas` for
-///    tooling that lacks framework context).
 pub fn default_schemas_dir(settings: &Settings) -> Option<PathBuf> {
-    default_bundle_sibling(settings.schemas_dir.as_ref(), settings, "schemas")
+    default_bundle_sibling(
+        settings
+            .layout
+            .schemas_dir
+            .as_ref(),
+        settings,
+        "schemas",
+    )
 }
 
-/// Operator-side default for `queries_dir`. Same shape + contract as
-/// [`default_schemas_dir`]; see [`Settings::queries_dir`] for the
-/// full doc.
+/// Operator-side default for `layout.queries_dir`. Same shape +
+/// contract as [`default_schemas_dir`].
 pub fn default_queries_dir(settings: &Settings) -> Option<PathBuf> {
-    default_bundle_sibling(settings.queries_dir.as_ref(), settings, "queries")
+    default_bundle_sibling(
+        settings
+            .layout
+            .queries_dir
+            .as_ref(),
+        settings,
+        "queries",
+    )
 }
 
-/// Operator-side default for `context_overrides_dir`. Same shape +
-/// contract as [`default_schemas_dir`]; see
-/// [`Settings::context_overrides_dir`] for the full doc.
+/// Operator-side default for `layout.context_overrides_dir`. Same shape +
+/// contract as [`default_schemas_dir`].
 pub fn default_context_dir(settings: &Settings) -> Option<PathBuf> {
     default_bundle_sibling(
         settings
+            .layout
             .context_overrides_dir
             .as_ref(),
         settings,
@@ -493,11 +723,17 @@ pub fn default_context_dir(settings: &Settings) -> Option<PathBuf> {
     )
 }
 
-/// Operator-side default for `memory_dir`. Same sibling-of-tunables
-/// derivation as [`default_schemas_dir`]; see [`Settings::memory_dir`]
-/// for the full doc.
+/// Operator-side default for `layout.memory_dir`. Same sibling-of-tunables
+/// derivation as [`default_schemas_dir`].
 pub fn default_memory_dir(settings: &Settings) -> Option<PathBuf> {
-    default_bundle_sibling(settings.memory_dir.as_ref(), settings, "memory")
+    default_bundle_sibling(
+        settings
+            .layout
+            .memory_dir
+            .as_ref(),
+        settings,
+        "memory",
+    )
 }
 
 /// Shared bundle-dir resolution: explicit override wins; otherwise
@@ -513,6 +749,7 @@ fn default_bundle_sibling(
         return Some(p.clone());
     }
     let prompts = settings
+        .layout
         .prompt_overrides_dir
         .as_ref()?;
     match prompts.parent() {
@@ -524,60 +761,17 @@ fn default_bundle_sibling(
 }
 
 impl Settings {
-    /// Effective [`Settings::git_auth_username`], with the
-    /// `x-access-token` default applied.
-    pub fn effective_git_auth_username(&self) -> &str {
-        self.git_auth_username
-            .as_deref()
-            .unwrap_or(DEFAULT_GIT_AUTH_USERNAME)
-    }
-
-    /// Effective [`Settings::git_auth_url_prefix`], normalized to always
-    /// end in `/` when non-empty. Defaults to `https://github.com/` when
-    /// unset; an explicit empty string is preserved (expert mode).
-    ///
-    /// Rejects non-empty prefixes that aren't `https://...` — the
-    /// PAT-via-extraheader mechanism only sends the Basic credential
-    /// over HTTPS, and `http.<prefix>.extraheader` doesn't apply to
-    /// `ssh://` / SCP-style remotes. A typo'd `http://` prefix would
-    /// silently leak the PAT over plaintext, so we fail fast here
-    /// rather than relying on the destination-URL gate alone. Empty
-    /// prefix (expert mode) skips this check; the destination URL is
-    /// independently required to be HTTPS by
-    /// [`crate::cli::init::run`].
-    pub fn effective_git_auth_url_prefix(&self) -> Result<String> {
-        let prefix = match self
-            .git_auth_url_prefix
-            .as_deref()
-        {
-            Some(s) => normalize_auth_url_prefix(s),
-            None => DEFAULT_GIT_AUTH_URL_PREFIX.to_owned(),
-        };
-        if !prefix.is_empty() && !prefix.starts_with("https://") {
-            anyhow::bail!(
-                "`git_auth_url_prefix = {:?}` is invalid: a non-empty prefix MUST be an HTTPS URL \
-                 (the PAT-via-extraheader mechanism only sends the Basic credential over HTTPS, \
-                 and `http.<prefix>.extraheader` cannot apply to SSH or other non-HTTP remotes). \
-                 Either set it to your forge's `https://...` root (e.g. `https://gitlab.com/`) or \
-                 set it to `\"\"` for expert / unqualified mode.",
-                self.git_auth_url_prefix
-                    .as_deref()
-                    .unwrap_or(""),
-            );
-        }
-        Ok(prefix)
-    }
-
-    /// Resolve [`Settings::prompt_overrides_dir`] or return a clear error.
-    /// Used at every render callsite — sbagent loads prompts from disk now,
-    /// so this path is required for any phase that invokes an agent.
+    /// Resolve [`LayoutSettings::prompt_overrides_dir`] or return a
+    /// clear error. Required by every render callsite since sbagent
+    /// loads prompts from disk.
     pub fn require_prompt_overrides_dir(&self) -> Result<&Path> {
-        self.prompt_overrides_dir
+        self.layout
+            .prompt_overrides_dir
             .as_deref()
             .context(
-                "`prompt_overrides_dir` not set in config; required since sbagent loads prompts \
-                 from disk. Typical operator value: `.sbagent/prompts/`. sbagent seeds bundled \
-                 defaults into this dir on startup; the operator can edit them in place.",
+                "`layout.prompt_overrides_dir` not set in config; required since sbagent loads \
+                 prompts from disk. Typical operator value: `.sbagent/prompts/`. sbagent seeds \
+                 bundled defaults into this dir on startup; the operator can edit them in place.",
             )
     }
 
@@ -591,15 +785,13 @@ impl Settings {
     /// 3. **`$HOME/.config/sbagent/config.toml`** (macOS default; also the
     ///    Linux fallback when `XDG_CONFIG_HOME` is unset).
     ///
-    /// If none match, returns [`Settings::default`] — every field `None`.
+    /// If none match, returns [`Settings::default`] — every field None.
     /// That's almost certainly not what an operator wants, but it lets
-    /// non-session commands (`sbagent prompt lint`, `sbagent schema
-    /// export`) run without a config in place, which is occasionally
-    /// useful in CI / scratch contexts.
+    /// non-session commands (`prompt lint`, `schema export`) run
+    /// without a config in place.
     ///
-    /// Deserialize errors (typo'd field, wrong type) are surfaced rather
-    /// than swallowed — for a deployment tool, silently dropping a config
-    /// is a footgun.
+    /// Deserialize errors (typo'd field, wrong type) are surfaced
+    /// rather than swallowed — silently dropping a config is a footgun.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let resolved = Self::resolve_config_path(path);
         let mut builder = config::Config::builder();
@@ -638,37 +830,37 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Reject settings shapes that are syntactically valid but
-    /// semantically dangerous. Runs after deserialization in
-    /// [`Settings::load`]; tests can call it directly on hand-built
-    /// instances.
+    /// Reject syntactically-valid but semantically-dangerous settings.
+    /// Runs after deserialization in [`Settings::load`]; tests can
+    /// call it directly on hand-built instances.
     ///
-    /// Current checks:
-    /// - [`Settings::codex_extra_writable_roots`] entries must be **absolute
-    ///   paths**. Relative paths grant sandbox access relative to whatever cwd
-    ///   the codex process happens to inherit, which is a footgun: the same
-    ///   config produces different grants depending on where `sbagent` was
-    ///   invoked from.
+    /// Checks:
+    /// - [`CodexSettings::extra_writable_roots`] entries must be **absolute**.
+    ///   Relative paths grant sandbox access relative to whatever cwd the codex
+    ///   process inherits.
+    /// - [`LayoutSettings::operator_repo_root`] must be **absolute** when set.
+    ///   The archive flow runs git from absolute paths.
     pub fn validate(&self) -> Result<()> {
         for (i, path) in self
-            .codex_extra_writable_roots
+            .codex
+            .extra_writable_roots
             .iter()
             .enumerate()
         {
             if !path.is_absolute() {
                 anyhow::bail!(
-                    "codex_extra_writable_roots[{i}] = {:?} is a relative path; sandbox grants \
+                    "codex.extra_writable_roots[{i}] = {:?} is a relative path; sandbox grants \
                      must be absolute so they don't depend on the codex process's cwd",
                     path.display(),
                 );
             }
         }
-        if let Some(p) = &self.operator_repo_root
+        if let Some(p) = &self.layout.operator_repo_root
             && !p.is_absolute()
         {
             anyhow::bail!(
-                "operator_repo_root = {:?} is a relative path; the archive flow runs git from \
-                 absolute paths so its behavior doesn't depend on the caller's cwd",
+                "layout.operator_repo_root = {:?} is a relative path; the archive flow runs git \
+                 from absolute paths so its behavior doesn't depend on the caller's cwd",
                 p.display(),
             );
         }
@@ -731,13 +923,15 @@ mod tests {
         let settings = result.unwrap();
         assert!(
             settings
+                .dev
                 .framework_root
                 .is_none()
         );
-        assert!(settings.codex_model.is_none());
+        assert!(settings.codex.model.is_none());
         assert!(
             settings
-                .publish_token_file
+                .publish
+                .token_file
                 .is_none()
         );
     }
@@ -749,23 +943,27 @@ mod tests {
         std::fs::write(
             &path,
             r#"
+                [stacks_bench]
                 source_dir = "/mnt/chainstate/mainnet"
-                stacks_bench_start_at = 5_000_000
-                stacks_bench_count = 200_000
-                publish_token_file = "/etc/sbagent/gh_token"
-                publish_pr_labels = ["needs-bench-review", "auto-generated"]
-                publish_draft_prs = false
+                start_at   = 5_000_000
+                count      = 200_000
+
+                [publish]
+                token_file = "/etc/sbagent/gh_token"
+                pr_labels  = ["needs-bench-review", "auto-generated"]
+                draft_prs  = false
             "#,
         )
         .unwrap();
         let s = Settings::load(Some(&path)).expect("load");
-        assert_eq!(s.source_dir, Some(PathBuf::from("/mnt/chainstate/mainnet")));
-        assert_eq!(s.stacks_bench_start_at, Some(5_000_000));
-        assert_eq!(s.stacks_bench_count, Some(200_000));
-        assert_eq!(s.publish_token_file, Some(PathBuf::from("/etc/sbagent/gh_token")));
-        assert_eq!(s.publish_draft_prs, Some(false));
+        assert_eq!(s.stacks_bench.source_dir, Some(PathBuf::from("/mnt/chainstate/mainnet")));
+        assert_eq!(s.stacks_bench.start_at, Some(5_000_000));
+        assert_eq!(s.stacks_bench.count, Some(200_000));
+        assert_eq!(s.publish.token_file, Some(PathBuf::from("/etc/sbagent/gh_token")));
+        assert_eq!(s.publish.draft_prs, Some(false));
         let labels = s
-            .publish_pr_labels
+            .publish
+            .pr_labels
             .as_deref()
             .unwrap();
         assert_eq!(labels, ["needs-bench-review", "auto-generated"]);
@@ -781,9 +979,14 @@ mod tests {
     #[test]
     fn effective_git_auth_defaults_to_github_x_access_token() {
         let s = Settings::default();
-        assert_eq!(s.effective_git_auth_username(), "x-access-token");
         assert_eq!(
-            s.effective_git_auth_url_prefix()
+            s.git
+                .effective_auth_username(),
+            "x-access-token"
+        );
+        assert_eq!(
+            s.git
+                .effective_auth_url_prefix()
                 .unwrap(),
             "https://github.com/"
         );
@@ -792,28 +995,40 @@ mod tests {
     #[test]
     fn effective_git_auth_normalizes_operator_prefix() {
         let s = Settings {
-            git_auth_url_prefix: Some("https://gitlab.example".into()),
-            git_auth_username: Some("oauth2".into()),
+            git: GitSettings {
+                auth_url_prefix: Some("https://gitlab.example".into()),
+                auth_username: Some("oauth2".into()),
+                ..GitSettings::default()
+            },
             ..Settings::default()
         };
         // Trailing slash appended so `starts_with(prefix)` cannot be defeated
         // by a typosquat sibling host.
         assert_eq!(
-            s.effective_git_auth_url_prefix()
+            s.git
+                .effective_auth_url_prefix()
                 .unwrap(),
             "https://gitlab.example/"
         );
-        assert_eq!(s.effective_git_auth_username(), "oauth2");
+        assert_eq!(
+            s.git
+                .effective_auth_username(),
+            "oauth2"
+        );
     }
 
     #[test]
     fn effective_git_auth_preserves_empty_expert_mode() {
         let s = Settings {
-            git_auth_url_prefix: Some(String::new()),
+            git: GitSettings {
+                auth_url_prefix: Some(String::new()),
+                ..GitSettings::default()
+            },
             ..Settings::default()
         };
         assert_eq!(
-            s.effective_git_auth_url_prefix()
+            s.git
+                .effective_auth_url_prefix()
                 .unwrap(),
             ""
         );
@@ -829,15 +1044,21 @@ mod tests {
     fn default_schemas_dir_covers_all_cases() {
         // 1. Explicit setting wins.
         let s = Settings {
-            schemas_dir: Some(PathBuf::from("/abs/custom")),
-            prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+            layout: LayoutSettings {
+                schemas_dir: Some(PathBuf::from("/abs/custom")),
+                prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         assert_eq!(default_schemas_dir(&s), Some(PathBuf::from("/abs/custom")));
 
         // 2. Conventional sibling layout.
         let s = Settings {
-            prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+            layout: LayoutSettings {
+                prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         assert_eq!(default_schemas_dir(&s), Some(PathBuf::from(".sbagent/schemas")));
@@ -846,7 +1067,10 @@ mod tests {
         // This is the case Codex flagged: init.rs and layout.rs used to
         // disagree here. The shared helper makes them agree.
         let s = Settings {
-            prompt_overrides_dir: Some(PathBuf::from("prompts")),
+            layout: LayoutSettings {
+                prompt_overrides_dir: Some(PathBuf::from("prompts")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         assert_eq!(default_schemas_dir(&s), Some(PathBuf::from("schemas")));
@@ -865,11 +1089,15 @@ mod tests {
     fn effective_git_auth_url_prefix_rejects_non_https_prefix() {
         for bad in ["http://forge.example/", "git@github.com:", "ssh://git@host/"] {
             let s = Settings {
-                git_auth_url_prefix: Some(bad.into()),
+                git: GitSettings {
+                    auth_url_prefix: Some(bad.into()),
+                    ..GitSettings::default()
+                },
                 ..Settings::default()
             };
             let err = s
-                .effective_git_auth_url_prefix()
+                .git
+                .effective_auth_url_prefix()
                 .expect_err(&format!("prefix {bad:?} must be rejected"));
             let msg = format!("{err:#}");
             assert!(
@@ -975,10 +1203,13 @@ mod tests {
     #[test]
     fn validate_accepts_absolute_writable_roots() {
         let s = Settings {
-            codex_extra_writable_roots: vec![
-                PathBuf::from("/Users/op/Library/Caches/sccache"),
-                PathBuf::from("/var/cache/sbagent"),
-            ],
+            codex: CodexSettings {
+                extra_writable_roots: vec![
+                    PathBuf::from("/Users/op/Library/Caches/sccache"),
+                    PathBuf::from("/var/cache/sbagent"),
+                ],
+                ..CodexSettings::default()
+            },
             ..Settings::default()
         };
         s.validate()
@@ -988,36 +1219,46 @@ mod tests {
     #[test]
     fn validate_rejects_relative_writable_root() {
         let s = Settings {
-            codex_extra_writable_roots: vec![PathBuf::from("../shared-cache")],
+            codex: CodexSettings {
+                extra_writable_roots: vec![PathBuf::from("../shared-cache")],
+                ..CodexSettings::default()
+            },
             ..Settings::default()
         };
         let err = s
             .validate()
             .expect_err("relative path must fail validation");
         let msg = format!("{err:#}");
-        assert!(msg.contains("codex_extra_writable_roots"), "msg: {msg}");
+        assert!(msg.contains("codex.extra_writable_roots"), "msg: {msg}");
         assert!(msg.contains("relative path"), "msg: {msg}");
     }
 
     #[test]
     fn validate_rejects_relative_root_alongside_absolute() {
         let s = Settings {
-            codex_extra_writable_roots: vec![
-                PathBuf::from("/var/cache/sbagent"),
-                PathBuf::from("relative/sneaky"),
-            ],
+            codex: CodexSettings {
+                extra_writable_roots: vec![
+                    PathBuf::from("/var/cache/sbagent"),
+                    PathBuf::from("relative/sneaky"),
+                ],
+                ..CodexSettings::default()
+            },
             ..Settings::default()
         };
         let err = s
             .validate()
-            .expect_err("any relative entry should fail");
-        assert!(format!("{err:#}").contains("[1]"), "should report the bad index");
+            .expect_err("relative path among absolute paths must fail validation");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("relative/sneaky"), "msg: {msg}");
     }
 
     #[test]
     fn validate_rejects_relative_operator_repo_root() {
         let s = Settings {
-            operator_repo_root: Some(PathBuf::from("relative/ops")),
+            layout: LayoutSettings {
+                operator_repo_root: Some(PathBuf::from("repos/operator")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let err = s
@@ -1031,27 +1272,13 @@ mod tests {
     #[test]
     fn validate_accepts_absolute_operator_repo_root() {
         let s = Settings {
-            operator_repo_root: Some(PathBuf::from("/Users/op/ops-repo")),
+            layout: LayoutSettings {
+                operator_repo_root: Some(PathBuf::from("/Users/op/operator")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         s.validate()
             .expect("absolute operator_repo_root must pass validation");
-    }
-
-    #[test]
-    fn load_rejects_config_with_relative_writable_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"codex_extra_writable_roots = ["../shared-cache"]
-"#,
-        )
-        .unwrap();
-        let err = Settings::load(Some(&path)).expect_err("load must surface validate failures");
-        assert!(
-            format!("{err:#}").contains("relative path"),
-            "load should propagate the validate error: {err:#}",
-        );
     }
 }

@@ -107,7 +107,7 @@ pub struct Layout {
     pub framework: Option<FrameworkDir>,
     /// Operator's on-disk mirror of the bundled JSON Schemas
     /// (`.sbagent/schemas/` by convention). Resolution: explicit
-    /// `Settings::schemas_dir` → sibling of `prompt_overrides_dir` →
+    /// `LayoutSettings::schemas_dir` → sibling of `prompt_overrides_dir` →
     /// `<framework>/schemas`. Always populated when `Layout` exists,
     /// so consumer code never has to bail on a missing schemas dir.
     /// The dir itself may not exist on disk yet (init/sync materialize it).
@@ -125,7 +125,7 @@ pub struct Layout {
     /// markdown file paired with a TOML sidecar declaring which phases
     /// may surface it. Same resolution rules as [`Layout::schemas_dir`]
     /// and [`Layout::queries_dir`]: explicit
-    /// `Settings::context_overrides_dir` → sibling of
+    /// `LayoutSettings::context_overrides_dir` → sibling of
     /// `prompt_overrides_dir` → `<framework>/context` →
     /// conventional `.sbagent/context`. Phase orchestrators consult
     /// [`crate::context::paths_for_phase`] to resolve which docs apply.
@@ -146,7 +146,7 @@ pub struct Layout {
     /// `None` here is *not* an error at startup; only `sbagent session
     /// archive` (and the `--archive` flag on `session run`) require it.
     /// Callers that need it use [`Layout::require_operator_repo_root`].
-    /// Resolution: explicit [`Settings::operator_repo_root`] → parent of
+    /// Resolution: explicit [`LayoutSettings::operator_repo_root`] → parent of
     /// `sessions_root` (the conventional `<operator>/sessions/` layout)
     /// → `None`.
     pub operator_repo_root: Option<PathBuf>,
@@ -172,13 +172,13 @@ pub struct Layout {
     /// callers that need it call [`Layout::require_base`].
     pub base: Option<PathBuf>,
     /// Optional `--shadow-dir-root <DIR>` passed to `stacks-bench bench
-    /// run`. See [`crate::settings::Settings::stacks_bench_shadow_dir`].
+    /// run`. See [`crate::settings::StacksBenchSettings::shadow_dir`].
     /// Always absolutized at Layout construction; `None` means stacks-bench
     /// falls back to its default (the source dir's parent).
     pub stacks_bench_shadow_dir: Option<PathBuf>,
     /// Optional root for mutable agent scratch state (per-target git
     /// clones, etc.). See
-    /// [`crate::settings::Settings::agent_workspace_root`]. Always
+    /// [`crate::settings::LayoutSettings::agent_workspace_root`]. Always
     /// absolutized at Layout construction; `None` means optimizer
     /// checkouts fall back to the legacy
     /// `<sessions_root>/<id>/worktrees/` path.
@@ -204,10 +204,11 @@ impl Layout {
         self.operator_repo_root
             .as_deref()
             .context(
-                "`operator_repo_root` not set in settings and could not be auto-derived (no \
-                 parent of `sessions_root`). The archive flow needs this — the git repo that will \
-                 hold `sessions.jsonl` on `main` and `session/<id>` write-once branches. Set \
-                 `operator_repo_root` in config.toml to the absolute path of your operator repo.",
+                "`layout.operator_repo_root` not set in settings and could not be auto-derived \
+                 (no parent of `layout.sessions_root`). The archive flow needs this — the git \
+                 repo that will hold `sessions.jsonl` on `main` and `session/<id>` write-once \
+                 branches. Set `layout.operator_repo_root` in config.toml to the absolute path of \
+                 your operator repo.",
             )
     }
 
@@ -220,10 +221,10 @@ impl Layout {
         self.framework
             .as_ref()
             .context(
-                "`framework_root` not set in settings and could not be auto-derived (no ancestor \
-                 dir with `prompts/` + `schemas/`). This command needs the tool's source checkout \
-                 — set `framework_root` in config to your local `stacks-bench-agent` clone, or \
-                 run from inside it. Operator commands don't need this; schemas live in \
+                "`dev.framework_root` not set in settings and could not be auto-derived (no \
+                 ancestor dir with `prompts/` + `schemas/`). This command needs the tool's source \
+                 checkout — set `dev.framework_root` in config to your local `stacks-bench-agent` \
+                 clone, or run from inside it. Operator commands don't need this; schemas live in \
                  `.sbagent/schemas/` (seeded by `sbagent init` / `sbagent sync`).",
             )
     }
@@ -242,6 +243,7 @@ impl Layout {
         // `--out` and the typed-model-vs-committed drift gate care.
         let framework = absolutize_opt(
             settings
+                .dev
                 .framework_root
                 .clone()
                 .or_else(default_framework_root),
@@ -264,6 +266,7 @@ impl Layout {
         // working tree on every branch switch.
         let agent_workspace_root = absolutize_opt(
             settings
+                .layout
                 .agent_workspace_root
                 .clone(),
         )?;
@@ -271,10 +274,12 @@ impl Layout {
         // "we defaulted it" — only the explicit case feeds the
         // operator_repo_root parent fallback below.
         let sessions_root_explicit = settings
+            .layout
             .sessions_root
             .is_some();
         let sessions_root = absolutize(
             settings
+                .layout
                 .sessions_root
                 .clone()
                 .or_else(|| {
@@ -296,6 +301,7 @@ impl Layout {
         // error.
         let operator_repo_root = absolutize_opt(
             settings
+                .layout
                 .operator_repo_root
                 .clone(),
         )?
@@ -310,7 +316,8 @@ impl Layout {
         });
         let stacks_bench_data_dir = absolutize(
             settings
-                .stacks_bench_data_dir
+                .stacks_bench
+                .data_dir
                 .clone()
                 .unwrap_or_else(|| {
                     writable_anchor
@@ -325,6 +332,7 @@ impl Layout {
         // (there's no use case for split locations).
         let lock_dir = absolutize(
             settings
+                .layout
                 .lock_dir
                 .clone()
                 .unwrap_or_else(|| {
@@ -338,10 +346,16 @@ impl Layout {
         // `base` may legitimately be `None` here — unrelated commands
         // (e.g. `sbagent prompt lint`) don't need a stacks-core checkout.
         // Callers that DO need it use `Layout::require_base`.
-        let base = absolutize_opt(settings.base.clone())?;
+        let base = absolutize_opt(
+            settings
+                .stacks_core
+                .base
+                .clone(),
+        )?;
         let stacks_bench_shadow_dir = absolutize_opt(
             settings
-                .stacks_bench_shadow_dir
+                .stacks_bench
+                .shadow_dir
                 .clone(),
         )?;
         // `agent_workspace_root` is already resolved above (see the
@@ -386,37 +400,44 @@ impl Layout {
                 })
                 .unwrap_or_else(|| PathBuf::from(".sbagent").join("context")),
         )?;
-        // Memory dir derivation: same sibling-of-tunables rule as
-        // schemas/queries/context, except the natural sibling is
+        // Memory dir derivation: explicit `layout.memory_dir` wins
+        // verbatim. Otherwise apply the sibling-of-tunables rule used
+        // by schemas/queries/context, except the natural sibling is
         // `<operator>/memory/` (top-level, not under `.sbagent/`).
         // When `prompt_overrides_dir = ".sbagent/prompts"`, the
-        // sibling helper yields `.sbagent/memory` which is wrong —
-        // we want `<operator>/memory`. So when the helper returned
-        // a path under `.sbagent/`, climb one level up.
-        let memory_dir = absolutize({
-            let derived = crate::settings::default_memory_dir(settings);
-            let chosen = derived.as_ref().map(|p| {
-                // If we ended up under `.sbagent/memory`, lift to
-                // `<operator>/memory` instead.
-                if p.parent()
-                    .and_then(|pp| pp.file_name())
-                    .is_some_and(|n| n == ".sbagent")
-                {
-                    p.parent()
-                        .and_then(|pp| pp.parent())
-                        .map_or_else(|| PathBuf::from("memory"), |gp| gp.join("memory"))
-                } else {
-                    p.clone()
-                }
-            });
-            chosen
-                .or_else(|| {
-                    framework
-                        .as_deref()
-                        .map(|fw| fw.join("memory"))
-                })
-                .unwrap_or_else(|| PathBuf::from("memory"))
-        })?;
+        // sibling helper yields `.sbagent/memory`; lift to
+        // `<operator>/memory` for the derived case ONLY. (Lifting an
+        // operator's explicit `.sbagent/memory` choice would silently
+        // override the config.)
+        let memory_dir = absolutize(
+            if let Some(explicit) = settings
+                .layout
+                .memory_dir
+                .as_ref()
+            {
+                explicit.clone()
+            } else {
+                let derived = crate::settings::default_memory_dir(settings).map(|p| {
+                    if p.parent()
+                        .and_then(|pp| pp.file_name())
+                        .is_some_and(|n| n == ".sbagent")
+                    {
+                        p.parent()
+                            .and_then(|pp| pp.parent())
+                            .map_or_else(|| PathBuf::from("memory"), |gp| gp.join("memory"))
+                    } else {
+                        p
+                    }
+                });
+                derived
+                    .or_else(|| {
+                        framework
+                            .as_deref()
+                            .map(|fw| fw.join("memory"))
+                    })
+                    .unwrap_or_else(|| PathBuf::from("memory"))
+            },
+        )?;
         Ok(Self {
             framework: framework.map(FrameworkDir::new),
             schemas_dir,
@@ -538,7 +559,7 @@ fn default_framework_root() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Settings;
+    use crate::settings::{DevSettings, LayoutSettings, Settings};
 
     /// When `agent_workspace_root` is unset, optimizer checkouts fall
     /// back to the legacy `<sessions_root>/<id>/worktrees/` path so
@@ -552,9 +573,14 @@ mod tests {
         std::fs::create_dir_all(framework.join("schemas")).unwrap();
         let sessions = tmp.path().join("ses");
         let settings = Settings {
-            framework_root: Some(framework.clone()),
-            sessions_root: Some(sessions.clone()),
-            agent_workspace_root: None,
+            dev: DevSettings {
+                framework_root: Some(framework.clone()),
+            },
+            layout: LayoutSettings {
+                sessions_root: Some(sessions.clone()),
+                agent_workspace_root: None,
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -584,9 +610,14 @@ mod tests {
         let sessions = tmp.path().join("ses");
         let workspace = tmp.path().join("ws");
         let settings = Settings {
-            framework_root: Some(framework),
-            sessions_root: Some(sessions.clone()),
-            agent_workspace_root: Some(workspace.clone()),
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                sessions_root: Some(sessions.clone()),
+                agent_workspace_root: Some(workspace.clone()),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -623,7 +654,10 @@ mod tests {
         std::env::set_current_dir(&cwd).unwrap();
 
         let settings = Settings {
-            prompt_overrides_dir: Some(PathBuf::from("prompts")),
+            layout: LayoutSettings {
+                prompt_overrides_dir: Some(PathBuf::from("prompts")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let helper = crate::settings::default_schemas_dir(&settings).expect("Some");
@@ -652,10 +686,15 @@ mod tests {
         std::fs::create_dir_all(framework.join("prompts")).unwrap();
         std::fs::create_dir_all(framework.join("schemas")).unwrap();
         let settings = Settings {
-            framework_root: Some(framework),
-            sessions_root: Some(tmp.path().join("ses")),
-            // Relative path — must come out absolute.
-            agent_workspace_root: Some(PathBuf::from("relative/ws")),
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                sessions_root: Some(tmp.path().join("ses")),
+                // Relative path — must come out absolute.
+                agent_workspace_root: Some(PathBuf::from("relative/ws")),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -680,9 +719,14 @@ mod tests {
         let sessions = tmp.path().join("ses");
         let explicit = tmp.path().join("ops-repo");
         let settings = Settings {
-            framework_root: Some(framework),
-            sessions_root: Some(sessions.clone()),
-            operator_repo_root: Some(explicit.clone()),
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                sessions_root: Some(sessions.clone()),
+                operator_repo_root: Some(explicit.clone()),
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -710,10 +754,15 @@ mod tests {
         std::fs::create_dir_all(framework.join("schemas")).unwrap();
         let workspace = tmp.path().join("ws");
         let settings = Settings {
-            framework_root: Some(framework),
-            sessions_root: None, // defaulted from agent_workspace_root
-            agent_workspace_root: Some(workspace),
-            operator_repo_root: None,
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                sessions_root: None, // defaulted from agent_workspace_root
+                agent_workspace_root: Some(workspace),
+                operator_repo_root: None,
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -739,9 +788,14 @@ mod tests {
         let operator = tmp.path().join("ops-repo");
         let sessions = operator.join("sessions");
         let settings = Settings {
-            framework_root: Some(framework),
-            sessions_root: Some(sessions),
-            operator_repo_root: None,
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                sessions_root: Some(sessions),
+                operator_repo_root: None,
+                ..LayoutSettings::default()
+            },
             ..Settings::default()
         };
         let layout = Layout::from_settings(&settings).expect("layout");
@@ -776,5 +830,75 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("operator_repo_root"), "got: {err}");
+    }
+
+    /// Explicit `layout.memory_dir = ".sbagent/memory"` must NOT be
+    /// silently rewritten to `<operator>/memory`. The `.sbagent` lift
+    /// rule applies to derived defaults only — an operator setting
+    /// the field explicitly opts into the literal path.
+    #[test]
+    fn explicit_memory_dir_under_sbagent_is_honored_verbatim() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let framework = tmp.path().join("framework");
+        std::fs::create_dir_all(framework.join("prompts")).unwrap();
+        std::fs::create_dir_all(framework.join("schemas")).unwrap();
+        let cwd = tmp.path();
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(cwd).unwrap();
+
+        let settings = Settings {
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+                memory_dir: Some(PathBuf::from(".sbagent/memory")),
+                ..LayoutSettings::default()
+            },
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        std::env::set_current_dir(prev_cwd).unwrap();
+
+        // Layout absolutizes against cwd; canonicalize because /tmp on
+        // macOS resolves through /private/tmp.
+        let expected = std::fs::canonicalize(cwd)
+            .unwrap_or_else(|_| cwd.to_path_buf())
+            .join(".sbagent")
+            .join("memory");
+        assert_eq!(layout.memory_dir, expected);
+    }
+
+    /// When `memory_dir` is unset and the derived path lands under
+    /// `.sbagent/memory`, the lift rule kicks in so memory ends up at
+    /// `<operator>/memory` (the conventional location for accumulated
+    /// bot knowledge — sibling to `.sbagent/`, not inside it).
+    #[test]
+    fn derived_memory_dir_lifts_out_of_sbagent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let framework = tmp.path().join("framework");
+        std::fs::create_dir_all(framework.join("prompts")).unwrap();
+        std::fs::create_dir_all(framework.join("schemas")).unwrap();
+        let cwd = tmp.path();
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(cwd).unwrap();
+
+        let settings = Settings {
+            dev: DevSettings {
+                framework_root: Some(framework),
+            },
+            layout: LayoutSettings {
+                prompt_overrides_dir: Some(PathBuf::from(".sbagent/prompts")),
+                ..LayoutSettings::default()
+            },
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        std::env::set_current_dir(prev_cwd).unwrap();
+
+        let expected = std::fs::canonicalize(cwd)
+            .unwrap_or_else(|_| cwd.to_path_buf())
+            .join("memory");
+        assert_eq!(layout.memory_dir, expected);
     }
 }
