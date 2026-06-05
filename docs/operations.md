@@ -5,9 +5,10 @@ Day-to-day running, observability, validation, recovery, and the raw
 
 ## After upgrading `sbagent`
 
-Prompts, JSON schemas, and SQL queries are embedded in the binary
-and seeded to `<operator>/.sbagent/{prompts,schemas,queries}/`. After
-a `just install` (or a fresh `cargo install`) pick up the new
+Prompts, JSON schemas, SQL queries, and reference context docs are
+embedded in the binary and seeded to
+`<operator>/.sbagent/{prompts,schemas,queries,context}/`. After a
+`just install` (or a fresh `cargo install`) pick up the new
 version's bundle:
 
 ```bash
@@ -112,8 +113,10 @@ phase to re-run:
 | `triage/candidates.json` or `triage/final-message.md` | `sbagent session triage run` |
 | `analysis/<family-id>/analysis.json` | `sbagent session analysis run` |
 | `merge/optimization-targets.json` or `merge/final-message.md` | `sbagent session analysis merge` |
+| `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the calibration step is inlined). |
 | `optimize/<target-id>/{implementation,abort,consensus-issue}.md` | `sbagent session optimize run` |
-| `optimize/<target-id>/run-N/bench-run.json` | `sbagent session bench run` |
+| `optimize/<target-id>/candidate-run-ids.json` or `optimize/<target-id>/<invocation-id>/bench-run.json` | `sbagent session bench run` |
+| `analyze/<target-id>/results-analysis.json` | `sbagent session analyze-results run` |
 | `finalize/summary.json` | `sbagent session finalize run` |
 
 Each agent's `conversation-id` is captured in its phase dir for later
@@ -127,7 +130,7 @@ To wipe a phase's artifacts before re-running, use the matching
 `clean` subcommand. Every phase that writes artifacts has one
 (`session baseline clean`, `session triage clean`, `session analysis
 clean`, `session optimize clean`, `session bench clean`, `session
-finalize clean`, `publish clean`).
+analyze-results clean`, `session finalize clean`, `publish clean`).
 
 ## No targets remaining: recovery flow
 
@@ -162,9 +165,9 @@ Recover by one of:
    and start a new session.
 3. **Update non-targets.md** — if analyzers keep rejecting candidates
    for the same novel reason, append it to
-   `<operator>/.sbagent/prompts/non-targets.md` so the next triage
-   pass excludes it earlier. `sbagent prompt lint` validates the file
-   after edits; no rebuild is needed since prompts render from disk.
+   `<operator>/.sbagent/context/non-targets.md` so the next triage
+   pass excludes it earlier. No rebuild is needed; the agents read
+   it at its absolute path each invocation.
 
 `finalize/summary.json`'s `next_targets_hint` exists specifically for
 `sbagent session finalize run` to leave a recommendation for which of
@@ -174,26 +177,36 @@ these the operator should try next.
 
 Each phase writes into its own subdir under `results/`. The
 `optimize/<target-id>/` dir is shared across Phase 2 (optimizer agent),
-Phase 3 (`run-N/bench-run.json` benchmark outputs), and Phase 5
-(`pr-writer-*` / `issue-writer-*` publish artifacts) — one audit folder
-per target with everything that happened to it.
+Phase 3 (per-invocation `<invocation-id>/bench-run.json` benchmark
+outputs), and Phase 5 (`pr-writer-*` / `issue-writer-*` publish
+artifacts) — one audit folder per target with everything that
+happened to it. Phase 1.8 calibration outputs live under
+`verify/<target-id>/`, mirroring Phase 3's per-invocation shape;
+Phase 3.5 results-analyzer verdicts under `analyze/<target-id>/`.
 
 ```text
-<operator>/sessions/<session-id>/results/
+<layout.agent_workspace_root>/sessions/<session-id>/results/
+  # (defaults to /private/tmp/sbagent-workspaces/sessions/<id>/ on macOS;
+  #  /var/tmp/sbagent-workspaces/sessions/<id>/ on Linux. Sits outside
+  #  the operator repo by design so branch switches can't wipe it —
+  #  see docs/session-archive.md.)
+  #
   # Phase 0: baseline (orchestrator-owned)
   baseline/
     bench-run.json
     bench-run.stderr.log
-    rerun.json
-    rerun.stderr.log
-    run-id                      # plain text: numeric id
-    rerun-id
+    rerun.json                  # copy of bench-run.json — Phase 0b runs
+    rerun.stderr.log            # ONE benchmark; rerun-id is aliased
+    run-id                      # plain text: numeric stacks-bench run id
+    rerun-id                    # plain text: same id as run-id (no second
+                                # bench run is taken — the single-run
+                                # noise floor is sourced from settings)
     bench-list.json
     profiler-hotspots.json
-    noise-floor-pct             # optional: written only by `baseline import`
-                                # as a single-run fallback (when run-id ==
-                                # rerun-id). `baseline run` derives the
-                                # floor from the (run, rerun) pair instead.
+    noise-floor-pct             # plain text: percent. Sourced from
+                                # `triage.single_run_noise_floor_pct`
+                                # (default 1.0). Both `baseline run` and
+                                # `baseline import` write it.
 
   # Phase 1: triage agent (cwd here, so drilldown CSVs land below)
   triage/
@@ -228,7 +241,16 @@ per target with everything that happened to it.
     optimization-targets.json   # schema: schemas/optimization-targets.schema.json
                                 # carries merged_from / convergence_count provenance
 
-  # Phase 2/3/5: per-target shared dir
+  # Phase 1.8: per-target baseline calibration (orchestrator-owned)
+  verify/
+    <target-id>/
+      baseline-run-ids.json     # InvocationRunIds: {"entries":[
+                                # {"invocation_id","run_id"}, ...]}
+      <invocation-id>/          # one per verification_replay.invocations[]
+        bench-run.json          # Phase 1.8 calibration output
+        bench-run.stderr.log
+
+  # Phase 2/3/3.5/5: per-target shared dir
   optimize/
     <target-id>/
       prompt.md                 # Phase 2 optimizer's rendered prompt
@@ -240,12 +262,10 @@ per target with everything that happened to it.
       nextest.stderr.log
       implementation.md         # OR abort.md OR consensus-issue.md
       side-observations.md      # optional, future-target evidence
-      run-ids                   # one numeric id per line
-      run-1/                    # Phase 3 candidate bench runs
-        bench-run.json
-        bench-run.stderr.log
-      run-2/
-        bench-run.json
+      candidate-run-ids.json    # InvocationRunIds, same shape as
+                                # verify/ above; written by Phase 3
+      <invocation-id>/          # one per VR.invocations[]
+        bench-run.json          # Phase 3 candidate bench output
         bench-run.stderr.log
       pr-writer-prompt.md       # Phase 5 publish artifacts (if shipped)
       pr-writer-events.jsonl
@@ -259,6 +279,21 @@ per target with everything that happened to it.
       issue-writer-final-message.md
       issue-title.txt
       issue-body.md
+
+  # Phase 3.5: per-target results-analyzer verdict
+  analyze/
+    <target-id>/
+      prompt.md
+      events.jsonl
+      stderr.log
+      final-message.md
+      conversation-id
+      results-analysis.json     # schema: schemas/results-analysis.schema.json
+                                # carries verdict + confidence +
+                                # per-invocation breakdown +
+                                # pr_body_summary (Phase 5 reads
+                                # verbatim into the PR body)
+      results-analysis.md       # operator-facing companion (short prose)
 
   # Phase 4: session summary
   finalize/
@@ -389,29 +424,27 @@ flock "$BENCH_LOCK" \
 
 BASELINE_RUN_ID=$(extract_run_id "$SESSION_DIR/baseline/bench-run.json")
 echo "$BASELINE_RUN_ID" > "$SESSION_DIR/baseline/run-id"
+
+# Phase 0b alias: rerun-id matches run-id, and rerun.json is a copy of
+# bench-run.json. No second benchmark is taken — the operator-side
+# `triage.single_run_noise_floor_pct` (default 1.0) supplies the
+# baseline noise floor instead.
+echo "$BASELINE_RUN_ID" > "$SESSION_DIR/baseline/rerun-id"
+cp "$SESSION_DIR/baseline/bench-run.json"        "$SESSION_DIR/baseline/rerun.json"
+cp "$SESSION_DIR/baseline/bench-run.stderr.log"  "$SESSION_DIR/baseline/rerun.stderr.log"
+printf '%s\n' "1.0" > "$SESSION_DIR/baseline/noise-floor-pct"
 ```
 
-### Baseline noise-check
-
-Run a second iteration of the baseline against the same code, via
-`bench rerun`, to bound the natural noise floor before comparing
-experiments:
-
-```bash
-flock "$BENCH_LOCK" \
-  cargo stacks-bench \
-    --db "$STACKS_BENCH_DATA_DIR" \
-    --json \
-    bench rerun \
-    --run-id "$BASELINE_RUN_ID" \
-    > "$SESSION_DIR/baseline/rerun.json" \
-    2> "$SESSION_DIR/baseline/rerun.stderr.log"
-```
-
-The delta between the baseline run and rerun is the per-host noise
-floor; experiment results should be compared against this, not
-against zero. `bench rerun` re-uses the original arguments by id, so
-the operator does not need to track them separately.
+The single-run noise floor is a deliberate simplification: per-host
+noise-floor calibration via `bench rerun` would cost a second
+multi-minute run on every session, and Pass 1c's per-target
+results-analyzer judges direction first / magnitude second against
+each invocation's `expected_signal.tolerance_pct` — the
+session-level noise floor is not load-bearing for the verdict math.
+A future revision may reintroduce optional rerun if the
+results-analyzer's tolerance bands prove insufficient for some
+workloads; today, prefer tuning each invocation's tolerance over
+running a rerun.
 
 ### Profiler hotspots and listing
 

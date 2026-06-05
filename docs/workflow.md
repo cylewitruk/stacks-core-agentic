@@ -12,9 +12,11 @@ orchestrator's responsibilities are mechanical:
 | Tier | Owns | Does NOT |
 | --- | --- | --- |
 | Triage | Pick candidate workload families (tx / block / contract) from profiler data + DB. | Read source code. Commit a target span. Run benchmarks. |
-| Analyzer | Investigate ONE family deeply; commit `target_span` + `fix_signature`; produce an analysis the merge + optimizer phases act on. | Modify source code. Run benchmarks. |
+| Analyzer | Investigate ONE family deeply; commit `target_span` + `fix_signature` + `verification_replay.invocations[]` (the measurement protocol); produce an analysis the merge + optimizer phases act on. | Modify source code. Run benchmarks. |
 | Merge | Dedupe analyses converging on the same structural fix; emit one canonical target per fix with `merged_from` provenance. | Re-investigate. Modify analyses' substance. |
 | Optimizer | Implement the change in a per-target git clone; run `cargo nextest`; leave a release binary. | Run benchmarks. Touch other clones. |
+| Results-analyzer | Per `bench_eligible` target, judge measured vs `expected_signal` (direction first, magnitude second); commit one `verdict` + `confidence`; write `pr_body_summary` for the PR. | Re-run benchmarks. Edit source. Modify the optimizer's diff. |
+| PR-writer / issue-writer | Per shipping target, compose PR title + body (PR) or issue title + body (consensus_issue) from the verdict + target + experiment record. | Push to GitHub (orchestrator owns `git push` + octocrab). Re-judge the verdict. |
 
 Benchmarking is centralized in the bench phase so all experiments use
 the same parameters and the same lock. `cargo nextest` runs (in
@@ -71,7 +73,7 @@ checkout, never in the primary one.
 | Where | Default | What it holds |
 | --- | --- | --- |
 | **Session bulk** | `<layout.sessions_root>/<id>/results/`, where `layout.sessions_root` defaults to `<layout.agent_workspace_root>/sessions/` (so the bulk dir is `<layout.agent_workspace_root>/sessions/<id>/results/`) | All phase outputs (baseline, triage, analyses, merge, optimize, finalize). The audit trail. |
-| **Per-target optimizer clones** | `<layout.agent_workspace_root>/optimizers/<id>/<target-id>/` | Stand-alone git clones of the operator's `repos/stacks-core` submodule (`git clone --reference --branch --local`, sharing the base's object store), one per merged target. Each holds an `agent/<id>/<target-id>` branch. |
+| **Per-target optimizer clones** | `<layout.agent_workspace_root>/optimizers/<id>/<target-id>/` | Stand-alone git clones of the operator's `repos/stacks-core` submodule (`git clone --reference --branch --local`, sharing the base's object store), one per merged target. Each holds an `agentic/<id>/<target-id>` branch. |
 | **Archive worktree (transient)** | `<layout.agent_workspace_root>/archive-worktrees/<id>/` | Created during Phase 6 as a `git worktree add` of the operator repo, torn down at the end. The only place `sessions/<id>/` ever appears tracked in an operator-repo working tree. |
 | **Persistent stacks-bench app data** | `<stacks_bench.data_dir>/appdata/stacks-bench.db` | Indexed chainstate + cross-session `benchmark_run` rows. Never per-session. |
 | **Coordination lockfiles** | `<lock_dir>/{benchmark.lock,test.lock}` | `fd-lock`-held during bench runs (cross-process) and optimizer `cargo nextest` (cross-clone). |
@@ -90,11 +92,11 @@ phases produce git effects:
 
 | Phase | Git ops |
 | --- | --- |
-| **2 (optimize)** | For each merged target, `git clone --reference <base> --branch <base_branch> --local <base> <checkout>` into `<workspace>/optimizers/<id>/<target>/` (shares the base's object store, fresh refs), then `git switch -c agent/<id>/<target>`. The optimizer agent edits files inside the clone but does NOT commit — the coordinator runs `coordinator_commit_if_kept` AFTER validating `optimizer-report.json`, and only then stages + commits the change authored as `Stacks BenchBot`. This sandbox/coordinator boundary keeps a misbehaving agent from producing arbitrary commits. Aborted targets' clones are pruned at session end; accepted ones stay until manually cleaned. |
-| **5 (publish)**, when run with PAT | Per accepted normal-PR / consensus-PoC-PR target, `git push -u <publish.remote> agent/<id>/<target>` from inside the optimizer clone. PAT travels via `http.<prefix>.extraheader` env override — never argv, never `.git/config`. Then octocrab opens the PR / issue against `publish.base_repo` (defaults: `cylewitruk/stacks-core`). |
+| **2 (optimize)** | For each merged target, `git clone --reference <base> --branch <base_branch> --local <base> <checkout>` into `<workspace>/optimizers/<id>/<target>/` (shares the base's object store, fresh refs), then `git switch -c agentic/<id>/<target>`. The optimizer agent edits files inside the clone but does NOT commit — the coordinator runs `coordinator_commit_if_kept` AFTER validating `optimizer-report.json`, and only then stages + commits the change authored as `Stacks BenchBot`. This sandbox/coordinator boundary keeps a misbehaving agent from producing arbitrary commits. Aborted targets' clones are pruned at session end; accepted ones stay until manually cleaned. |
+| **5 (publish)**, when run with PAT | Per accepted normal-PR / consensus-PoC-PR target, `git push -u <publish.remote> agentic/<id>/<target>` from inside the optimizer clone. PAT travels via `http.<prefix>.extraheader` env override — never argv, never `.git/config`. Then octocrab opens the PR / issue against `publish.base_repo` (defaults: `cylewitruk/stacks-core`). |
 | **6 (archive)** | `git worktree add <workspace>/archive-worktrees/<id>` against the operator repo, branched as `session/<id>`. Bulk is COPIED (not moved) into the worktree's `sessions/<id>/`, force-added, committed as `Stacks BenchBot` (no GPG signing). Worktree pushed to operator's `origin`. Worktree torn down. Then on the operator's main worktree: pull-rebase, append one line to `sessions.jsonl`, commit, push with retry on race. |
 
-`agent/<id>/<target-id>` branches stay in their per-target clones —
+`agentic/<id>/<target-id>` branches stay in their per-target clones —
 they are never pushed to the operator repo. They reach GitHub only
 via Phase 5 publish, which pushes them directly to the
 upstream `stacks-core` fork (e.g. `cylewitruk/stacks-core`).
@@ -117,7 +119,7 @@ See [session-archive.md](session-archive.md) for the full contract.
 | Operator repo, main branch | One new commit per archive run: `archive: ledger <id>` (appends one JSONL line to `sessions.jsonl`) | Phase 6, when not dry-run |
 | Operator repo, write-once branches | New `session/<id>` branch with the full session bulk committed under `sessions/<id>/` | Phase 6, when not dry-run |
 | Operator fork on GitHub | Push of operator-main commit + push of `session/<id>` branch | Phase 6, when not dry-run + remote configured |
-| stacks-core fork on GitHub (`cylewitruk/stacks-core` by default) | Push of `agent/<id>/<target>` branches + opened PRs / issues | Phase 5, when `--publish-accepted-prs` |
+| stacks-core fork on GitHub (`cylewitruk/stacks-core` by default) | Push of `agentic/<id>/<target>` branches + opened PRs / issues | Phase 5, when `--publish-accepted-prs` |
 
 The two-fork split is deliberate: PRs land where the upstream
 maintainers can review them (`stacks-core` repo); the bot's own
@@ -139,6 +141,7 @@ jq '.targets | length' "/private/tmp/sbagent-workspaces/sessions/$SESSION_ID/res
 
 sbagent session optimize run --session-id "$SESSION_ID"
 sbagent session bench run --session-id "$SESSION_ID"
+sbagent session analyze-results run --session-id "$SESSION_ID"
 sbagent session finalize run --session-id "$SESSION_ID"
 sbagent session archive --session-id "$SESSION_ID"  # optional, commits to operator repo
 cat "/private/tmp/sbagent-workspaces/sessions/$SESSION_ID/results/finalize/summary.md"
@@ -150,8 +153,10 @@ for the resume-from-validate flow.
 
 ## Orchestrator: `sbagent session run`
 
-`sbagent session run` chains phases 0–4. Phase 5 (publish) and Phase
-6 (archive) are opt-in via flags. Common invocations:
+`sbagent session run` chains phases 0–4 (including Phase 1.8
+calibration and Phase 3.5 results-analyzer fan-out). Phase 5
+(publish) and Phase 6 (archive) are opt-in via flags. Common
+invocations:
 
 ```bash
 # Fresh baseline (mints a YYYYMMDD-HHMMSS session id), no publish or archive:
@@ -175,8 +180,10 @@ sbagent session run \
 Phase 2 (optimizer) fan-out parallelism is set by `--parallel-agents`
 (with an internal clamp on top of whatever the operator requested).
 Analyzer fan-out is set by `--parallel-analyzers`, capped by the
-optional `analyzer.concurrency_cap` setting. Phase 3 benchmarks are
-always serialized under the bench lock. Phase 5 push and Phase 6
+optional `analyzer.concurrency_cap` setting. The Phase 3.5
+results-analyzer fan-out reuses the same `analyzer.concurrency_cap`
+(its per-target workload is shaped the same way). Phase 3 benchmarks
+are always serialized under the bench lock. Phase 5 push and Phase 6
 push both use the same PAT-via-env mechanism — the token never
 enters argv, `.git/config`, or shell history.
 
@@ -214,10 +221,18 @@ The first session should:
     `optimize/<target>/implementation.md` (or `abort.md`) (Phase 2).
     Each target gets its own git clone under
     `<workspace>/optimizers/<id>/<target>/`.
-11. Build + serially benchmark each accepted target (Phase 3).
-12. Run `sbagent session finalize run` → `finalize/summary.json`
-    (Phase 4).
-13. (Optional) `sbagent session archive --dry-run` to rehearse the
+11. Build + serially benchmark each accepted target — one
+    `stacks-bench bench run` per invocation →
+    `optimize/<target>/<invocation-id>/bench-run.json` and
+    `optimize/<target>/candidate-run-ids.json` (Phase 3).
+12. Fan out results-analyzer agents → `analyze/<target>/results-
+    analysis.json` (Phase 3.5). Each agent judges measured vs
+    `expected_signal` per invocation and commits a verdict +
+    confidence.
+13. Run `sbagent session finalize run` → `finalize/summary.json`,
+    sourcing each `Experiment.improvement_pct` + `Experiment.status`
+    verbatim from the Phase 3.5 verdict (Phase 4).
+14. (Optional) `sbagent session archive --dry-run` to rehearse the
     archive flow locally before shipping anything to the operator's
     remote.
 
@@ -282,7 +297,7 @@ The final session summary should answer:
 
 1. What baseline was used?
 2. What targets were selected and why?
-3. What clones / branches were created? (`agent/<id>/<target>` in
+3. What clones / branches were created? (`agentic/<id>/<target>` in
    each per-target clone; `session/<id>` on the operator repo after
    archive.)
 4. What changed in each experiment?
@@ -291,19 +306,19 @@ The final session summary should answer:
 7. Which experiments should be kept, discarded, or retried later?
 8. What should the next session target?
 
-## `summary.json` shape (schema v2)
+## `summary.json` shape (schema v3)
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "session_id": "20260507-104400",
   "baseline_run_id": 123,
   "baseline_rerun_id": 124,
   "noise_floor_pct": 0.8,
   "experiments": [
-    { "target_id": "a", "delivery_mode": "normal_pr",        "status": "accepted",        "run_ids": [125, 126], "improvement_pct": 4.7 },
-    { "target_id": "b", "delivery_mode": "normal_pr",        "status": "rejected",        "run_ids": [127, 128], "reason": "within noise" },
-    { "target_id": "c", "delivery_mode": "normal_pr",        "status": "aborted",         "reason": "tests failed" },
+    { "target_id": "a", "delivery_mode": "normal_pr",        "status": "accepted",        "run_ids": [500, 501], "baseline_run_ids": [200, 201], "improvement_pct": 4.7 },
+    { "target_id": "b", "delivery_mode": "normal_pr",        "status": "rejected",        "run_ids": [502, 503], "baseline_run_ids": [202, 203], "reason": "warm-steady regressed 3% — cache eviction the analyzer missed" },
+    { "target_id": "c", "delivery_mode": "normal_pr",        "status": "aborted",         "reason": "results-analyzer did not produce a verdict — analyze/<target>/results-analysis.json absent or invalid" },
     { "target_id": "d", "delivery_mode": "consensus_poc_pr", "status": "poc_landed",      "breakage_class": "clarity_cost_weight" },
     { "target_id": "e", "delivery_mode": "consensus_issue",  "status": "routed_to_issue", "breakage_class": "block_validation" }
   ],
@@ -325,7 +340,13 @@ The final session summary should answer:
 field from `consensus_breaking` + `poc_implementable`):
 
 - **`normal_pr`** — performance fix; `status ∈ {accepted, rejected,
-  aborted}` driven by bench measurement.
+  aborted}` sourced verbatim from the Phase 3.5 results-analyzer
+  verdict (`Verdict::Accepted | Verdict::Mixed → Accepted`;
+  `Verdict::Rejected → Rejected`; missing/invalid verdict →
+  `Aborted`). `improvement_pct` and `reason` come from the verdict's
+  `headline_improvement_pct` and `headline_rationale` /
+  `caveats[]` — finalize does not compute pooled means or threshold
+  against the noise floor.
 - **`consensus_poc_pr`** — deliberate consensus-breaking change
   shipped as a PoC; `status ∈ {poc_landed, aborted}`. `poc_landed`
   means scoped tests passed; no benchmark ran by design.
@@ -333,6 +354,14 @@ field from `consensus_breaking` + `poc_implementable`):
   coverage-blocked for PoC mode; `status ∈ {routed_to_issue,
   aborted}`. The optimizer was skipped entirely; the analyzer's
   `consensus_writeup` is the shipping artifact.
+
+The per-target results-analyzer verdict (the source of truth for
+`normal_pr` numbers) lives at
+`analyze/<target-id>/results-analysis.json` — see
+[`crate::models::results_analysis::ResultsAnalysis`](../crates/stacks-bench-agent/src/models/results_analysis.rs)
+for the typed shape and
+[`docs/architecture.md`](architecture.md#per-tier-exposed-variables)
+for the agent contract.
 
 `lens_dispositions[]` is propagated verbatim from
 `merge/optimization-targets.json` so "real hotspot, no fix found" cases

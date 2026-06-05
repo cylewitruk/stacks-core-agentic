@@ -21,8 +21,18 @@ The annotated template is checked in at
 [assets/example.config.toml](../assets/example.config.toml) — copy it
 to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
 stanzas (`[layout]`, `[stacks_core]`, `[stacks_bench]`, `[triage]`,
-`[analyzer]`, `[optimizer]`, `[codex]`, `[publish]`, `[git]`); each
-stanza's fields are documented inline in that file.
+`[analyzer]`, `[optimizer]`, `[results_analysis]`, `[codex]`,
+`[publish]`, `[git]`); each stanza's fields are documented inline in
+that file. Notable Pass 1c knobs:
+
+- `analyzer.max_invocations_per_target` (default `8`, schema hard max
+  `16`) — operator cap on `verification_replay.invocations[]` length
+  per analyzer-emitted target. Enforced at analyzer-output
+  validation, BEFORE Phase 1.8 runs any stacks-bench command.
+- `results_analysis.confidence_floor` (default `"medium"`, values
+  `"high" | "medium" | "low"`) — minimum confidence required for a
+  `normal_pr` target to publish in Phase 5. Verdicts below the floor
+  hold for operator review.
 
 Prefer `--count` on `session baseline run` for bounded demo runs.
 Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is
@@ -33,16 +43,29 @@ intentional, because it can add significant chainstate copy time.
 ```text
 <operator>                          # the dir `sbagent init` creates
   .sbagent/
-    prompts/                        # MiniJinja templates + reference
-                                    # docs. Operator-tunable (autoresearch
-                                    # `program.md` model); `sbagent check`
-                                    # warns on drift vs binary bundle.
+    prompts/                        # MiniJinja agent templates (triage,
+                                    # analyzer, merge, optimizer,
+                                    # results-analyzer, pr-writer,
+                                    # issue-writer). Operator-tunable
+                                    # (autoresearch `program.md` model);
+                                    # `sbagent check` warns on drift vs
+                                    # binary bundle.
     schemas/                        # JSON Schemas — mirror of binary
                                     # bundle. DO NOT EDIT; `sbagent check`
                                     # fails on drift, `sbagent sync`
                                     # restores from binary.
     queries/                        # Triage/analyzer SQL — same contract
                                     # as schemas (mirror, do not edit).
+    context/                        # Reference docs the agents read at
+                                    # absolute paths (non-targets.md,
+                                    # bucket-anchors.md,
+                                    # stacks-domain-context.md). Tunable
+                                    # with sidecar TOML declaring which
+                                    # phases require each doc.
+  memory/                           # Cross-session bot memory
+                                    # (analyzed-rejections ledger). Lifts
+                                    # out of .sbagent/ by default so it
+                                    # sits next to the bundle dirs.
   repos/
     stacks-core/                    # submodule, tracks publish.base_branch
   sessions/<session-id>/results/    # per-session artifacts
@@ -161,13 +184,21 @@ writable_roots = [
 [projects."/absolute/path/to/<bot>/<operator>/repos/stacks-core"]
 trust_level = "trusted"
 
-[projects."/absolute/path/to/<bot>/<operator>/sessions"]
+[projects."/private/tmp/sbagent-workspaces"]
 trust_level = "trusted"
 ```
 
 The framework checkout no longer needs `writable_roots` entries —
 operator deployments don't read from it at runtime (prompts /
 schemas / queries are bundled).
+
+The `sbagent-workspaces` trust entry covers session bulk
+(`/private/tmp/sbagent-workspaces/sessions/<id>/`) AND per-target
+optimizer clones (`/private/tmp/sbagent-workspaces/optimizers/<id>/
+<target>/`) AND transient archive worktrees in one rule — every
+mutable subagent scratch dir lives under
+`layout.agent_workspace_root` by design. Adjust the path to match
+whatever you set `layout.agent_workspace_root` to.
 
 Trust the worktree root once at bootstrap so newly created
 session-scoped worktrees inherit trust without per-experiment config

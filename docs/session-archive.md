@@ -22,7 +22,10 @@ Its JSON Schema is committed at
 
 A session can produce gigabytes of evidence: profiler hotspots, agent
 event streams, drilldown CSVs, codex prompts, optimizer reports,
-per-target bench-run JSONs. Committing all of that on `main` would
+per-invocation Phase 1.8 calibration outputs and Phase 3 candidate
+bench-runs (one `bench-run.json` per invocation under each target's
+`verify/<id>/` and `optimize/<id>/` trees), Phase 3.5 results-analyzer
+verdicts under `analyze/<id>/`. Committing all of that on `main` would
 make `main` unusable for daily browsing within months — at 365
 sessions/year, a five-year horizon gives ~1825 top-level entries
 under `sessions/`.

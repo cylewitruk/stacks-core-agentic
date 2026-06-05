@@ -5,9 +5,20 @@ publish autonomous-run artifacts to GitHub. The router branches per
 target's `delivery_mode`:
 
 - `normal_pr` → draft PR (or non-draft per `publish.draft_prs`) with
-  operator-configured labels.
+  operator-configured labels — **only when the full Pass 1c gate
+  chain passes**: (a) `summary.experiments[].status == Accepted`,
+  (b) `analyze/<target>/results-analysis.json` is on disk and
+  context-valid (`session_id` + `target_id` match), (c) the
+  verdict is `accepted` or `mixed` (`rejected` is skipped), and
+  (d) the verdict's `confidence` is at or above
+  `results_analysis.confidence_floor` (default `medium`). Any
+  failing condition results in `Skip` with an explicit reason —
+  `push` never sees a generated PR body for a target that didn't
+  clear the gate.
 - `consensus_poc_pr` → draft PR ALWAYS, with operator labels plus the
-  hardcoded safety set `consensus-change,needs-HIP,do-not-merge`.
+  hardcoded safety set `consensus-change,needs-HIP,do-not-merge`. No
+  benchmark / verdict required — gated only on the typed optimizer
+  report's `outcome=implemented`.
 - `consensus_issue` → GitHub issue with `consensus-change,needs-HIP`
   labels. The optimizer never produced an implementation; the issue
   body comes from the analyzer's `consensus_writeup`.
@@ -21,7 +32,7 @@ worktree → branch → push hop still shells `git`.
 
 | Subcommand | What it does |
 | ---------- | ------------ |
-| `sbagent publish generate` | Iterates `merge/optimization-targets.json` and dispatches per `delivery_mode`. For PR modes, runs `pr-writer.md` and writes `optimize/<target>/pr-title.txt` + `pr-body.md`; the prompt branches on `${DELIVERY_MODE}` so consensus PoC PRs frame benchmark-skipped/scoped-tests/HIP-coordination explicitly. For `consensus_issue`, runs `issue-writer.md` and writes `optimize/<target>/issue-title.txt` + `issue-body.md` from the analyzer's `consensus_writeup`. Section validators enforce the required body shape per mode. The token is never inlined into any rendered prompt. |
+| `sbagent publish generate` | Iterates `merge/optimization-targets.json` and dispatches per `delivery_mode` after running the gate chain above. For PR modes, runs `pr-writer.md` and writes `optimize/<target>/pr-title.txt` + `pr-body.md`; the prompt branches on `delivery_mode` so consensus PoC PRs frame benchmark-skipped/scoped-tests/HIP-coordination explicitly. For `normal_pr`, the prompt also receives the canonical Phase 3.5 verdict (`results_analysis_json`) — `pr-writer.md` pastes `pr_body_summary` verbatim into the PR body's Result section, appends the per-invocation breakdown table, and surfaces `caveats[]`. For `consensus_issue`, runs `issue-writer.md` and writes `optimize/<target>/issue-title.txt` + `issue-body.md` from the analyzer's `consensus_writeup`. Section validators enforce the required body shape per mode. The token is never inlined into any rendered prompt. |
 | `sbagent publish push` | Reads `publish.token_file` into memory at call time, builds an authenticated `octocrab` client, and dispatches per `delivery_mode`. PR modes: switches the worktree to `agentic/<session>/<target>`, stages tracked-file modifications only (`git add -u`), commits, pushes, then creates a draft PR via the API — `consensus_poc_pr` is forced draft and gets the safety label set. `consensus_issue`: no branch / no commit / no push; creates an issue with a hidden trace tag (`<!-- agentic-<session>-<target> -->`) in the body for idempotent re-runs. Skips on existing PR/issue. |
 
 ## Threat model for the GitHub token

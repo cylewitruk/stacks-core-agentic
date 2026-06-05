@@ -86,8 +86,8 @@ different location pass `-c <path>` on every invocation.
 ## 4. Bootstrap the operator dir
 
 `sbagent init` is a one-shot bootstrap that adds the stacks-core
-submodule, seeds `.sbagent/{prompts,schemas,queries}/` from the
-binary, writes a `.gitignore`, and produces an initial commit
+submodule, seeds `.sbagent/{prompts,schemas,queries,context}/` from
+the binary, writes a `.gitignore`, and produces an initial commit
 authored as the bot. On a brand-new bot fork (no `feat/stacks-bench`
 branch yet), pass `--seed-from <your-fork-url>` so init pushes the
 substrate branch first.
@@ -269,10 +269,15 @@ only for VM lifecycle. Keep the same logical command model:
 5. Run the same cargo stacks-bench commands with the same --db,
    --json, --source, and block-range arguments.
 6. Copy JSON/stderr/optimization-session artifacts back to
-   <operator>/sessions/<session-id>/results/ (per-phase subdirs:
-   baseline/, triage/, analysis/, merge/, optimize/, finalize/).
-7. Preserve <stacks_bench.data_dir> (default
-   <operator>/data/stacks-bench) as the shared benchmark app-data dir.
+   <layout.agent_workspace_root>/sessions/<session-id>/results/
+   (per-phase subdirs: baseline/, triage/, analysis/, merge/,
+   verify/, optimize/, analyze/, finalize/). The workspace path
+   lives outside the operator repo by design — `sbagent session
+   archive` is the boundary that commits sessions into the operator
+   repo's permanent history.
+7. Preserve <stacks_bench.data_dir> as the shared benchmark app-data
+   dir (operators typically set this outside the operator repo for
+   the same isolation reason).
 8. Destroy VM and delete disposable run dir.
 ```
 
