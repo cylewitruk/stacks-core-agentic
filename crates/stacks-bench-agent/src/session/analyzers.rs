@@ -233,6 +233,11 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
                 .join("analysis.schema.json")
                 .to_string_lossy()
                 .into_owned(),
+            max_invocations_per_target: state
+                .settings
+                .analyzer
+                .effective_max_invocations_per_target()
+                .to_string(),
         },
         prompts_dir,
     )?;
@@ -338,6 +343,22 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
     let analysis = Analysis::from_json(&raw)
         .with_context(|| format!("parsing {}", analysis_path.display()))?;
 
+    // Operator-side cap on `verification_replay.invocations[]` per
+    // analyzer-emitted target. Reject BEFORE Phase 1.8 runs any
+    // stacks-bench command, since a misbehaving analyzer emitting
+    // (say) the schema hard max of 16 invocations across several
+    // families would saturate the host bench budget. The schema
+    // `BENCH_INVOCATION_HARD_MAX` is the absolute ceiling; this is
+    // the operator's tighter knob.
+    enforce_invocation_cap(
+        &state.family_id,
+        &analysis,
+        state
+            .settings
+            .analyzer
+            .effective_max_invocations_per_target(),
+    )?;
+
     // Ledger append hook. If the analyzer concluded the family is
     // either rejected (signal was wrong) or accepted-with-not-
     // actionable (signal was real but no structural handle), append
@@ -351,6 +372,38 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             "analyzed-rejections ledger append failed; phase continues but the rejection \
              will not be remembered across sessions",
         );
+    }
+    Ok(())
+}
+
+/// Reject the analyzer's output when any target's
+/// `verification_replay.invocations[]` exceeds the operator cap.
+/// Consensus targets are skipped — their VR is optional and ignored
+/// downstream (Phase 1.8/3 only touch bench-eligible targets).
+fn enforce_invocation_cap(family_id: &str, analysis: &Analysis, cap: usize) -> Result<()> {
+    let Analysis::Accepted(accepted) = analysis else {
+        return Ok(());
+    };
+    for (i, t) in accepted
+        .targets
+        .iter()
+        .enumerate()
+    {
+        if t.consensus_breaking {
+            continue;
+        }
+        if let Some(vr) = &t.verification_replay
+            && vr.invocations.len() > cap
+        {
+            bail!(
+                "analyzer `{family_id}` target[{i}] (`{}`): verification_replay.invocations has \
+                 {} entries, exceeds operator cap of {} (analyzer.max_invocations_per_target). \
+                 Tighten the analyzer's invocation decomposition or raise the cap.",
+                t.fix_signature,
+                vr.invocations.len(),
+                cap,
+            );
+        }
     }
     Ok(())
 }
@@ -466,4 +519,132 @@ fn maybe_append_rejection<H: AgentHarness + 'static>(
     };
     analyzed_rejections::append(&state.framework.memory_dir, &record)
         .context("appending analyzed-rejection record")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::analyze::{
+        AcceptedAnalysis, AcceptedStatusTag, AnalyzerTarget, LensDisposition,
+    };
+    use crate::models::common::{
+        BenchInvocation, BenchSamples, Bucket, ExpectedSignal, Hotspot, ImprovementVector,
+        LensDispositionStatus, ProfilerMode, Risk, SchemaVersionV3, SelectionLens, SignalDirection,
+        VerificationReplay,
+    };
+
+    fn vr_with_n_invocations(n: usize) -> VerificationReplay {
+        let invocations = (0..n)
+            .map(|i| BenchInvocation {
+                id: format!("inv-{i}"),
+                label: format!("invocation {i}"),
+                purpose: "test".into(),
+                samples: BenchSamples::Blocks {
+                    blocks: vec![format!("0x{}", "a".repeat(64))],
+                },
+                warmup: 10,
+                repetitions: 20,
+                profiler: ProfilerMode::Rich,
+                expected_signal: ExpectedSignal {
+                    axis: SelectionLens::TxLatency,
+                    direction: SignalDirection::Improves,
+                    estimate_pct: Some(4.0),
+                    tolerance_pct: Some(2.0),
+                },
+            })
+            .collect();
+        VerificationReplay {
+            rationale: "test".into(),
+            invocations,
+            suspected_spans: None,
+        }
+    }
+
+    fn analyzer_target(vr: Option<VerificationReplay>) -> AnalyzerTarget {
+        AnalyzerTarget {
+            target_span: "x".into(),
+            bucket: Bucket::BlockProcessing,
+            fix_signature: "fix-1".into(),
+            hotspot: Hotspot {
+                span: "x".into(),
+                self_wall_us: 1,
+                total_wall_us: 1,
+                calls: 1,
+                location: "x.rs:1".into(),
+            },
+            files: vec!["x.rs".into()],
+            evidence: "e".into(),
+            proposed_change: "p".into(),
+            expected_improvement: ImprovementVector {
+                tx_latency: 0.0,
+                tenure_throughput: 0.0,
+                commit_time: 0.0,
+            },
+            risk: Risk::Low,
+            verification_plan: "v".into(),
+            verification_replay: vr,
+            consensus_breaking: false,
+            breakage_class: None,
+            poc_implementable: None,
+            poc_test_scope: None,
+            consensus_writeup: None,
+        }
+    }
+
+    fn analysis_with(targets: Vec<AnalyzerTarget>) -> Analysis {
+        Analysis::Accepted(AcceptedAnalysis {
+            schema_version: SchemaVersionV3,
+            family_id: "fam-a".into(),
+            status: AcceptedStatusTag::Accepted,
+            selection_lens: SelectionLens::TxLatency,
+            lens_disposition: LensDisposition {
+                lens: SelectionLens::TxLatency,
+                status: LensDispositionStatus::Addressed,
+                reason: None,
+            },
+            targets,
+            global_materiality_note: None,
+        })
+    }
+
+    #[test]
+    fn invocation_cap_accepts_below_limit() {
+        let a = analysis_with(vec![analyzer_target(Some(vr_with_n_invocations(4)))]);
+        enforce_invocation_cap("fam-a", &a, 8).expect("4 <= 8");
+    }
+
+    #[test]
+    fn invocation_cap_rejects_above_limit() {
+        let a = analysis_with(vec![analyzer_target(Some(vr_with_n_invocations(9)))]);
+        let err = enforce_invocation_cap("fam-a", &a, 8)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("9 entries"), "{err}");
+        assert!(err.contains("cap of 8"), "{err}");
+    }
+
+    #[test]
+    fn invocation_cap_ignores_consensus_targets() {
+        let mut t = analyzer_target(Some(vr_with_n_invocations(16)));
+        t.consensus_breaking = true;
+        // Required cofactors for consensus_breaking targets.
+        t.breakage_class = Some(crate::models::common::BreakageClass::ClarityCostWeight);
+        t.poc_implementable = Some(false);
+        t.consensus_writeup = Some("w".into());
+        let a = analysis_with(vec![t]);
+        // Consensus targets don't reach Phase 1.8/3; the cap doesn't apply.
+        enforce_invocation_cap("fam-a", &a, 8).expect("consensus targets exempt");
+    }
+
+    #[test]
+    fn invocation_cap_skips_rejected_analyses() {
+        use crate::models::analyze::{RejectedAnalysis, RejectedStatusTag};
+        let a = Analysis::Rejected(RejectedAnalysis {
+            schema_version: SchemaVersionV3,
+            family_id: "fam-a".into(),
+            status: RejectedStatusTag::Rejected,
+            reason: "test".into(),
+        });
+        enforce_invocation_cap("fam-a", &a, 1).expect("rejected analyses have no targets to cap");
+    }
 }

@@ -252,6 +252,7 @@ pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
     check!(AnalyzerPrompt);
     check!(MergePrompt);
     check!(OptimizerPrompt);
+    check!(ResultsAnalyzerPrompt);
     check!(PrWriterPrompt);
     check!(IssueWriterPrompt);
 
@@ -271,6 +272,7 @@ const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ("analyzer.md", AnalyzerPrompt::BUNDLED),
     ("merge-analyses.md", MergePrompt::BUNDLED),
     ("optimizer.md", OptimizerPrompt::BUNDLED),
+    ("results-analyzer.md", ResultsAnalyzerPrompt::BUNDLED),
     ("pr-writer.md", PrWriterPrompt::BUNDLED),
     ("issue-writer.md", IssueWriterPrompt::BUNDLED),
 ];
@@ -351,6 +353,12 @@ pub struct AnalyzerPrompt {
     pub domain_context_path: String,
     /// Absolute path to analysis.schema.json.
     pub analysis_schema_path: String,
+    /// Effective operator cap on `verification_replay.invocations[]`
+    /// per target (see `analyzer.max_invocations_per_target`). Surfaced
+    /// in the prompt so the agent budgets BEFORE emitting — exceeding
+    /// this cap rejects the analyzer's output after the (expensive)
+    /// Codex call.
+    pub max_invocations_per_target: String,
 }
 
 impl Prompt for AnalyzerPrompt {
@@ -440,6 +448,46 @@ impl Prompt for OptimizerPrompt {
     const BUNDLED: &'static str = include_str!("../templates/optimizer.md");
 }
 
+/// Phase 3.5 — results-analyzer agent context. One instance per
+/// `bench_eligible` target whose Phase 3 candidate bench produced
+/// run-ids.
+#[derive(Serialize)]
+pub struct ResultsAnalyzerPrompt {
+    /// Session id.
+    pub session_id: String,
+    /// Target id this verdict belongs to.
+    pub target_id: String,
+    /// Absolute output dir (`analyze/<target>/`).
+    pub output_dir: String,
+    /// Stacks-core checkout root.
+    pub base: String,
+    /// Stacks-bench data dir (SQLite db lives below this).
+    pub stacks_bench_data_dir: String,
+    /// Framework's queries dir.
+    pub queries_dir: String,
+    /// JSON-serialized merged target (carries `verification_replay`).
+    pub target_json: String,
+    /// JSON-serialized optimizer report (`Implemented` variant only —
+    /// targets with `Aborted` reports never reach Phase 3.5).
+    pub optimizer_report_json: String,
+    /// Per-target dir holding per-invocation candidate bench outputs
+    /// (`<dir>/<invocation-id>/bench-run.json`).
+    pub candidate_invocations_dir: String,
+    /// Per-target dir holding per-invocation baseline bench outputs.
+    pub baseline_invocations_dir: String,
+    /// Absolute path to the candidate `InvocationRunIds` JSON.
+    pub candidate_run_ids_path: String,
+    /// Absolute path to the baseline `InvocationRunIds` JSON.
+    pub baseline_run_ids_path: String,
+    /// Absolute path to results-analysis.schema.json.
+    pub results_analysis_schema_path: String,
+}
+
+impl Prompt for ResultsAnalyzerPrompt {
+    const FILE_NAME: &'static str = "results-analyzer.md";
+    const BUNDLED: &'static str = include_str!("../templates/results-analyzer.md");
+}
+
 /// Phase 5 — PR-writer agent context. One instance per PR-mode target.
 #[derive(Serialize)]
 pub struct PrWriterPrompt {
@@ -455,6 +503,13 @@ pub struct PrWriterPrompt {
     pub target_json: String,
     /// JSON-serialized per-target experiment record (status + improvement).
     pub experiment_json: String,
+    /// JSON-serialized Phase 3.5 verdict (`results-analysis.json`).
+    /// Carries `pr_body_summary` (verbatim PR-body Result section),
+    /// `caveats[]`, the per-invocation breakdown, and the
+    /// `verdict` / `confidence` lattice the prompt frames around.
+    /// `"{}"` when no verdict was produced (consensus_poc_pr targets,
+    /// or normal_pr targets that aborted before Phase 3.5).
+    pub results_analysis_json: String,
     /// Delivery mode (`normal_pr` / `consensus_poc_pr`).
     pub delivery_mode: String,
 }
@@ -527,6 +582,7 @@ impl AnalyzerPrompt {
             non_targets_path: "/tmp/lint/non-targets.md".into(),
             domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             analysis_schema_path: "/tmp/lint/analysis.schema.json".into(),
+            max_invocations_per_target: "8".into(),
         }
     }
 }
@@ -571,6 +627,26 @@ impl OptimizerPrompt {
     }
 }
 
+impl ResultsAnalyzerPrompt {
+    fn synthetic_for_lint() -> Self {
+        Self {
+            session_id: "lint".into(),
+            target_id: "t".into(),
+            output_dir: "/tmp/lint/out".into(),
+            base: "/tmp/lint/base".into(),
+            stacks_bench_data_dir: "/tmp/lint/data".into(),
+            queries_dir: "/tmp/lint/queries".into(),
+            target_json: "{}".into(),
+            optimizer_report_json: "{}".into(),
+            candidate_invocations_dir: "/tmp/lint/candidate".into(),
+            baseline_invocations_dir: "/tmp/lint/baseline".into(),
+            candidate_run_ids_path: "/tmp/lint/candidate-run-ids.json".into(),
+            baseline_run_ids_path: "/tmp/lint/baseline-run-ids.json".into(),
+            results_analysis_schema_path: "/tmp/lint/results-analysis.schema.json".into(),
+        }
+    }
+}
+
 impl PrWriterPrompt {
     fn synthetic_for_lint() -> Self {
         Self {
@@ -580,6 +656,7 @@ impl PrWriterPrompt {
             worktree_dir: "/tmp/lint/worktree".into(),
             target_json: "{}".into(),
             experiment_json: "{}".into(),
+            results_analysis_json: "{}".into(),
             delivery_mode: "normal_pr".into(),
         }
     }

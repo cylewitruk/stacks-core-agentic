@@ -70,7 +70,7 @@ impl AgentHarness for FakeHarness {
         // analyses/<family-id>/ dir.
         let analysis = if status == "accepted" {
             serde_json::json!({
-                "schema_version": 2,
+                "schema_version": 3,
                 "family_id": family,
                 "status": "accepted",
                 "selection_lens": "tx_latency",
@@ -91,12 +91,33 @@ impl AgentHarness for FakeHarness {
                     },
                     "risk": "low",
                     "verification_plan": "v",
+                    "verification_replay": {
+                        "rationale": "test",
+                        "invocations": [{
+                            "id": "warm-steady",
+                            "label": "warm",
+                            "purpose": "smoke",
+                            "samples": {
+                                "kind": "blocks",
+                                "blocks": ["0xaa00000000000000000000000000000000000000000000000000000000000000"]
+                            },
+                            "warmup": 10,
+                            "repetitions": 20,
+                            "profiler": "rich",
+                            "expected_signal": {
+                                "axis": "tx_latency",
+                                "direction": "improves",
+                                "estimate_pct": 4.0,
+                                "tolerance_pct": 2.0
+                            }
+                        }]
+                    },
                     "consensus_breaking": false
                 }]
             })
         } else {
             serde_json::json!({
-                "schema_version": 2,
+                "schema_version": 3,
                 "family_id": family,
                 "status": "rejected",
                 "reason": "test reject"

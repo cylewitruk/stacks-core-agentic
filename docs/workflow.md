@@ -39,15 +39,17 @@ benchmark, and publish artifacts for that target.
 
 | Phase | Command | Reads | Writes (in `<session>/results`) |
 | --- | --- | --- | --- |
-| 0a | `sbagent session baseline run` | `config.toml` (range fields) | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}` |
-| 0b | `sbagent session baseline import` | existing run id(s) in stacks-bench DB | same as 0a; `noise-floor-pct` only when `--run-id` and `--rerun-id` collide (single-run fallback) |
+| 0a | (runs at session start; no standalone command) | `repos/stacks-core` HEAD | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent baseline / calibration / candidate invocation uses this archived path; no silent rebuild fallback. |
+| 0b | `sbagent session baseline run` OR `sbagent session baseline import` | `config.toml` (range fields), or existing run id(s) in stacks-bench DB | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}`. Single `bench run` invocation; rerun id aliased to run id; `noise-floor-pct` sources from `triage.single_run_noise_floor_pct` (default 1%). |
 | 1 | `sbagent session triage run` | baseline artifacts | `triage/{candidates.json, candidates.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id, queries/, drilldowns/}` |
 | 1.5 | `sbagent session analysis run` | `triage/candidates.json` | `analysis/<family-id>/{analysis.json, analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
 | 1.7 | `sbagent session analysis merge` | `triage/candidates.json`, `analysis/*/analysis.json` | `merge/{optimization-targets.json, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
+| 1.8 | (runs after merge, before optimize; no standalone command) | `merge/optimization-targets.json`, `baseline/bin/stacks-bench` | `verify/<target>/<invocation-id>/bench-run.json`, `verify/<target>/baseline-run-ids.json`. Per-target calibration for every `normal_pr` target — one `stacks-bench bench run` per `verification_replay.invocations[]` entry. Pass 1c invariant: `verification_replay` is required on every `bench_eligible` target; missing → merge validation hard-fails before this phase ever runs. |
 | 2 | `sbagent session optimize run` | `merge/optimization-targets.json` | `optimize/<target-id>/{prompt.md, events.jsonl, final-message.md, conversation-id, optimizer-report.json, implementation.md OR abort.md OR consensus-issue.md, nextest.log, cargo-build.log, stderr.log}` |
-| 3 | `sbagent session bench run` | per-target release binary built in Phase 2 | `optimize/<target-id>/run-N/bench-run.json`, `optimize/<target-id>/run-ids`, `optimize/<target-id>/bin/stacks-bench` |
-| 4 | `sbagent session finalize run` | targets + run-ids | `finalize/{summary.json, summary.md, targets.md}` |
-| 5 | `sbagent session publish [--dry-run]` | `merge/optimization-targets.json`, `finalize/summary.json` | `optimize/<target-id>/{pr,issue}-{title.txt,body.md}`; PRs/issues on GitHub |
+| 3 | `sbagent session bench run` | per-target release binary built in Phase 2 | `optimize/<target-id>/<invocation-id>/bench-run.json`, `optimize/<target-id>/candidate-run-ids.json`, `optimize/<target-id>/bin/stacks-bench`. One `stacks-bench bench run` per invocation, mirroring Phase 1.8. |
+| 3.5 | `sbagent session analyze-results run` | `merge/optimization-targets.json`, `verify/<target>/...`, `optimize/<target>/...`, bench DB (read-only) | `analyze/<target-id>/{results-analysis.json, results-analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}`. Per-target results-analyzer agent fan-out (parallel under `analyzer.concurrency_cap`) — judges measured vs `expected_signal` and writes a typed verdict. Phase 4 sources `improvement_pct` + `status` from this file. |
+| 4 | `sbagent session finalize run` | `merge/optimization-targets.json`, `analyze/<target>/results-analysis.json`, `verify/<target>/baseline-run-ids.json`, `optimize/<target>/candidate-run-ids.json` | `finalize/{summary.json, summary.md, targets.md}`. `Experiment.improvement_pct` + `Experiment.status` sourced verbatim from each target's Phase 3.5 verdict; missing verdict → Aborted. Missing baseline file → hard error. Candidate / baseline id sets MUST match the target's VR invocation set; mismatched candidate → Aborted. |
+| 5 | `sbagent session publish [--dry-run]` | `merge/optimization-targets.json`, `finalize/summary.json`, `analyze/<target>/results-analysis.json` | `optimize/<target-id>/{pr,issue}-{title.txt,body.md}`; PRs/issues on GitHub. `normal_pr` targets ship only when (a) `summary.experiments[].status == Accepted`, (b) the canonical verdict is on disk + context-valid, (c) `verdict ∈ {accepted, mixed}`, and (d) `confidence >= results_analysis.confidence_floor` (default `medium`). Anything below is skipped with an explicit reason. |
 | 6 | `sbagent session archive [--dry-run]` | all session bulk + operator git repo | nothing in `<session>/results` (writes happen in the operator repo — see "Filesystem & git layout" below) |
 
 Every phase that produces artifacts has a matching `clean` subcommand
@@ -111,7 +113,7 @@ See [session-archive.md](session-archive.md) for the full contract.
 | Local disk (session bulk) | All phase artifacts (events, prompts, JSON outputs, CSVs, logs) | Phases 0–4 |
 | Local disk (per-target clones) | Per-target git clone + optimizer commits + release binary | Phase 2 |
 | Local disk (archive worktree) | Transient worktree, removed at phase end | Phase 6 |
-| stacks-bench DB | New `benchmark_run` rows (baseline + rerun + per-target candidate runs) | Phases 0, 3 |
+| stacks-bench DB | New `benchmark_run` rows: one for the Phase 0b baseline, one per Phase 1.8 calibration invocation per `normal_pr` target with `verification_replay`, one per Phase 3 candidate invocation. No separate rerun row — Phase 0b aliases `rerun-id` to the single baseline run id. | Phases 0b, 1.8, 3 |
 | Operator repo, main branch | One new commit per archive run: `archive: ledger <id>` (appends one JSONL line to `sessions.jsonl`) | Phase 6, when not dry-run |
 | Operator repo, write-once branches | New `session/<id>` branch with the full session bulk committed under `sessions/<id>/` | Phase 6, when not dry-run |
 | Operator fork on GitHub | Push of operator-main commit + push of `session/<id>` branch | Phase 6, when not dry-run + remote configured |
@@ -194,20 +196,28 @@ The first session should:
    dir (indexed chainstate persists across sessions).
 3. Set benchmark parameters explicitly on the CLI (or in
    `config.toml`); reuse them for the baseline + every experiment.
-4. Run the baseline + `bench rerun` (Phase 0).
-5. Run the triage agent → `triage/candidates.json` (Phase 1).
-6. Fan out analyzer agents → `analysis/<family-id>/analysis.json`
+4. Archive the baseline `stacks-bench` binary built from
+   `repos/stacks-core` HEAD → `baseline/bin/{stacks-bench, manifest.json}`
+   (Phase 0a).
+5. Run the baseline benchmark (single invocation; rerun id aliased)
+   (Phase 0b).
+6. Run the triage agent → `triage/candidates.json` (Phase 1).
+7. Fan out analyzer agents → `analysis/<family-id>/analysis.json`
    (Phase 1.5).
-7. Run `sbagent session analysis merge` →
+8. Run `sbagent session analysis merge` →
    `merge/optimization-targets.json` (Phase 1.7).
-8. Fan out optimizer agents → per-target
-   `optimize/<target>/implementation.md` (or `abort.md`) (Phase 2).
-   Each target gets its own git clone under
-   `<workspace>/optimizers/<id>/<target>/`.
-9. Build + serially benchmark each accepted target (Phase 3).
-10. Run `sbagent session finalize run` → `finalize/summary.json`
+9. Per-target targeted baseline calibration — one stacks-bench run
+   per `verification_replay.invocations[]` entry on every `normal_pr`
+   target → `verify/<target>/baseline-run-ids.json` +
+   `verify/<target>/<invocation-id>/bench-run.json` (Phase 1.8).
+10. Fan out optimizer agents → per-target
+    `optimize/<target>/implementation.md` (or `abort.md`) (Phase 2).
+    Each target gets its own git clone under
+    `<workspace>/optimizers/<id>/<target>/`.
+11. Build + serially benchmark each accepted target (Phase 3).
+12. Run `sbagent session finalize run` → `finalize/summary.json`
     (Phase 4).
-11. (Optional) `sbagent session archive --dry-run` to rehearse the
+13. (Optional) `sbagent session archive --dry-run` to rehearse the
     archive flow locally before shipping anything to the operator's
     remote.
 
@@ -240,7 +250,8 @@ optimize/<target-id>/implementation.md    # OR abort.md / consensus-issue.md
 optimize/<target-id>/optimizer-report.json
 optimize/<target-id>/side-observations.md  # optional, future-target evidence
 optimize/<target-id>/nextest.log
-optimize/<target-id>/run-N/bench-run.json
+optimize/<target-id>/<invocation-id>/bench-run.json
+optimize/<target-id>/candidate-run-ids.json
 ```
 
 Use these sources for comparison:

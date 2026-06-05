@@ -1,0 +1,234 @@
+{
+  "$defs": {
+    "Confidence": {
+      "description": "How sure the analyzer is about the verdict.\n\nVariant order matches schema serialization order (`high`, `medium`,\n`low`); for strength comparisons use [`Self::level`] rather than\nthe derived `Ord`, which sorts in declaration order (i.e.\n`High < Medium < Low`) and would invert the intuitive direction.",
+      "oneOf": [
+        {
+          "const": "high",
+          "description": "Strong evidence: matches the expected signal direction across\nall invocations; magnitudes within (or close to) tolerance.\nPR-grade as-is.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Mostly aligned but with notable caveats. Coordinator surfaces\ncaveats prominently in the PR body.",
+          "type": "string"
+        },
+        {
+          "const": "low",
+          "description": "Weak evidence — possibly noise, possibly real but unclear.\nDemote to caveats-heavy or hold for operator review per\n`results_analysis.confidence_floor`.",
+          "type": "string"
+        }
+      ]
+    },
+    "DbQueryRef": {
+      "additionalProperties": false,
+      "description": "Reference to one read-only SQL query the analyzer issued. Raw SQL\nlives alongside its CSV output (not in this JSON), keyed on\n`query_digest`. Same shape as the Pass 2 verifier's `db_queries[]`.",
+      "properties": {
+        "output_path": {
+          "description": "Relative path from the session results dir to the CSV output\n(e.g. `analyze/<target>/queries/<digest>.csv`).",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "One-line purpose: what the query was checking.",
+          "type": "string"
+        },
+        "query_digest": {
+          "description": "sha256 hex of the raw SQL text; matches the on-disk file name.",
+          "type": "string"
+        },
+        "rows_returned": {
+          "description": "Row count returned. Quick sanity field; full results on disk.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "purpose",
+        "query_digest",
+        "rows_returned",
+        "output_path"
+      ],
+      "type": "object"
+    },
+    "PerInvocationResult": {
+      "additionalProperties": false,
+      "description": "One row of [`ResultsAnalysis::per_invocation`].",
+      "properties": {
+        "baseline_run_id": {
+          "description": "Phase 1.8 baseline run id for this invocation.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "candidate_run_id": {
+          "description": "Phase 3 candidate run id for this invocation.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "invocation_id": {
+          "description": "Matches the corresponding `BenchInvocation.id` on the target's\n`verification_replay`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Human label carried through from `BenchInvocation.label` for\nreadability in summaries. Redundant with the source but the\nresults-analyzer copies it so consumers don't have to cross-ref.",
+          "type": "string"
+        },
+        "matches_expected_signal": {
+          "description": "True iff the measured direction + magnitude (when an\n`expected_signal.estimate_pct` was provided) fall within the\nanalyzer's hypothesis. Direction mismatch always sets this to\nfalse. Magnitude-only mismatch (direction right, magnitude\noutside tolerance) is up to the analyzer — usually false.",
+          "type": "boolean"
+        },
+        "measured_pct": {
+          "description": "Measured improvement percent. Positive = candidate faster than\nbaseline.",
+          "format": "double",
+          "type": "number"
+        },
+        "observations": {
+          "default": [],
+          "description": "Structured observations the analyzer surfaced about this\ninvocation — variance bands, span shifts, profiler-kv\nreflections. May be empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "label",
+        "baseline_run_id",
+        "candidate_run_id",
+        "measured_pct",
+        "matches_expected_signal"
+      ],
+      "type": "object"
+    },
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    },
+    "SelectionLens": {
+      "description": "Selection lens — the value-axis triage promoted a candidate on, and that\nthe analyzer must dispose of explicitly. Carries through verbatim into\nmerge output and the summary.",
+      "oneOf": [
+        {
+          "const": "tx_latency",
+          "description": "Wall-time savings under execution-bucket spans.",
+          "type": "string"
+        },
+        {
+          "const": "tenure_throughput",
+          "description": "Clarity-budget headroom freed (deterministic Clarity cost units).",
+          "type": "string"
+        },
+        {
+          "const": "commit_time",
+          "description": "Wall-time savings under commit-bucket spans.",
+          "type": "string"
+        }
+      ]
+    },
+    "Verdict": {
+      "description": "Overall verdict on the measured results vs the analyzer's\nhypothesis.",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "Measured signal matches the hypothesis. Ship.",
+          "type": "string"
+        },
+        {
+          "const": "mixed",
+          "description": "Measured signal partially matches the hypothesis — improvement\nexists but the per-invocation shape disagrees with the\nexpected pattern (e.g. cold gained instead of warm). Coordinator\nescalates: draft PR with caveats, or operator review.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "Measured signal contradicts the analyzer's mechanism claim.\nExperiment closes as `Rejected (mechanism mismatch)`. No PR.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Top-level shape of `results-analysis.json`. Single canonical record\nper target.",
+  "properties": {
+    "axis": {
+      "$ref": "#/$defs/SelectionLens",
+      "description": "Selection lens the verdict is denominated against. Carried\nverbatim from the target's\n`verification_replay.invocations[].expected_signal.axis`\n(all invocations on one target share an axis in v1 — the\nanalyzer commits to one lens per target)."
+    },
+    "caveats": {
+      "default": [],
+      "description": "Structured caveats — observations the agent flagged as worth\nsurfacing alongside the verdict but not severe enough to demote\nit. May be empty. Surface verbatim in the PR body and\n`summary.md`.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence",
+      "description": "How sure the analyzer is about the verdict. Coordinator uses\nthis against `results_analysis.confidence_floor` to gate\npublishing."
+    },
+    "db_queries": {
+      "default": [],
+      "description": "Read-only SQL queries the analyzer issued against the bench DB\nwhile forming its verdict, with their CSV outputs persisted next\nto this file. Audit trail; the verifier (Pass 2) carries the\nsame field shape.",
+      "items": {
+        "$ref": "#/$defs/DbQueryRef"
+      },
+      "type": "array"
+    },
+    "headline_improvement_pct": {
+      "description": "The canonical per-target `improvement_pct` the analyzer commits\nto. Phase 4 finalize sources `Experiment.improvement_pct` from\nhere verbatim. None when the analyzer declines to commit a\nsingle number (verdict = mixed or rejected).\n\nSign convention: positive = candidate faster than baseline (same\nas today's `improvement_pct`).",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "headline_rationale": {
+      "description": "One-line agent-written narrative defending the verdict.\nNon-blank. Surfaced in `summary.md` next to the headline number.",
+      "type": "string"
+    },
+    "per_invocation": {
+      "description": "One entry per invocation in the target's\n`verification_replay.invocations[]`. Order matches the\ninvocations array; each `invocation_id` maps to the same key\non the source target.",
+      "items": {
+        "$ref": "#/$defs/PerInvocationResult"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "pr_body_summary": {
+      "description": "PR-body result-section prose written by the analyzer. Phase 5\nPR-writer reads this verbatim into the PR description's \"Result\"\nsection — no templating around a number on the orchestrator side.\nNon-blank when present; `None` only when `verdict = rejected`\n(no PR opens).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1. New artifact; starts at v1."
+    },
+    "session_id": {
+      "description": "Session id this verdict belongs to. Matches the parent session;\nthe Phase 4 loader cross-checks.",
+      "type": "string"
+    },
+    "target_id": {
+      "description": "Target id this verdict belongs to. Matches\n`MergedTarget.id`; the loader cross-checks.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict",
+      "description": "The agent's overall verdict on the measured results."
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "target_id",
+    "axis",
+    "verdict",
+    "confidence",
+    "headline_rationale",
+    "per_invocation"
+  ],
+  "title": "ResultsAnalysis",
+  "type": "object"
+}

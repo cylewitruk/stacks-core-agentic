@@ -127,8 +127,8 @@
           "description": "Required disposition of the triage signal."
         },
         "schema_version": {
-          "$ref": "#/$defs/SchemaVersionV2",
-          "description": "Constant: 2."
+          "$ref": "#/$defs/SchemaVersionV3",
+          "description": "Constant: 3."
         },
         "selection_lens": {
           "$ref": "#/$defs/SelectionLens",
@@ -417,7 +417,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional targeted-replay recipe. When present, Phase 3 bench runs\nwill replay these txids / blocks with `--repetitions` instead of\nthe session's full-range bench, dramatically shrinking per-target\nwall time. Absent → full-range fallback. See\n[`VerificationReplay`] for the hash-only emission contract."
+          "description": "Targeted-replay recipe. Required on non-consensus\n(`consensus_breaking == false`) targets — Phase 1.8 + Phase 3\nrun every invocation in\n`verification_replay.invocations[]` and the post-bench\nresults-analyzer (Phase 3.5) pairs them by id. Optional and\nignored on consensus targets (which don't reach the bench).\nSee [`VerificationReplay`] for the invocation contract."
         }
       },
       "required": [
@@ -434,6 +434,146 @@
         "consensus_breaking"
       ],
       "type": "object"
+    },
+    "BenchInvocation": {
+      "additionalProperties": false,
+      "description": "One analyst-defined stacks-bench invocation. The analyzer decides\nHOW the target gets measured — Phase 1.8 runs the baseline side of\neach invocation, Phase 3 mirrors it on the candidate side with\nidentical `(samples, warmup, repetitions, profiler)`, and the\npost-bench results-analyzer (Phase 3.5) pairs them by `id` to judge\n`measured_pct` against `expected_signal`.",
+      "properties": {
+        "expected_signal": {
+          "$ref": "#/$defs/ExpectedSignal",
+          "description": "Analyzer hypothesis for this invocation. Direction load-bearing."
+        },
+        "id": {
+          "description": "Schema-validated path key. ASCII kebab-case, max 40 chars,\nregex [`INVOCATION_ID_PATTERN`]. Unique within a single\n`VerificationReplay.invocations` array (duplicates fail\nvalidation). Used in artifact paths\n(`verify/<target>/<id>/bench-run.json`,\n`optimize/<target>/<id>/bench-run.json`) and as the pairing key\nacross baseline ↔ candidate ↔ results-analysis.",
+          "pattern": "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "type": "string"
+        },
+        "label": {
+          "description": "Free-text human-facing label for prompts, the summary table, and\nthe PR body. Non-blank.",
+          "type": "string"
+        },
+        "profiler": {
+          "$ref": "#/$defs/ProfilerMode",
+          "description": "Profiler shape. v1: `rich` only. Baseline + candidate for the\nsame `id` MUST match — that's the flag-symmetry contract."
+        },
+        "purpose": {
+          "description": "One-line purpose: what this invocation tests and why. Surfaced in\nthe PR body and the results-analysis verdict.",
+          "type": "string"
+        },
+        "repetitions": {
+          "description": "Number of measured repetitions (`--repetitions` on stacks-bench).\n1..=200.",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "samples": {
+          "$ref": "#/$defs/BenchSamples",
+          "description": "What to replay — tagged enum on `kind`."
+        },
+        "warmup": {
+          "description": "Number of warmup repetitions discarded before measurement starts\n(`--warmup` on stacks-bench). 0..=200.",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "purpose",
+        "samples",
+        "warmup",
+        "repetitions",
+        "profiler",
+        "expected_signal"
+      ],
+      "type": "object"
+    },
+    "BenchSamples": {
+      "description": "Samples the analyzer wants a [`BenchInvocation`] to replay. Stacks-bench\ntreats txids and blocks as mutually-exclusive CLI inputs, so the\nvariants map 1:1 to `stacks-bench bench run` flag sets. Tagged enum\n(`kind` discriminator) for sharp validation errors + readable JSON.\n\nAll identifier values in `Txids` / `Blocks` are 0x-prefixed\n64-hex-char hashes ([`HEX_HASH_PATTERN`]). Heights and synthetic ids\nare NEVER acceptable; the analyzer picks identifiers from the\n`tx_hash` / `stacks_block_hash` columns, not from synthetic db ids\nthat are data-dir-local.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Transaction-replay invocation: `stacks-bench bench run --txid <hash>`\nfor each entry.",
+          "properties": {
+            "kind": {
+              "const": "txids",
+              "type": "string"
+            },
+            "txids": {
+              "description": "1-16 representative transaction hashes.",
+              "items": {
+                "pattern": "^0x[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "txids"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Block-replay invocation: `stacks-bench bench run --block <hash>`\nfor each entry.",
+          "properties": {
+            "blocks": {
+              "description": "1-16 representative stacks index block hashes.",
+              "items": {
+                "pattern": "^0x[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            },
+            "kind": {
+              "const": "blocks",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "blocks"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Full-range block-window invocation: `stacks-bench bench run\n--start-at <N> --count <M>`. Used when the analyzer wants a\ncanonical block range rather than a hand-picked sample.",
+          "properties": {
+            "count": {
+              "description": "Block count to replay. 1..=50_000 — sanity ceiling.",
+              "format": "uint64",
+              "maximum": 50000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "block_range",
+              "type": "string"
+            },
+            "start_at": {
+              "description": "First block height to replay. >= 1.",
+              "format": "uint64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "start_at",
+            "count"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "BreakageClass": {
       "description": "Classification of a consensus-breaking change. Required when\n`consensus_breaking == true`.",
@@ -484,6 +624,41 @@
           "type": "string"
         }
       ]
+    },
+    "ExpectedSignal": {
+      "additionalProperties": false,
+      "description": "Per-invocation hypothesis: what the analyzer expects the measurement\nto show. Direction is the LOAD-BEARING piece (results-analyzer judges\nshape consistency first); magnitude is advisory (`estimate_pct`\noptional; tolerance optional). Splitting the qualitative claim from\nthe quantitative one lets the analyzer commit to direction while\nbeing honest about uncertain magnitudes (\"warm should improve;\ncould be 5% or 50% depending on working-set hit rate\").",
+      "properties": {
+        "axis": {
+          "$ref": "#/$defs/SelectionLens",
+          "description": "Selection lens the analyzer measured the candidate target against\n— same enum as `Candidate.selection_lens` and\n`LensDisposition.lens`."
+        },
+        "direction": {
+          "$ref": "#/$defs/SignalDirection",
+          "description": "Direction component. Load-bearing."
+        },
+        "estimate_pct": {
+          "description": "Optional point estimate of the magnitude as a signed percent.\nConvention: positive = faster (consistent with\n`improvement_pct`'s sign). Skipped from output when absent.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tolerance_pct": {
+          "description": "Optional non-negative tolerance band (also percent). When set\nalongside `estimate_pct`, the results-analyzer treats\n`[estimate_pct - tolerance_pct, estimate_pct + tolerance_pct]`\nas the expected range. With `direction == Neutral` and no\n`estimate_pct`, treats `[-tolerance_pct, +tolerance_pct]`.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "axis",
+        "direction"
+      ],
+      "type": "object"
     },
     "Hotspot": {
       "additionalProperties": false,
@@ -616,6 +791,16 @@
         }
       ]
     },
+    "ProfilerMode": {
+      "description": "Profiler mode applied to a [`BenchInvocation`]. v1 only accepts\n`\"rich\"`; lean opt-in lands later when a real target needs it. The\nflag-symmetry invariant is encoded here: baseline and candidate for\nthe same `id` MUST run with the same `profiler` value.",
+      "oneOf": [
+        {
+          "const": "rich",
+          "description": "Full profile: no `--bench-spans-only`, no `--no-profiler-kv`.\nSpan + profiler-kv data preserved for the verifier\n(Pass 2) and the results-analyzer (Pass 1c Phase 3.5).",
+          "type": "string"
+        }
+      ]
+    },
     "RejectedAnalysis": {
       "additionalProperties": false,
       "description": "Body of a rejected analysis.",
@@ -630,8 +815,8 @@
           "type": "string"
         },
         "schema_version": {
-          "$ref": "#/$defs/SchemaVersionV2",
-          "description": "Constant: 2."
+          "$ref": "#/$defs/SchemaVersionV3",
+          "description": "Constant: 3."
         },
         "status": {
           "$ref": "#/$defs/RejectedStatusTag",
@@ -676,8 +861,8 @@
         }
       ]
     },
-    "SchemaVersionV2": {
-      "const": 2,
+    "SchemaVersionV3": {
+      "const": 3,
       "type": "integer"
     },
     "SelectionLens": {
@@ -700,61 +885,57 @@
         }
       ]
     },
-    "VerificationReplay": {
-      "additionalProperties": false,
-      "description": "Per-target replay recipe — the analyzer's verification plan rendered as\nmachine-readable inputs for stacks-bench's targeted-replay modes\n(`--txid`/`--block` with `--repetitions`). Optional: absence keeps the\ncurrent full-range fallback in `bench_experiments.rs`.\n\n`txids` and `blocks` are mutually inclusive: an analyzer may emit\neither, both, or neither. When both are present, the bench coordinator\nruns separate replay phases (txid mode first, block mode second)\nagainst the same per-target binary; the per-phase results land in one\n`bench-run.json` per target.\n\nAll identifier values are 0x-prefixed 64-hex-char hashes\n([`HEX_HASH_PATTERN`]). Heights and synthetic ids are NEVER acceptable\nhere — see `feature-requests-stacks-bench.md` and the autonomous\nroadmap's Layer 1A design notes for the rationale.",
-      "properties": {
-        "blocks": {
-          "description": "Representative stacks index block hashes the analyzer wants\nre-run. Picked from drilldown queries via the `stacks_block_hash`\n(a.k.a. `stacks_block.block_hash_hex`) column.",
-          "items": {
-            "pattern": "^0x[0-9a-fA-F]{64}$",
-            "type": "string"
-          },
-          "maxItems": 16,
-          "minItems": 1,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "rationale": {
-          "description": "One-line explanation of why the analyzer picked txids vs blocks\nvs both (e.g. \"block-context: seal-path change needs full block\ncommit\"). Surfaced in summaries; non-actionable for the\ncoordinator.",
+    "SignalDirection": {
+      "description": "Direction component of an [`ExpectedSignal`]. The results-analyzer\n(Phase 3.5) judges measured-vs-expected SHAPE first using this field;\na direction mismatch is load-bearing (analyzer's mechanism hypothesis\nis wrong) while a magnitude mismatch is advisory.",
+      "oneOf": [
+        {
+          "const": "improves",
+          "description": "Candidate is expected to be faster / produce a positive\n`improvement_pct` on this invocation.",
           "type": "string"
         },
-        "repetitions": {
-          "description": "Number of measured repetitions per replay target. Mapped to\n`--repetitions` on stacks-bench `bench run`. The full bench\nsubstitutes per-target replay budget for full-range wall-time.",
-          "format": "uint32",
-          "maximum": 200,
-          "minimum": 1,
-          "type": "integer"
+        {
+          "const": "neutral",
+          "description": "Candidate is expected to land within ±`tolerance_pct` of the\nbaseline — used for control / corroboration invocations\n(e.g. cold first-touch should be unchanged when the\noptimization is a warm-cache win).",
+          "type": "string"
         },
-        "txids": {
-          "description": "Representative transaction hashes the analyzer wants re-run.\nPicked from drilldown queries via the `tx_hash` (a.k.a.\n`stacks_tx.tx_hash_hex`) column.",
+        {
+          "const": "regresses",
+          "description": "Candidate is expected to be slower / produce a negative\n`improvement_pct`. Used when the analyzer explicitly trades\none workload shape for another.",
+          "type": "string"
+        }
+      ]
+    },
+    "VerificationReplay": {
+      "additionalProperties": false,
+      "description": "Per-target replay recipe — the analyzer's verification plan rendered\nas machine-readable inputs for stacks-bench's targeted-replay modes.\nOne target carries one [`VerificationReplay`], which carries one or\nmore [`BenchInvocation`]s — each invocation is one self-contained\n`stacks-bench bench run` command. Phase 1.8 runs every invocation\nagainst the baseline; Phase 3 runs the same invocations against the\ncandidate; the post-bench results-analyzer (Phase 3.5) pairs them\nper-invocation and emits the headline verdict.\n\nOn `bench_eligible == true` (`delivery_mode == normal_pr`) targets\n`verification_replay` is required. On consensus targets\n(`consensus_poc_pr` / `consensus_issue`) it is optional and ignored\nby the pipeline — those modes don't reach Phase 1.8/3.",
+      "properties": {
+        "invocations": {
+          "description": "One or more invocations, each a self-contained `stacks-bench\nbench run` command. `len()` is bounded by\n[`BENCH_INVOCATION_HARD_MAX`] (currently 16). Invocation `id`s\nmust be unique within this list.",
           "items": {
-            "pattern": "^0x[0-9a-fA-F]{64}$",
-            "type": "string"
+            "$ref": "#/$defs/BenchInvocation"
           },
           "maxItems": 16,
           "minItems": 1,
+          "type": "array"
+        },
+        "rationale": {
+          "description": "One-line explanation of the overall measurement strategy. Why\nthese specific invocations? E.g. \"cold-first-touch isolates MARF\nnode-cache misses; warm-steady measures the steady-state replay\nof the same block set.\" Surfaced in summaries.",
+          "type": "string"
+        },
+        "suspected_spans": {
+          "description": "Optional list of span names the analyzer expects to move as a\nresult of the proposed change. Free-form; used as analyzer\nhints to the post-bench results-analyzer (Phase 3.5). Not\nrequired for any pipeline step.",
+          "items": {
+            "type": "string"
+          },
           "type": [
             "array",
-            "null"
-          ]
-        },
-        "warmup": {
-          "description": "Number of warmup repetitions discarded before measurement\nbegins. Mapped to `--warmup` on stacks-bench `bench run`.\nCold-fork single-tx / single-block replay has empty caches\n(MARF node cache, SQLite page cache, allocator state); 5-10\nwarmup reps lets caches settle into a representative-ish state\nbefore the measured reps run. Defaults to `10` when omitted;\nrecipes can override (e.g. set lower for very expensive blocks\nwhere each rep is already minutes).",
-          "format": "uint32",
-          "maximum": 200,
-          "minimum": 0,
-          "type": [
-            "integer",
             "null"
           ]
         }
       },
       "required": [
-        "repetitions",
-        "rationale"
+        "rationale",
+        "invocations"
       ],
       "type": "object"
     }

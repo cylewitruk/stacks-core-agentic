@@ -242,7 +242,7 @@
         },
         "status": {
           "$ref": "#/$defs/ExperimentStatus",
-          "description": "Outcome of this target. Valid values depend on `delivery_mode`; see\n[`Experiment::validate`] for the seven legal combinations."
+          "description": "Outcome of this target. Valid values depend on `delivery_mode`; see\n[`Experiment::validate_model`] for the seven legal combinations."
         },
         "target_id": {
           "description": "Canonical kebab-case target id.",
@@ -414,8 +414,8 @@
       ],
       "type": "object"
     },
-    "SchemaVersionV2": {
-      "const": 2,
+    "SchemaVersionV3": {
+      "const": 3,
       "type": "integer"
     },
     "SelectionLens": {
@@ -484,8 +484,8 @@
       "description": "Demo-friendly aggregate counts by (delivery_mode, status)."
     },
     "schema_version": {
-      "$ref": "#/$defs/SchemaVersionV2",
-      "description": "Constant: 2."
+      "$ref": "#/$defs/SchemaVersionV3",
+      "description": "Constant: 3."
     },
     "session_id": {
       "description": "Session this artifact belongs to.",

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "family_id": "dlmm-router-contract-family",
   "status": "accepted",
   "selection_lens": "tx_latency",
@@ -32,6 +32,53 @@
       },
       "risk": "low",
       "verification_plan": "cargo nextest run -p stackslib chainstate::stacks::index::marf",
+      "verification_replay": {
+        "rationale": "Sampled DLMM router txs that all trace through the same MARF subtree; cold + warm regimes isolate cache-miss vs steady-state benefit.",
+        "invocations": [
+          {
+            "id": "cold-first-touch",
+            "label": "cold first-touch",
+            "purpose": "Measure MARF node-cache miss cost on the first read of each sampled tx.",
+            "samples": {
+              "kind": "txids",
+              "txids": [
+                "0xab00000000000000000000000000000000000000000000000000000000000000",
+                "0xcd00000000000000000000000000000000000000000000000000000000000000"
+              ]
+            },
+            "warmup": 0,
+            "repetitions": 20,
+            "profiler": "rich",
+            "expected_signal": {
+              "axis": "tx_latency",
+              "direction": "improves",
+              "estimate_pct": 8.0,
+              "tolerance_pct": 3.0
+            }
+          },
+          {
+            "id": "warm-steady",
+            "label": "warm steady-state",
+            "purpose": "Measure steady-state benefit with the read cache populated.",
+            "samples": {
+              "kind": "txids",
+              "txids": [
+                "0xab00000000000000000000000000000000000000000000000000000000000000",
+                "0xcd00000000000000000000000000000000000000000000000000000000000000"
+              ]
+            },
+            "warmup": 10,
+            "repetitions": 20,
+            "profiler": "rich",
+            "expected_signal": {
+              "axis": "tx_latency",
+              "direction": "improves",
+              "estimate_pct": 4.2,
+              "tolerance_pct": 2.0
+            }
+          }
+        ]
+      },
       "consensus_breaking": false
     }
   ]

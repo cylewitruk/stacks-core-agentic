@@ -204,6 +204,7 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
     phase_1_8_calibration(&env)?;
     phase_2_optimizers(&env).await?;
     phase_3_bench_experiments(&env)?;
+    phase_3_5_results_analyzer(&env).await?;
     phase_4_finalize(&env)?;
     if env.args.publish_accepted_prs {
         phase_5_publish(&env).await?;
@@ -231,9 +232,8 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
 
 /// Phase 0a: build + archive the baseline `stacks-bench` binary BEFORE
 /// either Phase 0 branch (fresh run OR import). Phase 1.8 calibration
-/// and Phase 3 full-range fallback both depend on
-/// `baseline/bin/stacks-bench` existing — including in imported-baseline
-/// sessions where Phase 0b is skipped.
+/// depends on `baseline/bin/stacks-bench` existing — including in
+/// imported-baseline sessions where Phase 0b is skipped.
 fn phase_0a_archive_baseline(env: &PhaseEnv<'_>) -> Result<baseline::ArchiveBinaryOutputs> {
     let stacks_core_base = env
         .ctx
@@ -484,22 +484,13 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
         layout: &env.layout,
         worktrees_root: &worktrees_root,
         targets: &targets,
-        range: bench_experiments::BenchRange {
+        env: bench_experiments::BenchEnv {
             source_dir,
             network: env
                 .ctx
                 .settings
                 .stacks_bench
                 .effective_network(),
-            // The full-pipeline orchestrator always runs baseline,
-            // so the resolver has already produced concrete values
-            // here. Wrap as Some for BenchRange's Option-typed slot
-            // (which is None-able only on the `session bench run`
-            // standalone path with all-recipe targets).
-            start_at: Some(env.range.start_at),
-            count: Some(env.range.count),
-            warmup: env.range.warmup,
-            filter: env.range.filter.as_deref(),
             shadow_dir_root: env
                 .ctx
                 .layout
@@ -515,6 +506,37 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Phase 3.5: results-analyzer fan-out. One agent per
+/// `bench_eligible` target with an Implemented optimizer report +
+/// matching baseline/candidate run-ids — judges measured vs
+/// `expected_signal` and writes a typed verdict that Phase 4 finalize
+/// sources `improvement_pct` + `status` from. Per-target failure is
+/// non-fatal: the offending target lands at finalize as an Aborted
+/// experiment with `reason = "results-analyzer did not produce a
+/// verdict: ..."`. Concurrency: `analyzer.concurrency_cap`.
+async fn phase_3_5_results_analyzer(env: &PhaseEnv<'_>) -> Result<()> {
+    use std::sync::Arc;
+
+    use crate::harnesses::codex::CodexHarness;
+    use crate::session::results_analyzer;
+
+    let harness = Arc::new(CodexHarness::new());
+    let outputs = results_analyzer::run(results_analyzer::Inputs {
+        layout: env.layout.clone(),
+        framework: env.ctx.layout.clone(),
+        settings: env.ctx.settings.clone(),
+        parallel: None,
+        harness,
+    })
+    .await
+    .context("Phase 3.5: results-analyzer")?;
+    let (produced, skipped, failed) = outputs.tally();
+    println!(
+        "Phase 3.5 results-analyzers: {produced} produced, {skipped} skipped, {failed} failed"
+    );
+    Ok(())
+}
+
 /// Phase 4: finalize. Aggregate per-target outcomes into
 /// `summary.json` and `summary.md`. Warn on dangling DB-vs-artifact
 /// run-id refs first so they don't get baked into the immutable
@@ -522,11 +544,7 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
 fn phase_4_finalize(env: &PhaseEnv<'_>) -> Result<()> {
     let bench = StacksBenchCli::from_layout(&env.ctx.layout)?;
     db_consistency::warn_dangling_refs(&env.layout, &bench).context("Phase 4: DB consistency")?;
-    finalize::finalize(&FinalizeInputs {
-        layout: &env.layout,
-        bench: &bench,
-    })
-    .context("Phase 4: finalize")?;
+    finalize::finalize(&FinalizeInputs { layout: &env.layout }).context("Phase 4: finalize")?;
     Ok(())
 }
 

@@ -60,17 +60,17 @@ pub struct StacksBenchCli {
     pub cargo_cwd: PathBuf,
     /// When `true`, [`release_bin`] is required to exist at every
     /// invocation; a missing path causes an error rather than silently
-    /// falling back to `cargo stacks-bench`. Used by Phase 0b baseline,
-    /// Phase 1.8 calibration, and Phase 3 full-range fallback — all the
-    /// code paths that depend on the archived baseline binary being the
-    /// deterministic source of truth.
+    /// falling back to `cargo stacks-bench`. Used by Phase 0b baseline
+    /// and Phase 1.8 calibration — the code paths that depend on the
+    /// archived baseline binary being the deterministic source of
+    /// truth.
     pub strict: bool,
 }
 
 impl StacksBenchCli {
     /// Construct a strict CLI that requires an archived release binary.
-    /// Used by baseline / calibration / full-range fallback paths where a
-    /// silent `cargo stacks-bench` rebuild would defeat the
+    /// Used by the Phase 0b baseline and Phase 1.8 calibration paths,
+    /// where a silent `cargo stacks-bench` rebuild would defeat the
     /// archived-binary determinism contract.
     pub fn strict_archived(release_bin: PathBuf, data_dir: PathBuf, cargo_cwd: PathBuf) -> Self {
         Self {

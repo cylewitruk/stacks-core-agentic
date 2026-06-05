@@ -10,7 +10,7 @@ use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::models::common::{
-    BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV2,
+    BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV3,
 };
 use stacks_bench_agent::models::targets::{
     MergeMethod, MergedFrom, MergedTarget, OptimizationTargets,
@@ -280,7 +280,7 @@ fn stage_framework_and_session(
         .unwrap();
 
     let targets_doc = OptimizationTargets {
-        schema_version: SchemaVersionV2,
+        schema_version: SchemaVersionV3,
         session_id: "20260507-104400".to_owned(),
         baseline_run_id: 100,
         baseline_rerun_id: 101,
@@ -300,6 +300,34 @@ fn stage_framework_and_session(
     .unwrap();
 
     (layout, session)
+}
+
+fn default_vr() -> stacks_bench_agent::models::common::VerificationReplay {
+    use stacks_bench_agent::models::common::{
+        BenchInvocation, BenchSamples, ExpectedSignal, ProfilerMode, SelectionLens,
+        SignalDirection, VerificationReplay,
+    };
+    VerificationReplay {
+        rationale: "test".into(),
+        invocations: vec![BenchInvocation {
+            id: "warm-steady".into(),
+            label: "warm".into(),
+            purpose: "smoke".into(),
+            samples: BenchSamples::Blocks {
+                blocks: vec![format!("0x{}", "a".repeat(64))],
+            },
+            warmup: 10,
+            repetitions: 20,
+            profiler: ProfilerMode::Rich,
+            expected_signal: ExpectedSignal {
+                axis: SelectionLens::TxLatency,
+                direction: SignalDirection::Improves,
+                estimate_pct: Some(4.0),
+                tolerance_pct: Some(2.0),
+            },
+        }],
+        suspected_spans: None,
+    }
 }
 
 fn target(id: &str, delivery_mode: DeliveryMode, poc_scope: Option<Vec<&str>>) -> MergedTarget {
@@ -344,7 +372,11 @@ fn target(id: &str, delivery_mode: DeliveryMode, poc_scope: Option<Vec<&str>>) -
         },
         risk: Risk::Low,
         verification_plan: "v".to_owned(),
-        verification_replay: None,
+        verification_replay: if matches!(delivery_mode, DeliveryMode::NormalPr) {
+            Some(default_vr())
+        } else {
+            None
+        },
         merge_notes: None,
         contributor_differences: None,
         consensus_breaking,

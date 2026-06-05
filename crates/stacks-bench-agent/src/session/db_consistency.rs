@@ -40,8 +40,8 @@ impl std::fmt::Display for DanglingRef {
 ///
 /// Coverage:
 /// - `baseline/run-id`, `baseline/rerun-id`
-/// - `verify/<target>/baseline-run-ids.json` (txid + block phase arrays)
-/// - `optimize/<target>/run-ids` (Phase 3 candidate run-ids)
+/// - `verify/<target>/baseline-run-ids.json` (per-invocation entries)
+/// - `optimize/<target>/candidate-run-ids.json` (per-invocation entries)
 ///
 /// Not covered today (no per-target reference today): `summary.json`'s
 /// `experiments[].run_ids` / `baseline_run_ids` — those are derived
@@ -62,24 +62,34 @@ pub fn collect_dangling_run_ids(
     }
 
     for target_id in targets {
-        // Per-target verify baselines (Pass 1a Phase 1.8 calibration).
+        // Per-target verify baselines (Phase 1.8 calibration).
         let verify_path = layout.verify_baseline_run_ids_json(target_id);
         if let Ok(raw) = std::fs::read_to_string(&verify_path)
-            && let Ok(ids) =
-                serde_json::from_str::<crate::session::calibration::BaselineRunIds>(&raw)
+            && let Ok(ids) = serde_json::from_str::<crate::models::common::InvocationRunIds>(&raw)
         {
-            for id in ids.txid_run_ids {
-                refs.push((id, format!("verify/{target_id}/baseline-run-ids.json (txid)")));
-            }
-            for id in ids.block_run_ids {
-                refs.push((id, format!("verify/{target_id}/baseline-run-ids.json (block)")));
+            for entry in ids.entries {
+                refs.push((
+                    entry.run_id,
+                    format!(
+                        "verify/{target_id}/baseline-run-ids.json (invocation `{}`)",
+                        entry.invocation_id
+                    ),
+                ));
             }
         }
         // Per-target candidate bench run-ids (Phase 3).
-        let cand_path = layout.experiment_run_ids_path(target_id);
-        if let Ok(ids) = loader::read_experiment_run_ids(&cand_path) {
-            for id in ids {
-                refs.push((id, format!("optimize/{target_id}/run-ids")));
+        let cand_path = layout.experiment_candidate_run_ids_json(target_id);
+        if let Ok(raw) = std::fs::read_to_string(&cand_path)
+            && let Ok(ids) = serde_json::from_str::<crate::models::common::InvocationRunIds>(&raw)
+        {
+            for entry in ids.entries {
+                refs.push((
+                    entry.run_id,
+                    format!(
+                        "optimize/{target_id}/candidate-run-ids.json (invocation `{}`)",
+                        entry.invocation_id
+                    ),
+                ));
             }
         }
     }
@@ -233,7 +243,7 @@ mod tests {
         std::fs::create_dir_all(&verify_dir).unwrap();
         std::fs::write(
             verify_dir.join("baseline-run-ids.json"),
-            r#"{"txid_run_ids":[10,11],"block_run_ids":[]}"#,
+            r#"{"entries":[{"invocation_id":"cold-first-touch","run_id":10},{"invocation_id":"warm-steady","run_id":11}]}"#,
         )
         .unwrap();
         let opt_dir = layout
@@ -241,7 +251,11 @@ mod tests {
             .join("optimize")
             .join(target);
         std::fs::create_dir_all(&opt_dir).unwrap();
-        std::fs::write(opt_dir.join("run-ids"), "20\n21\n").unwrap();
+        std::fs::write(
+            opt_dir.join("candidate-run-ids.json"),
+            r#"{"entries":[{"invocation_id":"cold-first-touch","run_id":20},{"invocation_id":"warm-steady","run_id":21}]}"#,
+        )
+        .unwrap();
 
         // DB has 10, 20 but NOT 11 or 21.
         let mut canned = std::collections::HashMap::new();

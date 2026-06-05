@@ -8,63 +8,20 @@ scoped."
 Each item lists **what** it is, **why** it's deferred, and **what triggers
 picking it up**.
 
-## Post-bench results-analyzer agent (proposed Pass 4)
+## Post-bench results-analyzer agent — folded into Pass 1c
 
-**What**: Per-target fanout agent that runs after Phase 3 bench and before Phase
-5 publish. Reads the calibration + candidate `bench-run.json` files (with rich
-profile data, per-block and per-tx breakdowns) plus the bench DB, and emits a
-structured assessment of whether the measured `improvement_pct` is real,
-meaningful, robust, and free of unexpected side-effects. Output feeds the Phase
-5 PR-writer and the operator audit trail.
+Previously framed as a deferred "Pass 4." The independent-review session that
+surfaced the methodology gap also surfaced that `improvement_pct` aggregation
+without an agent in the loop is fundamentally limited — once Pass 1c lets
+the analyzer emit multiple bench invocations per target (each with its own
+`expected_signal`), mechanical aggregation across invocations would
+re-introduce the same blindness the schema change is fixing. The
+results-analyzer is the load-bearing consumer of the new per-invocation
+data; without it, the breakdown has no clean way to feed the summary table
+/ PR body / SessionRecord.
 
-**Why deferred**: The current plan
-([baseline-verification-agent-plan.md](baseline-verification-agent-plan.md))
-lands Pass 1a's apples-to-apples comparison and Pass 2's pre-bench verifier.
-Together those resolve the methodology integrity gap that's actively blocking
-PR-grade numbers — the verifier reasons about whether the targeted-replay
-workload is representative, and Pass 1a ensures numerator + denominator are
-measured under matched cache regimes. The results-analyzer gap is real but
-secondary: `improvement_pct` can still be a defensible PR-body number even
-without it, as long as Phase 5's PR-writer surfaces the verifier's context.
-
-Pass 4 sharpens the resulting PR body and catches narrower failure modes; it
-doesn't unblock shipping the way Pass 1a + 2 do.
-
-**Trigger to pick up**: After Pass 1a + Pass 2 land and produce real-session
-data, audit the resulting `improvement_pct` numbers and PR bodies against the
-actual changes. Look for failure modes the mechanical arithmetic obscured:
-
-- Improvement concentrated in one of N replay blocks; the others barely moved.
-- Per-call cost ↓ but call count ↑ — net win is smaller than the per-call number
-  suggests.
-- Wide variance band — the headline number could be noise.
-- Shifted hot path — fix didn't speed up the target span; it changed which path
-  is hot.
-- Specific tx types regressed; specific tx types improved. Net positive but the
-  regression deserves disclosure.
-
-If any of these slip past the verifier + PR-writer in real sessions, Pass 4
-becomes justified.
-
-**Design sketch (deferred scope)**: same scaffolding as Pass 2's verifier.
-Per-target fanout. Advisory pattern: emits
-`analyze/<target>/results-analysis.json` with fields like:
-
-- `confidence` — `high` | `medium` | `low`
-- `caveats[]` — structured observations
-- `recommended_disposition` — `ship` | `ship_with_caveats` |
-  `hold` | `reject`
-- `pr_body_excerpt` — suggested framing for the PR-writer
-- `db_queries[]` — same `{purpose, query_digest, output_path}` shape as the
-  verifier
-
-Coordinator applies operator-set thresholds (similar to `verification_floor`) to
-translate recommendation into action. Phase 5 PR-writer reads `pr_body_excerpt`
-and weaves it into the PR body. Read-only DB access (same pattern as verifier;
-via sqlite3 CLI in v1, MCP wrapper in Pass 3).
-
-**Estimated scope**: ~15-20 hours (similar to Pass 2's verifier), plus ~1-2
-weeks of prompt iteration against real-session data before defaults stabilize.
+Full design now lives in [§Pass 1c — analyzer-defined invocations + post-bench
+results-analyzer](#pass-1c--analyzer-defined-invocations--post-bench-results-analyzer).
 
 ---
 
@@ -79,8 +36,8 @@ Replace "Phase 1.8 / 1.9 / 2 / 3" with descriptive names everywhere (CLI
 subcommands, artifact paths, prompts, docs). Codex flagged this in a review; we
 agreed the direction is right. Deferred because it's a larger cross-cutting
 refactor and the current numbered scheme is workable. Picking it up makes sense
-once the phase set stabilizes (i.e. after Pass 2 + the results-analyzer landing
-decision).
+once the phase set stabilizes (i.e. after Pass 1c lands Phase 3.5 and Pass 2
+lands Phase 1.9).
 
 ### Phase-timing instrumentation
 
@@ -139,126 +96,305 @@ remaining:
 Trigger to pick up: after the next pilot session — incrementally, one
 drift mode per slice.
 
-### Analyzer-defined measurement protocol
+### Pass 1c — analyzer-defined invocations + post-bench results-analyzer
+
+> **Status (2026-06-05): Pass 1c complete.** Schema rewrite,
+> per-invocation paths, conditional-required gate, ID-set parity /
+> canonicalization, operator `analyzer.max_invocations_per_target`
+> cap, the Phase 3.5 results-analyzer agent + finalize cutover, the
+> Phase 5 publish gate on verdict content (`rejected` is skipped),
+> and the `results_analysis.confidence_floor` operator knob are all
+> landed. `Experiment.improvement_pct` + `Experiment.status` are
+> sourced verbatim from each target's
+> `analyze/<target>/results-analysis.json`; verdicts whose confidence
+> falls below the operator's floor (default `medium`) hold for
+> operator review rather than auto-PR. Pass 1c is closed.
 
 Today the optimizer-target schema's `verification_replay` carries one bench
-shape (`{txids, repetitions, warmup, rationale}`). Phase 1.8 calibration and
-Phase 3 candidate bench both run that single shape regardless of what the
-target is optimizing. Independent review of session `20260521-051649` flagged
-this as the principal methodology concern: a 73.30% reported win on a
-node-cache target is internally consistent but can't be separated into "real
-cache hits during measurement" vs "warmup smearing the cache effect across
-repetitions." The same blind-spot exists for any optimization whose benefit
-is workload-shape-dependent (batched writes, lazy-init paths, first-touch
-elision).
+shape (`{txids, blocks, repetitions, warmup, rationale}`). Phase 1.8
+calibration and Phase 3 candidate bench both run that single shape
+regardless of what the target is optimizing. Independent review of session
+`20260521-051649` flagged this as the principal methodology concern: a
+73.30% reported win on a node-cache target is internally consistent but
+can't be separated into "real cache hits during measurement" vs "warmup
+smearing the cache effect across repetitions." The same blind-spot exists
+for any optimization whose benefit is workload-shape-dependent (batched
+writes, lazy-init paths, first-touch elision).
 
-**Proposed direction**: have the analyzer always emit its recommended
-benchmark protocol per target. Replace the one-shape `verification_replay`
-with an arbitrary list of analyzer-defined measurement profiles, each
-carrying a hypothesis about the expected per-profile delta. The verifier
-(Pass 2) then has a concrete contract to check: measured-vs-hypothesized,
-per profile — judging SHAPE consistency, not magnitude accuracy.
+**Direction**: the analyzer is best positioned to decide HOW the target
+should be measured — it's the agent that read the profiler data, identified
+the hotspot, and reasoned about which workload shape exercises the
+mechanism. Pass 1c lets the analyzer emit one or more concrete stacks-bench
+invocations per target (samples + warmup + repetitions + expected signal),
+and adds a **post-bench results-analyzer agent** that synthesizes the
+per-invocation measurements into a structured verdict downstream phases
+consume.
 
-Sketch:
+This folds in the previously-deferred "Post-bench results-analyzer agent"
+(formerly proposed as Pass 4) — without the synthesizer, the per-invocation
+breakdown has no clean consumer for the summary table / PR body /
+SessionRecord.
+
+#### Schema rewrite
+
+Replace `verification_replay`'s flat shape with:
 
 ```json
 {
-  "txids": [...],
-  "blocks": [...],
-  "rationale": "...",
-  "measurement_profiles": [
+  "rationale": "MARF cache target: first-touch shouldn't change; warm reads should land the win.",
+  "invocations": [
     {
-      "label": "cold",
+      "label": "cold first-touch",
+      "purpose": "isolate cold-path cost; cache benefit should be minimal here",
+      "samples": { "kind": "txids", "txids": ["0xabc..."] },
       "warmup": 0,
       "repetitions": 5,
       "profiler": "rich",
-      "purpose": "isolate first-touch cost; cache benefit should be minimal here",
       "expected_signal": {
         "axis": "tx_latency",
         "direction": "neutral",
-        "estimate_pct": 0,
-        "tolerance_pct": 2
+        "tolerance_pct": 3
       }
     },
     {
-      "label": "warm",
-      "warmup": 10,
-      "repetitions": 20,
-      "profiler": "rich",
+      "label": "warmed steady-state",
       "purpose": "steady-state cache-hit rate after warmup populates working set",
+      "samples": { "kind": "txids", "txids": ["0xdef...", "0x123...", "0x456..."] },
+      "warmup": 10,
+      "repetitions": 5,
+      "profiler": "rich",
       "expected_signal": {
         "axis": "tx_latency",
         "direction": "improves",
         "estimate_pct": 4.5,
         "tolerance_pct": 3
       }
+    },
+    {
+      "label": "block-context cross-check",
+      "purpose": "corroborate the win shows up in block-context replay",
+      "samples": { "kind": "blocks", "blocks": ["0xaaa...", "0xbbb..."] },
+      "warmup": 5,
+      "repetitions": 5,
+      "profiler": "rich",
+      "expected_signal": {
+        "axis": "tx_latency",
+        "direction": "improves",
+        "tolerance_pct": 5
+      }
     }
-  ]
+  ],
+  "suspected_spans": ["MARF.read_node_hash", "MARF.get_block_at_height"]
 }
 ```
 
 Key shape choices, with rationale:
 
-- **`expected_signal` is an object, not a percent.** Splits the QUALITATIVE
-  hypothesis (`direction: improves | neutral | regresses`) from the
-  QUANTITATIVE one (`estimate_pct` + `tolerance_pct`). Some profiles have a
-  confident direction but uncertain magnitude ("I know warm should improve;
-  could be 5% or 50% depending on working-set hit rate"). Some have the
-  inverse ("magnitude small, direction load-bearing"). Numeric fields stay
-  optional within the object.
-- **`profiler` is a per-profile string, not a flag list.** v1 only accepts
-  `"rich"`; lean opt-in later. The invariant: baseline and candidate inside
-  a profile must use the same `profiler` value. (See "Flag symmetry between
-  baseline and candidate benches" above — this carries that contract
-  forward into the analyzer-emitted schema.)
-- **Samples (`txids` / `blocks`) stay top-level in v1.** Per-profile sample
-  lists are powerful but materially complicate the first implementation;
-  defer until a real target needs differentiated samples per profile.
-- **`measurement_profiles` is required, `minItems: 1`.** Every accepted
-  `normal_pr` target says how it wants to be measured. A single default
-  profile is fine, but it must be explicit.
+- **Each invocation owns its samples + run-params + hypothesis.** Stacks-bench
+  treats txids and blocks as mutually-exclusive CLI inputs anyway, so any
+  target that wants to exercise both shapes already needs >1 invocation. The
+  array generalizes: each entry is one self-contained `stacks-bench bench
+  run` call. Cache-regime variation (cold/warm) is a special case where two
+  invocations share samples but differ in `(warmup, repetitions)` — it
+  falls out of the schema rather than being baked into it.
+- **`samples` is a tagged enum.** Variants today: `txids`, `blocks`,
+  `block_range { start_at, count }`. `#[serde(tag = "kind")]` for sharp
+  validation errors and human-readable JSON. Future variants (span-filtered
+  replay, etc.) drop in cleanly when stacks-bench grows the support.
+- **`profiler` is a per-invocation string, not a flag list.** v1 only
+  accepts `"rich"`; lean opt-in later. Baseline and candidate runs for the
+  same `label` MUST use the same `profiler` value — that's the
+  [flag-symmetry](#flag-symmetry-between-baseline-and-candidate-benches--shipped-2026-05-21)
+  contract carried forward per-invocation. Putting it on the invocation
+  (vs. inferring from CLI flags) means the schema enforces the
+  symmetry without phase-level branching.
+- **`expected_signal` per invocation.** Direction (`improves | neutral |
+  regresses`) is load-bearing for the results-analyzer; magnitude
+  (`estimate_pct` + `tolerance_pct`) is advisory. Splitting them lets the
+  analyzer commit to qualitative claims it's confident about ("warm should
+  improve") without forcing it to invent magnitudes it isn't.
+- **`suspected_spans` is optional and cross-invocation.** Hints for the
+  results-analyzer about which profiler spans to focus on when reading
+  per-invocation data. Not a stacks-bench flag — just an analyzer-to-analyzer
+  channel.
+- **`invocations` is required, `minItems: 1`.** Every accepted `normal_pr`
+  target says how it wants to be measured. A single invocation is fine but
+  must be explicit. Operator cap `analyzer.max_invocations_per_target`
+  defaults to 3; fail-before-bench on exceed (preserves analyzer-contract
+  honesty rather than silent truncation). Sits under `[analyzer]` because
+  it's a cap on the analyzer's emitted output, parallel to the existing
+  `analyzer.concurrency_cap`.
 
-Verifier reasoning against this contract — shape first, magnitude second:
+#### Phase 1.8 + Phase 3 retooling
 
-- Cache target hypothesizes `cold: neutral, warm: improves +4.5%`. Measured
-  `cold: +1%, warm: +70%` → SHAPE matches (warm-dominant, cold neutral);
-  MAGNITUDE on warm is much bigger than estimated. Verifier accepts the
-  win, caveats the magnitude in the PR body ("substantially exceeded
-  analyzer estimate — possibly working-set-specific to this replay").
-- Cache target measures `cold: +35%, warm: +30%` → SHAPE wrong (cold should
-  have been neutral). Verifier flags: analyzer's mechanism hypothesis is
-  off; either re-attribute the cause or reject.
-- Cache target measures `cold: -10%, warm: +70%` → cache regresses
-  first-touch latency. Verifier surfaces the tradeoff; operator decides
-  whether to ship as default or as opt-in tunable.
+Phase 1.8 iterates `invocations[]`, runs one `stacks-bench bench run` per
+entry against the strict archived binary, writes
+`verify/<target>/baseline-<label-slug>-run-K/bench-run.json`. Phase 3
+mirrors the same `invocations[]` on the candidate side with identical
+`(samples, warmup, repetitions, profiler)` per label — that's the
+[flag-symmetry](#flag-symmetry-between-baseline-and-candidate-benches--shipped-2026-05-21)
+contract, applied per-invocation.
 
-Why this is sharper than enumerating cold/warm in the schema: optimization
-types we haven't seen yet (sustained-pressure batched writes,
-predicate-conditioned MARF aliases, lazy-init for one-time bootstrap paths)
-each want their own measurement intents. Hard-coding "cold/warm" as schema
-constants constrains the analyzer's reasoning; letting the analyzer emit an
-arbitrary list keeps the design open while still gating PR-quality numbers
-on the analyzer-stated hypothesis. Cold/warm become canonical examples in
-the analyzer prompt, not schema concepts.
+`baseline_run_ids.json` moves from `{txid_run_ids, block_run_ids}` to
+`[{label, run_id}]` (preserves analyzer-chosen order; one entry per
+invocation).
 
-**Open design questions to resolve before scoping**:
+#### Post-bench results-analyzer agent (new phase 3.5)
 
-- Operator cap — `max_measurement_profiles_per_target` setting, default
-  ~3. Fail-before-bench on exceed (preserves the analyzer-contract
-  honesty) rather than silently truncate.
-- Default `profiler` value if the analyzer omits it — probably required +
-  enforced via schema, no implicit default.
-- Backward-compat — Pass 1c is pre-production; clean-break replacement of
-  `verification_replay`'s flat shape is acceptable.
+Per-target fanout, runs after Phase 3 candidate bench, before Phase 4
+finalize. Inputs:
 
-**Why deferred from Pass 1a**: Pass 1a's contract was already heavy enough.
-Pass 1a's structural validation is complete; quantitative validation waits
-on this redesign.
+- `optimization-targets.json` entry for the target (carries the
+  invocations[] hypothesis).
+- `optimizer-report.json` (the optimization agent's claims + the diff it
+  produced — already includes `parity` / `implementation_summary` /
+  `pr_title`).
+- Per-invocation baseline + candidate `bench-run.json` (with rich profile
+  data the agent reads to reason about WHY a measurement came out a
+  certain way).
+- Bench DB (read-only access via `sqlite3 -readonly` in v1; MCP wrapper in
+  Pass 3).
+- Full repo context (to read the diff and the hotspot code).
 
-**Trigger to pick up**: paired with Pass 2's verifier — the verifier
-consumes this contract directly. Both can land together as "Pass 1c" or as
-part of Pass 2's scope. Whichever land window happens, the measurement-
-protocol work blocks quoting any session's numbers externally.
+Output: `analyze/<target>/results-analysis.json`
+
+```json
+{
+  "schema_version": 1,
+  "target_id": "marf-historical-read-node-cache",
+  "verdict": "accepted",
+  "confidence": "high",
+  "headline_improvement_pct": 4.7,
+  "headline_rationale": "Warm steady-state invocation matched the analyzer's hypothesis (direction + within tolerance); cold first-touch neutral confirms the mechanism is a measurement-phase cache hit, not warmup smearing.",
+  "per_invocation": [
+    {
+      "label": "cold first-touch",
+      "baseline_run_id": 142,
+      "candidate_run_id": 143,
+      "measured_pct": 0.8,
+      "matches_expected_signal": true,
+      "observations": ["within neutral tolerance"]
+    },
+    {
+      "label": "warmed steady-state",
+      "baseline_run_id": 144,
+      "candidate_run_id": 145,
+      "measured_pct": 4.7,
+      "matches_expected_signal": true,
+      "observations": ["within ±3% estimate band; warmup-vs-measurement separation clean"]
+    }
+  ],
+  "caveats": ["block-context cross-check showed +2.1% with high variance; consider rerun if borderline"],
+  "pr_body_summary": "MARF historical read benefits from a per-block node cache. Warm steady-state improves +4.7% (analyzer estimated 4.5±3%); cold first-touch unchanged at +0.8% confirms the gain comes from cache hits, not warmup smear.",
+  "db_queries": [
+    { "purpose": "verify-block-contracts-replay", "query_digest": "sha256:...", "rows_returned": 12, "output_path": "analyze/<target>/queries/replay-block-contracts.csv" }
+  ]
+}
+```
+
+The `verdict | confidence` lattice replaces today's "finalize compares
+means" mechanical path. Landed behavior:
+
+- **`verdict: accepted | mixed`** — `Experiment.status = Accepted`;
+  `pr_body_summary` is the canonical Result-section prose (Phase 5
+  pastes verbatim). For `mixed`, `Experiment.reason` carries the
+  caveats so the summary table flags them.
+- **`verdict: rejected`** — `Experiment.status = Rejected` with
+  `reason = headline_rationale`. Phase 5 skips PR-writer before it
+  runs.
+- **Per-invocation breakdown** — surfaces in `summary.md` via
+  `render::render_verdict_block` (per-invocation table linked to each
+  side's `bench-run.json`). No new `Experiment` fields; the verdict
+  file itself is the authoritative store.
+
+Operator threshold via the `[results_analysis]` stanza:
+
+```toml
+[results_analysis]
+confidence_floor = "medium"   # high | medium | low — default medium
+```
+
+Verdicts whose `confidence` falls below the floor are skipped by
+`decide_publish` with an explicit `confidence=<x> below floor=<y>;
+hold for operator review` reason. The stanza will hold future tuning
+knobs (DB query caps, prompt-version pinning).
+
+#### Summary / PR-body sourcing
+
+Phase 4 finalize stops mechanically computing `improvement_pct`. Instead:
+
+- `Experiment.improvement_pct` ← `results-analysis.json:headline_improvement_pct`.
+- `Experiment.status` ← derived from `results-analysis.json:verdict`.
+- `Experiment.reason` ← carries the `headline_rationale` (Rejected) or
+  joined `caveats[]` (Mixed); Accepted leaves it unset.
+- `summary.md` rendering includes a per-target verdict block with the
+  per-invocation table + caveats list, loaded via the same canonical
+  loader Phase 5 publish uses.
+- Phase 5 PR-writer reads `pr_body_summary` verbatim into the PR
+  body's Result section; below-floor or rejected verdicts skip
+  PR-writer entirely.
+
+#### Backwards compat
+
+Clean break. Pre-Pass-1c sessions are wiring-smoke-tests only (Pass 1a
+shipped at the wiring level but explicitly NOT quantitatively validated for
+PR-grade numbers); no migration code needed. Test fixtures + the operator's
+bench DB get wiped or stamped as "pre-1c" at the cutover.
+
+#### Open design questions (resolved in implementation)
+
+- **Per-invocation pairing in finalize.** Resolved: by `invocation_id`,
+  with a canonicalization pass that reorders both run-id files to
+  `verification_replay.invocations[]` order before any math or
+  rendering. The pairing key is the stable id (validator-enforced
+  format); index ordering is the canonical sequence downstream
+  consumers see.
+- **Failure modes when the results-analyzer can't reach a verdict.**
+  Resolved: missing / invalid / wrong-context verdict file →
+  `Experiment.status = Aborted` with `reason` naming the missing file
+  (`results-analyzer did not produce a verdict — …`). The rest of the
+  session ships unaffected; one bad agent run doesn't block the
+  pipeline.
+- **DB query budget.** Deferred. The results-analyzer is currently
+  prompt-only-bounded (the template caps language around DB usage,
+  not a runtime gate). A hard cap on query count + total rows per
+  target is a Pass 2 follow-up.
+
+#### Estimated scope
+
+| Item | Est |
+| ---- | --- |
+| Schema rewrite (`VerificationReplay` → invocations + `expected_signal` + samples enum) | ~3-4 h |
+| Phase 1.8 + Phase 3 retooling (iterate invocations[], per-label artifacts, flag symmetry) | ~4-6 h |
+| Results-analyzer agent (prompt + output schema + harness wiring + tests) | ~12-15 h |
+| Prompt iteration against real-session data | ~1-2 weeks calendar |
+| Summary / SessionRecord / PR-body migration | ~3-4 h |
+| Clean-break of pre-1c data + test fixtures | ~2 h |
+| **Total** | **~25-30 h + prompt-iteration calendar** |
+
+Worth shipping as one Pass because the pieces are tightly coupled (schema
+↔ invocations ↔ results-analyzer ↔ summary sourcing). Alternative
+split: ship schema + plumbing first (~7-10 h, lands as a wiring smoke
+test), then results-analyzer + downstream sourcing as a follow-up
+(~17-20 h). Smaller reviews vs. one big slice — call this Pass 1c-α
+followed by Pass 1c-β if the bundle feels too large to land in one go.
+
+#### Sequence after Pass 1c
+
+| Pass | What lands |
+| ---- | ---- |
+| **1c** (this) | Schema + Phase 1.8/3 retooling + results-analyzer + summary/ledger sourcing |
+| **2** | Pre-bench verifier (Phase 1.9) + coordinator + full-range fallback + budget gate |
+| **1b** | `baseline_rerun_id → Option<i64>` + lazy empirical noise floor (co-located with Pass 2's full-range path) |
+| **3** | MCP wrapper for DB access, PR-body templating polish, methodology docs |
+
+Pass 1c is the load-bearing pass for "promote Pass 1a from caveated to
+clean-shipped." Pass 2 (pre-bench verifier) becomes a compute-saving
+optimization once Pass 1c's post-bench analyzer is reliable — Pass 2 catches
+bad-fit targets earlier; Pass 1c catches them honestly.
+
+**Trigger to pick up**: now. Pass 1a's structural validation is complete;
+Pass 1c is what gates external PR-quality numbers.
 
 ### Per-session ephemeral source clone (replace operator submodule)
 

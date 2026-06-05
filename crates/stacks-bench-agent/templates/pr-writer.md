@@ -44,6 +44,21 @@ If `{{ delivery_mode }}` is `consensus_poc_pr`, the framing in your PR body MUST
 {{ experiment_json }}
 ```
 
+- Phase 3.5 results-analyzer verdict for this target (the authoritative
+  source for the `Benchmark result` section on `normal_pr`):
+
+```json
+{{ results_analysis_json }}
+```
+
+  Important: when `{{ delivery_mode }}` is `normal_pr` and
+  `{{ results_analysis_json }}` is non-empty, use its `pr_body_summary`
+  verbatim as the body of `## Benchmark result`. The `verdict` +
+  `confidence` lattice, the per-invocation breakdown, and the
+  `caveats[]` array are operator-facing context. Do NOT re-synthesize
+  numbers from `improvement_pct` alone — the verdict already explains
+  why the number means what it means.
+
 - Implementation notes are in `{{ output_dir }}/implementation.md`
 - Test output (truncate as needed) lives in `{{ output_dir }}/nextest.log` and `{{ output_dir }}/nextest.stderr.log`. Cite specific numbers from these files in the `Validation` section rather than paraphrasing.
 - Build log (for any flag/version-related notes) is at `{{ output_dir }}/cargo-build.log`.
@@ -59,7 +74,25 @@ If `{{ delivery_mode }}` is `consensus_poc_pr`, the framing in your PR body MUST
   - `## Benchmark result`
   - `## Validation`
 - Plus, when `{{ delivery_mode }}` is `consensus_poc_pr`: a final `## Consensus / HIP coordination` section.
-- For `normal_pr`: in `Benchmark result`, include the measured `improvement_pct` from `{{ experiment_json }}` and the run ids from `run_ids`. In `Validation`, summarize tests/verification from `implementation.md` without inventing anything.
+- For `normal_pr`: in `Benchmark result`, paste `pr_body_summary` from
+  `{{ results_analysis_json }}` verbatim — that prose is the canonical
+  Result section the results-analyzer agent committed to (it reads
+  per-invocation traces; you do not). Append the per-invocation table
+  from the verdict's `per_invocation[]` (label, baseline run id,
+  candidate run id, measured %, matches_expected_signal) for the
+  reviewer. If the verdict carries non-empty `caveats[]`, list them
+  as a bullet group under a `**Caveats.**` line at the end of the
+  section. In `Validation`, summarize tests/verification from
+  `implementation.md` without inventing anything.
+- If `{{ results_analysis_json }}` is `{}` (no verdict was produced
+  for this `normal_pr` target — typically because Phase 3.5 was
+  skipped or the agent failed) you MUST NOT publish a PR. Surface
+  this gap as a `## Benchmark result` paragraph that says
+  "Results-analyzer did not produce a verdict for this target; the
+  measured `improvement_pct` from `{{ experiment_json }}` has not
+  been judged against the analyzer's `expected_signal`. Hold for
+  operator review." Operator review will decide whether to re-run
+  Phase 3.5 or ship without a verdict.
 - For `consensus_poc_pr`: `{{ experiment_json }}` is `{}` (no benchmark ran). Do NOT invent improvement numbers. State explicitly that the benchmark was skipped by design (the harness encodes pre-change consensus). Cite the analyzer's `expected_improvement` vector from `{{ target_json }}` only as an analyzer estimate.
 - Mention risk briefly if it is present in the target JSON.
 

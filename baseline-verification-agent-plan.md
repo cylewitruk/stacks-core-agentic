@@ -1,8 +1,14 @@
 # Baseline calibration + verification agent — execution spec
 
-**Status:** Pass 1a SHIPPED (code complete, 253/253 tests pass). Pending live
-end-to-end validation against a full session. Execution notes + deviations
-captured in [Pass 1a execution notes](#pass-1a-execution-notes) below.
+**Status:** Pass 1a SHIPPED at the wiring level — code complete, structurally
+validated end-to-end against session `20260521-051649` (Phase 0a → 0b → 1.8
+→ 2 → 3 → 4). Quantitative validation deferred to Pass 1c: independent
+review of `20260521-051649` flagged measurement-methodology gaps (cache-
+priming amplification on the cache target's 73% number; per-invocation
+hypothesis vs measurement requires the analyzer-emitted invocations + the
+post-bench results-analyzer agent that Pass 1c lands). Execution notes +
+deviations captured in [Pass 1a execution notes](#pass-1a-execution-notes)
+below.
 
 **Implementation gate (resolved):** the targeted-replay `bench-run.json` schema
 exposes only aggregate per-target summaries, no per-rep samples — Pass 1a
@@ -63,35 +69,58 @@ lazy empirical noise floor for full-range fallback (deferred). Pass 3 polishes
 
 ## Implementation passes
 
-**Pass 1a** — *Now.* ~5-7 h.
+**Pass 1a** — *SHIPPED (wiring level; quantitative validation pending Pass 1c).*
 
 - Phase 0a binary archival.
 - Phase 0b single-run + rerun alias.
 - Phase 1.8 per-target calibration.
 - Finalize denominator switch.
 
+**Pass 1c** — *Now.* ~25-30 h + prompt-iteration calendar. (Full design:
+[roadmap.md §"Pass 1c — analyzer-defined invocations + post-bench
+results-analyzer"](roadmap.md).)
+
+- Schema rewrite: `verification_replay` → analyzer-emitted `invocations[]`,
+  each with a per-invocation `expected_signal`.
+- Phase 1.8 + Phase 3 retooling to iterate the analyzer's invocations
+  symmetrically (one stacks-bench call per entry per side).
+- **Phase 3.5 results-analyzer agent** — per-target fanout, synthesizes
+  per-invocation measurements into a structured verdict
+  (`results-analysis.json`).
+- Phase 4 finalize / Phase 5 PR-writer / SessionRecord source headline +
+  caveats + `pr_body_summary` from the analyzer verdict.
+- Clean-break of pre-Pass-1c data / fixtures (no migration shim).
+
+Pass 1c is the trigger for promoting Pass 1a from "shipped at wiring level"
+to "shipped without caveats." Splittable as 1c-α (schema + plumbing) and
+1c-β (results-analyzer + downstream sourcing) if the bundle is too large
+to land in one go.
+
 **Pass 1b** — *After Pass 2.* ~4-6 h.
 
 - `baseline_rerun_id` → `Option<i64>` across consumers.
 - Lazy empirical noise calibration inside Phase 3 full-range fallback.
 
-**Pass 2** — *After Pass 1a produces one real session artifact.*
-~18-24 h.
+**Pass 2** — *After Pass 1c.* ~18-24 h.
 
-- Phase 1.9 verifier agent (advisory).
+- Phase 1.9 pre-bench verifier agent (advisory).
 - Coordinator decision logic.
 - Full-range fallback path.
 - Budget gate.
 
+Becomes a compute-saving optimization once Pass 1c's post-bench analyzer is
+the load-bearing quality gate — Pass 2 catches bad-fit targets BEFORE
+burning bench time; Pass 1c catches them honestly AFTER measurement.
+
 **Pass 3** — *After Pass 2 runs real sessions.* ~5-8 h.
 
 - sqlite MCP wrapper.
-- PR-body templating with verifier rationale.
+- PR-body templating polish (the results-analyzer's `pr_body_summary` is
+  already authoritative; Pass 3 is structural / template-set polish).
 - Operator tuning docs.
 
-Pass 1a is signed off and ready. Pass 1b's lazy calibration co-locates with Pass
-2's full-range fallback path, so landing it after Pass 2 keeps the touch points
-contiguous.
+Pass 1b's lazy calibration co-locates with Pass 2's full-range fallback
+path, so landing it after Pass 2 keeps the touch points contiguous.
 
 ## Implementation gate: variance source
 
@@ -222,8 +251,10 @@ For each `normal_pr` target with a non-empty `verification_replay`:
    - `verify/<target>/baseline-txid-run-K/bench-run.json` for txid replay.
    - `verify/<target>/baseline-block-run-K/bench-run.json` for block replay.
 3. **Use rich profile flags** — NOT `--bench-spans-only`, NOT
-   `--no-profiler-kv`. The verifier (Pass 2) needs span and profiler-kv data the
-   candidate's minimal flags strip.
+   `--no-profiler-kv`. The Pass 2 pre-bench verifier and the Pass 1c
+   post-bench results-analyzer both need span + profiler-kv data, and Phase
+   3 candidate benches now use the same rich profile shape (flag symmetry
+   shipped 2026-05-21).
 4. Invoke the strict archived binary with `--repetitions N --warmup M` matching
    the candidate bench.
 5. Persist:
@@ -458,17 +489,20 @@ still needs live validation.
    schema_version=1 → 2 churn happens together. The phase-aware
    breakdown is already preserved on disk at
    `verify/<target>/baseline-run-ids.json`.
-4. **Profile-flag asymmetry between calibration and candidate.**
-   Phase 1.8 calibration uses rich profile flags (no
-   `--bench-spans-only`, no `--no-profiler-kv`); Phase 3
-   candidate bench keeps the minimal flags it had before. This
-   was intentional per the plan — the future verifier (Pass 2)
-   needs the rich data. The asymmetry introduces a small
-   profiling-overhead bias in `total_duration_us` on the
-   baseline side. The magnitude should be a fixed constant
-   percentage that cancels out in `improvement_pct`; the
-   cache-regime mismatch the change is fixing is much larger.
-   Worth measuring empirically against a real session to confirm.
+4. **Profile-flag asymmetry between calibration and candidate
+   — historical, SHIPPED 2026-05-21.** Pass 1a originally shipped
+   with Phase 1.8 calibration using rich profile flags (no
+   `--bench-spans-only`, no `--no-profiler-kv`) while Phase 3
+   candidate bench kept lean flags. Independent review of
+   `20260521-051649` showed the "constant overhead cancels in
+   `improvement_pct`" framing was wrong — profiler overhead varies
+   with span density, which varies across targets. Mitigation
+   landed 2026-05-21: lean flags dropped on the candidate side so
+   both sides run rich. See roadmap §"Flag symmetry between
+   baseline and candidate benches — shipped 2026-05-21" for the
+   shipped change. Pass 1c's per-invocation `profiler` field
+   carries the same-flags-within-comparison invariant forward into
+   the analyzer-emitted schema.
 
 ### Live end-to-end validation — structural ✓, quantitative deferred
 
@@ -541,23 +575,24 @@ on the right artifact, schema contracts intact, --resume + typed
 reports stable). The methodology underneath needs work before the
 numbers are quotable. See [roadmap.md](roadmap.md) entries:
 
-- "Analyzer-driven measurement profiles" — replace the single
-  one-shape-fits-all `verification_replay` with multi-profile
-  baselines (cold + warm + arbitrary analyzer-defined profiles)
-  the verifier can reason against.
+- "Pass 1c — analyzer-defined invocations + post-bench
+  results-analyzer" — replaces the single one-shape-fits-all
+  `verification_replay` with analyzer-emitted self-contained
+  bench invocations, and folds in the post-bench results-analyzer
+  agent (was deferred as Pass 4) that synthesizes per-invocation
+  results into a structured verdict feeding summary/PR-body/ledger.
 - "Flag symmetry between Phase 1.8 baseline and Phase 3 candidate"
-  — short-term mitigation: make both sides use the same flag set.
-- "Base + head SHA in optimizer-report.json + resume gate
-  verifies base" — closes the silent-rebase-mismatch hole.
+  — SHIPPED 2026-05-21 (lean flags dropped on both sides; Pass 1c
+  carries the contract forward per-invocation).
+- "Coordinator-provenance sidecar (base + head SHA)" — SHIPPED
+  2026-05-21; closes the silent-rebase-mismatch hole.
 
-**Open follow-ups before Pass 1a is fully done:**
+**Open follow-up before Pass 1a is fully done:**
 
-- `docs/workflow.md` reflects the new phase numbering (already
-  updated for Phase 6 archive; needs Phase 0a + 1.8 rows).
-- Re-run Pass 1a quantitative validation after the
-  flag-symmetry + measurement-profiles work lands. That is the
-  trigger for promoting Pass 1a to "shipped without caveats"; until
-  then, treat the live data as a wiring smoke test, not a
+- Re-run Pass 1a quantitative validation after Pass 1c lands (the
+  analyzer-emitted invocations + post-bench results-analyzer). That
+  is the trigger for promoting Pass 1a to "shipped without caveats";
+  until then, treat the live data as a wiring smoke test, not a
   numeric baseline.
 
 ## Deferred: Pass 1b
@@ -667,6 +702,10 @@ Two valid orderings:
 For reference when Pass 2 starts. Full design lives in this doc's Pass 2
 section; these are the wire-level shapes implementers will hit first.
 
+These sketches assume Pass 1c has landed: analyzer-emitted `invocations[]`
+and label-indexed `baseline_run_ids.json`. The pre-1c phase-shaped variant
+(`{txid_run_ids, block_run_ids}`) is obsolete and not preserved here.
+
 ### `verify/<target-id>/verification.json` (agent-written)
 
 ```json
@@ -676,10 +715,11 @@ section; these are the wire-level shapes implementers will hit first.
   "input_fingerprint": "sha256:...",
   "recommended_mode": "targeted_replay",
   "signal_quality": "high",
-  "baseline_calibration_run_ids": {
-    "txid_run_ids": [123, 124],
-    "block_run_ids": [125]
-  },
+  "baseline_calibration_run_ids": [
+    { "label": "cold first-touch", "run_id": 123 },
+    { "label": "warmed steady-state", "run_id": 124 },
+    { "label": "block-context cross-check", "run_id": 125 }
+  ],
   "rationale": "...",
   "observations": ["...", "..."],
   "caveats": ["..."],
@@ -694,9 +734,10 @@ section; these are the wire-level shapes implementers will hit first.
 }
 ```
 
-`input_fingerprint` covers: target id + sha256(target JSON) + phase-labeled
-run-id sets (`txid:[...]|block:[...]`) + schema_version + verifier prompt
-version.
+`input_fingerprint` covers: target id + sha256(target JSON) +
+label-indexed run-id set (a deterministic encoding of
+`[{label, run_id}]` — analyzer-chosen order is preserved) +
+schema_version + verifier prompt version.
 
 ### `verify/<target-id>/decision.json` (coordinator-written)
 

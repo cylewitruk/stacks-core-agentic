@@ -31,7 +31,7 @@ pub async fn run(args: FinalizeRunArgs, ctx: &CliContext, session_id: &SessionId
     // full-pipeline `session run` invokes at Phase 4.
     db_consistency::warn_dangling_refs(&layout, &bench)?;
 
-    let summary = finalize(&FinalizeInputs { layout: &layout, bench: &bench })?;
+    let summary = finalize(&FinalizeInputs { layout: &layout })?;
     println!(
         "wrote {} and {}",
         layout

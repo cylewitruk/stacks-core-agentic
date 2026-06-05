@@ -289,7 +289,7 @@
           "type": "integer"
         },
         "weights_applied": {
-          "description": "Operator weights applied (the `stacks_bench_axis_weights`\nsetting passed to triage, verbatim — comma-separated triple\n`tx_latency,tenure_throughput,commit_time`).",
+          "description": "Operator weights applied (the `triage.axis_weights`\nsetting passed to triage, verbatim — comma-separated triple\n`tx_latency,tenure_throughput,commit_time`).",
           "type": "string"
         }
       },

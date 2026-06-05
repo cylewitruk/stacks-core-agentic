@@ -11,12 +11,21 @@
 //!   otherwise compare bench means. `improvement_pct > noise_floor` →
 //!   `Accepted`, `< -noise_floor` → `Rejected (regression)`, otherwise
 //!   `Rejected (within noise)`.
+//!
+//! Pass 1c invariant: every `bench_eligible` target's
+//! `Experiment.improvement_pct` + `Experiment.status` are sourced
+//! verbatim from the Phase 3.5 results-analyzer's verdict at
+//! `analyze/<target>/results-analysis.json`. Finalize doesn't compute
+//! pooled means or noise-floor thresholds — it threads the agent's
+//! judgment into the summary tree. When a target's verdict file is
+//! absent or invalid the experiment lands as `Aborted` with a reason
+//! naming the missing file; the rest of the session ships.
 
 use std::fs;
 
 use anyhow::{Context as _, Result};
 
-use crate::models::common::{DeliveryMode, SchemaVersionV2};
+use crate::models::common::{DeliveryMode, SchemaVersionV3};
 use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::{
     ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
@@ -24,27 +33,29 @@ use crate::models::summary::{
 };
 use crate::models::targets::{MergedTarget, OptimizationTargets};
 use crate::models::{FromJsonValidated, ToJson};
-use crate::session::bench::BenchClient;
 use crate::session::{SessionLayout, loader, render};
 
 /// Inputs to the finalize step.
 pub struct FinalizeInputs<'a> {
     /// Resolved per-session layout.
     pub layout: &'a SessionLayout,
-    /// `BenchClient` providing `total_duration_us` for normal_pr targets.
-    pub bench: &'a dyn BenchClient,
 }
 
 /// Finalize one session: produce `summary.json` + `summary.md` from the
-/// merge artifact, the per-experiment markers on disk, and the bench client.
+/// merge artifact and the per-target results-analysis verdicts.
 /// Returns the in-memory [`Summary`] in addition to writing it.
 pub fn finalize(inputs: &FinalizeInputs<'_>) -> Result<Summary> {
     let targets = loader::read_optimization_targets(inputs.layout)?;
     let analyses = loader::read_all_analyses(inputs.layout)?;
+    // Load every target's verdict ONCE with full context-checking
+    // (session_id + target_id + schema). compute_summary and render
+    // both consume from this map so summary.json and summary.md
+    // cannot disagree about which verdicts are valid for this session.
+    let verdicts = load_verdicts(inputs.layout, &targets)?;
 
-    let summary = compute_summary(&targets, inputs)?;
+    let summary = compute_summary(&targets, inputs, &verdicts)?;
     let notes = render::load_experiment_notes(inputs.layout, &targets);
-    let summary_md = render::render_summary_md(&summary, &targets, &analyses, &notes);
+    let summary_md = render::render_summary_md(&summary, &targets, &analyses, &notes, &verdicts);
     let targets_md = render::render_targets_md(&targets, &analyses);
 
     fs::create_dir_all(inputs.layout.finalize_dir()).with_context(|| {
@@ -87,56 +98,38 @@ pub fn finalize(inputs: &FinalizeInputs<'_>) -> Result<Summary> {
     Ok(summary)
 }
 
-/// Compute a [`Summary`] without writing it. Pure-ish; takes the inputs
-/// already loaded so tests can drive it directly.
+/// Map of per-target verdicts indexed by target id. Built once by
+/// [`load_verdicts`] and threaded through `compute_summary` + render so
+/// the summary table and the per-target verdict blocks cannot disagree
+/// about which verdicts are valid for this session.
+pub type VerdictMap =
+    std::collections::BTreeMap<String, crate::models::results_analysis::ResultsAnalysis>;
+
+/// Load + context-check every target's
+/// `analyze/<target>/results-analysis.json`. Missing / invalid /
+/// wrong-context files are silently elided (warnings flow via
+/// [`loader::read_results_analysis_for_target`]) so a single bad file
+/// can't take out the whole session.
+fn load_verdicts(layout: &SessionLayout, targets: &OptimizationTargets) -> Result<VerdictMap> {
+    let mut out = VerdictMap::new();
+    for t in &targets.targets {
+        if let Some(ra) = loader::read_results_analysis_for_target(layout, &t.id)? {
+            out.insert(t.id.clone(), ra);
+        }
+    }
+    Ok(out)
+}
+
+/// Compute a [`Summary`] without writing it. Pure-ish; takes the
+/// already-loaded inputs so tests can drive it directly.
 pub fn compute_summary(
     targets: &OptimizationTargets,
     inputs: &FinalizeInputs<'_>,
+    verdicts: &VerdictMap,
 ) -> Result<Summary> {
-    // Resolve session-level baseline only if at least one normal_pr
-    // target lacks per-target ids and would fall back to it.
-    // Per-target denominators (`verify/<target>/baseline-run-ids.json`)
-    // are preferred when present.
-    let mut needs_baseline = false;
-    for t in &targets.targets {
-        if t.delivery_mode != DeliveryMode::NormalPr {
-            continue;
-        }
-        if load_per_target_baseline_ids(inputs, t)
-            .with_context(|| format!("loading per-target baseline ids for {}", t.id))?
-            .is_none()
-        {
-            needs_baseline = true;
-            break;
-        }
-    }
-    let baseline_mean = if needs_baseline {
-        let b1 = inputs
-            .bench
-            .total_duration_us(targets.baseline_run_id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing baseline summary (run_id={}); required for normal_pr targets",
-                    targets.baseline_run_id
-                )
-            })?;
-        let b2 = inputs
-            .bench
-            .total_duration_us(targets.baseline_rerun_id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing baseline rerun summary (run_id={}); required for normal_pr targets",
-                    targets.baseline_rerun_id
-                )
-            })?;
-        Some((b1 + b2) as f64 / 2.0)
-    } else {
-        None
-    };
-
     let mut experiments: Vec<Experiment> = Vec::with_capacity(targets.targets.len());
     for t in &targets.targets {
-        let mut exp = evaluate_target(t, inputs, baseline_mean, targets.noise_floor_pct)?;
+        let mut exp = evaluate_target(t, inputs, verdicts)?;
         // Thread coordinator-provenance (base_sha + head_sha) into the
         // experiment record when the sidecar exists. The sidecar is
         // only written for targets whose coordinator commit landed
@@ -156,7 +149,7 @@ pub fn compute_summary(
     let next_targets_hint = compute_hint(&experiments);
 
     Ok(Summary {
-        schema_version: SchemaVersionV2,
+        schema_version: SchemaVersionV3,
         session_id: targets.session_id.clone(),
         baseline_run_id: targets.baseline_run_id,
         baseline_rerun_id: targets.baseline_rerun_id,
@@ -174,8 +167,7 @@ pub fn compute_summary(
 fn evaluate_target(
     t: &MergedTarget,
     inputs: &FinalizeInputs<'_>,
-    baseline_mean: Option<f64>,
-    noise_floor_pct: f64,
+    verdicts: &VerdictMap,
 ) -> Result<Experiment> {
     // consensus_issue: marker present → RoutedToIssue, else Aborted.
     // This is the only branch that still reads a marker file directly,
@@ -231,124 +223,324 @@ fn evaluate_target(
         return Ok(experiment(t, ExperimentStatus::PocLanded, None, None, None));
     }
 
-    // normal_pr: bench-eval flow.
-    let run_ids_path = inputs
+    // normal_pr: source verdict from the Phase 3.5 results-analyzer
+    // agent. Pass 1c invariant — every bench_eligible target carries a
+    // `verification_replay` with N invocations; Phase 1.8 wrote
+    // baseline run-ids, Phase 3 wrote candidate run-ids, Phase 3.5
+    // wrote the typed verdict. Canonicalize each side to the target's
+    // VR invocation order so the run-id sequence on the Experiment row
+    // matches the rendered invocation order (`render_run_ids` links by
+    // index against the same order).
+    let expected_order = expected_invocation_order(t)?;
+
+    let raw_candidate_ids = match load_invocation_run_ids(
+        &inputs
+            .layout
+            .experiment_candidate_run_ids_json(&t.id),
+    )? {
+        Some(ids) => ids,
+        None => {
+            return Ok(experiment(
+                t,
+                ExperimentStatus::Aborted,
+                None,
+                None,
+                Some(
+                    "no candidate-run-ids.json — Phase 3 (`session bench run`) did not complete \
+                     for this target"
+                        .to_owned(),
+                ),
+            ));
+        }
+    };
+    let candidate_ids = match reorder_to_match(&raw_candidate_ids, &expected_order, "candidate") {
+        Ok(ids) => ids,
+        Err(e) => {
+            return Ok(experiment(
+                t,
+                ExperimentStatus::Aborted,
+                Some(raw_candidate_ids.run_ids()),
+                None,
+                Some(format!("for target `{}`: {e:#}", t.id)),
+            ));
+        }
+    };
+
+    // Baseline (Phase 1.8 output). Missing file is a hard error: Pass
+    // 1c invariant says every bench_eligible target ran Phase 1.8.
+    let baseline_path = inputs
         .layout
-        .experiment_run_ids_path(&t.id);
-    let run_ids = loader::read_experiment_run_ids(&run_ids_path)?;
-    if run_ids.is_empty() {
-        return Ok(experiment(
+        .verify_baseline_run_ids_json(&t.id);
+    let raw_baseline_ids = load_invocation_run_ids(&baseline_path)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "verify/{}/baseline-run-ids.json missing for bench_eligible target `{}`; Phase 1.8 \
+             calibration MUST run before finalize (Pass 1c invariant)",
+            t.id,
+            t.id,
+        )
+    })?;
+    let baseline_ids = reorder_to_match(&raw_baseline_ids, &expected_order, "baseline")
+        .with_context(|| format!("for target `{}`", t.id))?;
+
+    // Pull Phase 3.5 verdict from the pre-loaded map. Missing →
+    // Aborted (the results-analyzer either didn't run or its file was
+    // dropped by the load step because it failed context-checking).
+    // The orchestrator's Phase 3.5 fan-out records the failure reason
+    // in its console output; finalize surfaces the file-level absence
+    // to the experiment row so the next session-archive + PR-writer
+    // paths see a clean "did not ship" signal.
+    let ra = match verdicts.get(t.id.as_str()) {
+        Some(ra) => ra,
+        None => {
+            return Ok(experiment_with_baseline(
+                t,
+                ExperimentStatus::Aborted,
+                Some(candidate_ids.run_ids()),
+                Some(baseline_ids.run_ids()),
+                None,
+                Some(
+                    "results-analyzer did not produce a verdict — \
+                     analyze/<target>/results-analysis.json absent or invalid"
+                        .to_owned(),
+                ),
+            ));
+        }
+    };
+
+    // Sanity: cross-check the per-invocation run-ids the agent
+    // recorded against the run-id files. The validator already
+    // confirmed `per_invocation.invocation_id` matches the schema's
+    // INVOCATION_ID_PATTERN; here we additionally verify each
+    // invocation id is one we expect, in the right order, with
+    // matching run-ids, AND the agent's chosen `axis` matches the
+    // target's invocations (the schema-level axis-parity check on
+    // `verification_replay` guarantees the invocations agree; here
+    // we ensure the agent committed to the same one).
+    if let Err(e) = cross_check_axis(ra, t) {
+        return Ok(experiment_with_baseline(
             t,
             ExperimentStatus::Aborted,
+            Some(candidate_ids.run_ids()),
+            Some(baseline_ids.run_ids()),
             None,
+            Some(format!("results-analysis axis-check failed: {e:#}")),
+        ));
+    }
+    if let Err(e) = cross_check_per_invocation(ra, &baseline_ids, &candidate_ids) {
+        return Ok(experiment_with_baseline(
+            t,
+            ExperimentStatus::Aborted,
+            Some(candidate_ids.run_ids()),
+            Some(baseline_ids.run_ids()),
             None,
-            Some("no benchmark runs recorded".to_owned()),
+            Some(format!("results-analysis cross-check failed: {e:#}")),
         ));
     }
 
-    let mut durations: Vec<i64> = Vec::with_capacity(run_ids.len());
-    for &id in &run_ids {
-        if let Some(d) = inputs
-            .bench
-            .total_duration_us(id)?
-        {
-            durations.push(d);
-        }
-    }
-    if durations.is_empty() {
-        return Ok(experiment(
-            t,
-            ExperimentStatus::Aborted,
-            Some(run_ids),
-            None,
-            Some("all benchmark runs missing summaries".to_owned()),
-        ));
-    }
-
-    // Per-target baseline denominator (Pass 1a): if Phase 1.8
-    // produced calibration runs for this target, mean them and use
-    // that as the denominator (apples-to-apples targeted-replay
-    // comparison). Otherwise fall back to the session-level
-    // baseline mean (legacy P0 ↔ candidate-full-range comparison).
-    //
-    // Soft-fallback ONLY applies when no per-target baseline file
-    // exists (target had no `verification_replay` OR Phase 1.8 was
-    // skipped). Any OTHER failure mode — parse error, IO error,
-    // referenced run id missing from the DB — is a hard error.
-    // Silent fallback in those cases would emit an
-    // old-methodology `improvement_pct` while the summary's
-    // `baseline_run_ids` field still claims per-target data was
-    // used; that's an integrity hazard the Pass 1a gate exists to
-    // prevent.
-    let per_target_baseline_ids = load_per_target_baseline_ids(inputs, t)
-        .with_context(|| format!("loading per-target baseline ids for {}", t.id))?;
-    let effective_baseline_mean = if let Some(ids) = per_target_baseline_ids.as_ref() {
-        if ids.is_empty() {
-            // Shouldn't happen — loader returns None for an empty
-            // file. Defensive: treat as "no per-target data" path.
-            baseline_mean.expect("baseline_mean is computed when needed")
-        } else {
-            let mut samples: Vec<i64> = Vec::with_capacity(ids.len());
-            for &id in ids {
-                let dur = inputs
-                    .bench
-                    .total_duration_us(id)?
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "per-target baseline run_id={id} for `{}` has no recorded summary in \
-                             the stacks-bench DB (referenced from \
-                             verify/{}/baseline-run-ids.json); Pass 1a refuses to fall back to \
-                             the session-level baseline when per-target data is partially missing",
-                            t.id,
-                            t.id,
-                        )
-                    })?;
-                samples.push(dur);
-            }
-            samples
-                .iter()
-                .copied()
-                .sum::<i64>() as f64
-                / samples.len() as f64
-        }
-    } else {
-        baseline_mean.expect("baseline_mean is computed when needed")
-    };
-    let exp_mean = durations
-        .iter()
-        .copied()
-        .sum::<i64>() as f64
-        / durations.len() as f64;
-    let improvement_pct = if effective_baseline_mean == 0.0 {
-        0.0
-    } else {
-        (effective_baseline_mean - exp_mean) / effective_baseline_mean * 100.0
-    };
-
-    let (status, reason) = if improvement_pct > noise_floor_pct {
-        (ExperimentStatus::Accepted, None)
-    } else if improvement_pct < -noise_floor_pct {
-        (
-            ExperimentStatus::Rejected,
-            Some(format!("regression: {:.2}% slower than baseline", -improvement_pct)),
-        )
-    } else {
-        (
-            ExperimentStatus::Rejected,
-            Some(format!(
-                "within noise floor ({improvement_pct:.2}% improvement vs {noise_floor_pct:.2}% \
-                 noise)"
-            )),
-        )
-    };
+    let (status, reason) = map_verdict_to_status(ra);
     Ok(experiment_with_baseline(
         t,
         status,
-        Some(run_ids),
-        per_target_baseline_ids,
-        Some(improvement_pct),
+        Some(candidate_ids.run_ids()),
+        Some(baseline_ids.run_ids()),
+        ra.headline_improvement_pct,
         reason,
     ))
+}
+
+/// Map the typed verdict to an [`ExperimentStatus`] + optional reason
+/// for the summary table. Pass 1c flow:
+///
+/// - `Verdict::Accepted` → `Accepted`. No reason (the headline number carries
+///   the signal).
+/// - `Verdict::Mixed` → `Accepted` (publish, but surface caveats). The Phase 5
+///   publisher will eventually demote to draft based on the deferred
+///   `results_analysis.confidence_floor`; until then the caveats ride in
+///   `reason` so summary.md surfaces them.
+/// - `Verdict::Rejected` → `Rejected`. Reason = `headline_rationale`.
+fn map_verdict_to_status(
+    ra: &crate::models::results_analysis::ResultsAnalysis,
+) -> (ExperimentStatus, Option<String>) {
+    use crate::models::results_analysis::Verdict;
+    match ra.verdict {
+        Verdict::Accepted => (ExperimentStatus::Accepted, None),
+        Verdict::Mixed => {
+            // Pull caveats into the reason cell so reviewers see them
+            // even before the publisher's confidence gate lands.
+            let mut caveats = ra.caveats.clone();
+            if caveats.is_empty() {
+                caveats.push(ra.headline_rationale.clone());
+            }
+            (ExperimentStatus::Accepted, Some(format!("mixed: {}", caveats.join("; "))))
+        }
+        Verdict::Rejected => (ExperimentStatus::Rejected, Some(ra.headline_rationale.clone())),
+    }
+}
+
+/// Verify the results-analyzer's chosen `axis` matches the target's
+/// `verification_replay.invocations[].expected_signal.axis` set. The
+/// schema-level [`VerificationReplay::validate_model`] guarantees
+/// every invocation on a target shares one axis; this just confirms
+/// the agent committed to that same one. Without the cross-check, an
+/// agent could ship a verdict denominated against the wrong lens and
+/// the headline would be meaningless.
+fn cross_check_axis(
+    ra: &crate::models::results_analysis::ResultsAnalysis,
+    t: &MergedTarget,
+) -> Result<()> {
+    let vr = t
+        .verification_replay
+        .as_ref()
+        .with_context(|| {
+            format!("bench_eligible target `{}` has no verification_replay (caller bug)", t.id)
+        })?;
+    let expected = vr.invocations[0]
+        .expected_signal
+        .axis;
+    if ra.axis != expected {
+        anyhow::bail!(
+            "results-analysis.axis = {:?} but the target's invocations expect axis = {:?}",
+            ra.axis,
+            expected,
+        );
+    }
+    Ok(())
+}
+
+/// Cross-check that the agent's `per_invocation[]` lines up with the
+/// run-id files. The schema already ensures `invocation_id` is a
+/// well-formed key; here we enforce: same length, same ordering, and
+/// matching run-ids for both sides.
+fn cross_check_per_invocation(
+    ra: &crate::models::results_analysis::ResultsAnalysis,
+    baseline: &crate::models::common::InvocationRunIds,
+    candidate: &crate::models::common::InvocationRunIds,
+) -> Result<()> {
+    if ra.per_invocation.len() != baseline.entries.len() {
+        anyhow::bail!(
+            "per_invocation length {} != baseline run-ids length {}",
+            ra.per_invocation.len(),
+            baseline.entries.len(),
+        );
+    }
+    if ra.per_invocation.len() != candidate.entries.len() {
+        anyhow::bail!(
+            "per_invocation length {} != candidate run-ids length {}",
+            ra.per_invocation.len(),
+            candidate.entries.len(),
+        );
+    }
+    for (i, row) in ra
+        .per_invocation
+        .iter()
+        .enumerate()
+    {
+        let b = &baseline.entries[i];
+        let c = &candidate.entries[i];
+        if row.invocation_id != b.invocation_id {
+            anyhow::bail!(
+                "per_invocation[{i}].invocation_id = {:?} but baseline-run-ids[{i}] = {:?}",
+                row.invocation_id,
+                b.invocation_id,
+            );
+        }
+        if row.invocation_id != c.invocation_id {
+            anyhow::bail!(
+                "per_invocation[{i}].invocation_id = {:?} but candidate-run-ids[{i}] = {:?}",
+                row.invocation_id,
+                c.invocation_id,
+            );
+        }
+        if row.baseline_run_id != b.run_id {
+            anyhow::bail!(
+                "per_invocation[{i}].baseline_run_id = {} but baseline-run-ids[{i}].run_id = {}",
+                row.baseline_run_id,
+                b.run_id,
+            );
+        }
+        if row.candidate_run_id != c.run_id {
+            anyhow::bail!(
+                "per_invocation[{i}].candidate_run_id = {} but candidate-run-ids[{i}].run_id = {}",
+                row.candidate_run_id,
+                c.run_id,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Collect the expected invocation-id order from the merged target's
+/// `verification_replay.invocations[]`. The order is canonical: both
+/// baseline and candidate run-ids get reordered to match it before
+/// downstream math + rendering. Hard error if VR is absent — Pass 1c
+/// invariant says every `bench_eligible` target carries one (enforced
+/// by [`MergedTarget::validate_model`]), so reaching this without one
+/// is a caller bug.
+fn expected_invocation_order(t: &MergedTarget) -> Result<Vec<String>> {
+    let vr = t
+        .verification_replay
+        .as_ref()
+        .with_context(|| {
+            format!(
+                "bench_eligible target `{}` has no verification_replay; merge validator should \
+                 have rejected this (Pass 1c invariant)",
+                t.id
+            )
+        })?;
+    Ok(vr
+        .invocations
+        .iter()
+        .map(|i| i.id.clone())
+        .collect())
+}
+
+/// Canonicalize an [`InvocationRunIds`] to match `expected` order
+/// exactly. Returns a new value whose `entries[i].invocation_id ==
+/// expected[i]`. Errors when the actual id set doesn't equal
+/// `expected`'s set (missing or extra invocations), which would mean
+/// the file was produced for a different VR than the merged target
+/// carries. `side` is `"baseline"` or `"candidate"`; embedded in the
+/// error so the operator can locate the offending file.
+fn reorder_to_match(
+    actual: &crate::models::common::InvocationRunIds,
+    expected: &[String],
+    side: &str,
+) -> Result<crate::models::common::InvocationRunIds> {
+    let expected_set: std::collections::BTreeSet<&str> = expected
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let actual_set: std::collections::BTreeSet<&str> = actual
+        .entries
+        .iter()
+        .map(|e| e.invocation_id.as_str())
+        .collect();
+    if expected_set != actual_set {
+        let missing: Vec<&&str> = expected_set
+            .difference(&actual_set)
+            .collect();
+        let extra: Vec<&&str> = actual_set
+            .difference(&expected_set)
+            .collect();
+        anyhow::bail!(
+            "{side}-run-ids invocation set mismatch: missing {missing:?}, extra {extra:?}; \
+             baseline + candidate must mirror verification_replay.invocations[].id exactly (Pass \
+             1c invariant)"
+        );
+    }
+    // Reorder: walk `expected`, locate the matching entry in `actual`.
+    // Set equality above guarantees every expected id has exactly one
+    // match, so the find is total.
+    let mut entries = Vec::with_capacity(expected.len());
+    for inv_id in expected {
+        let entry = actual
+            .entries
+            .iter()
+            .find(|e| &e.invocation_id == inv_id)
+            .expect("set equality just verified this id exists");
+        entries.push(entry.clone());
+    }
+    Ok(crate::models::common::InvocationRunIds { entries })
 }
 
 /// Construct an [`Experiment`] row carrying the target's `breakage_class`
@@ -521,43 +713,25 @@ fn is_non_empty_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Load `verify/<target>/baseline-run-ids.json` produced by Phase
-/// 1.8 calibration and flatten the txid + block run id vecs into
-/// the pooled-mean denominator set.
-///
-/// Returns:
-///
-/// - `Ok(None)` ONLY when the file does not exist (target had no
-///   `verification_replay`, or Phase 1.8 was skipped). This is the sole
-///   legitimate soft-fallback to the session-level baseline.
-/// - `Ok(Some(...))` when the file exists and parses to non-empty per-phase
-///   run-id arrays.
-/// - `Ok(None)` when the file parses to entirely empty arrays (Phase 1.8 ran
-///   but produced no usable ids for this target — defensive, shouldn't happen
-///   in practice).
-/// - `Err(...)` on any other failure: IO error, malformed JSON, schema
-///   mismatch. The caller propagates this rather than silently degrading the
-///   methodology.
-fn load_per_target_baseline_ids(
-    inputs: &FinalizeInputs<'_>,
-    target: &MergedTarget,
-) -> Result<Option<Vec<i64>>> {
-    let path = inputs
-        .layout
-        .verify_baseline_run_ids_json(&target.id);
-    let raw = match std::fs::read_to_string(&path) {
+/// Load + validate an `InvocationRunIds` JSON file. Returns `Ok(None)`
+/// when the file is absent, `Ok(Some(_))` on a valid file, or `Err` on
+/// IO / parse / cross-field-validation failure. Callers gate on
+/// presence (baseline missing for normal_pr = hard error; candidate
+/// missing = Aborted experiment).
+fn load_invocation_run_ids(
+    path: &std::path::Path,
+) -> Result<Option<crate::models::common::InvocationRunIds>> {
+    let raw = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
             return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
         }
     };
-    let ids: crate::session::calibration::BaselineRunIds =
+    let ids: crate::models::common::InvocationRunIds =
         serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    if ids.txid_run_ids.is_empty() && ids.block_run_ids.is_empty() {
-        return Ok(None);
-    }
-    let mut pooled = ids.txid_run_ids;
-    pooled.extend(ids.block_run_ids);
-    Ok(Some(pooled))
+    use crate::models::ValidateModel as _;
+    ids.validate_model()
+        .with_context(|| format!("invalid InvocationRunIds in {}", path.display()))?;
+    Ok(Some(ids))
 }

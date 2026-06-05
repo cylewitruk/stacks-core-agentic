@@ -309,7 +309,7 @@ fn archive_propagates_head_sha_into_target_record() {
         .join("finalize");
     std::fs::create_dir_all(&finalize_dir).unwrap();
     let summary = serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "session_id": id.as_str(),
         "baseline_run_id": 100,
         "baseline_rerun_id": 101,

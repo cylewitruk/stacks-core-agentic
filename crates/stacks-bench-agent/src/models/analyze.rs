@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::ValidateModel;
 use crate::models::common::{
     BreakageClass, Bucket, Hotspot, ImprovementVector, KEBAB_PATTERN, LensDispositionStatus, Risk,
-    SchemaVersionV2, SelectionLens, VerificationReplay,
+    SchemaVersionV3, SelectionLens, VerificationReplay,
 };
 
 /// Top-level shape of `analysis.json`. Untagged: serde tries
@@ -67,8 +67,8 @@ impl ValidateModel for Analysis {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptedAnalysis {
-    /// Constant: 2.
-    pub schema_version: SchemaVersionV2,
+    /// Constant: 3.
+    pub schema_version: SchemaVersionV3,
     /// Family id (matches the candidate's `id`).
     #[schemars(regex(pattern = KEBAB_PATTERN))]
     pub family_id: String,
@@ -141,8 +141,8 @@ pub enum AcceptedStatusTag {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RejectedAnalysis {
-    /// Constant: 2.
-    pub schema_version: SchemaVersionV2,
+    /// Constant: 3.
+    pub schema_version: SchemaVersionV3,
     /// Family id (matches the candidate's `id`).
     #[schemars(regex(pattern = KEBAB_PATTERN))]
     pub family_id: String,
@@ -205,11 +205,13 @@ pub struct AnalyzerTarget {
     pub risk: Risk,
     /// Verification plan (which tests must pass / what to spot-check).
     pub verification_plan: String,
-    /// Optional targeted-replay recipe. When present, Phase 3 bench runs
-    /// will replay these txids / blocks with `--repetitions` instead of
-    /// the session's full-range bench, dramatically shrinking per-target
-    /// wall time. Absent → full-range fallback. See
-    /// [`VerificationReplay`] for the hash-only emission contract.
+    /// Targeted-replay recipe. Required on non-consensus
+    /// (`consensus_breaking == false`) targets — Phase 1.8 + Phase 3
+    /// run every invocation in
+    /// `verification_replay.invocations[]` and the post-bench
+    /// results-analyzer (Phase 3.5) pairs them by id. Optional and
+    /// ignored on consensus targets (which don't reach the bench).
+    /// See [`VerificationReplay`] for the invocation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_replay: Option<VerificationReplay>,
     /// True iff implementing this fix would change consensus rules.
@@ -289,6 +291,20 @@ impl ValidateModel for AnalyzerTarget {
                 .is_some()
             {
                 bail!("non-consensus target must not carry consensus_writeup");
+            }
+            // Pass 1c invariant: non-consensus (i.e. bench-eligible)
+            // analyzer targets must carry a verification_replay so the
+            // merger has a recipe to forward to Phase 1.8/3/3.5. The
+            // merger doesn't synthesize one — analyzers own the
+            // measurement protocol.
+            if self
+                .verification_replay
+                .is_none()
+            {
+                bail!(
+                    "non-consensus target must carry verification_replay (Pass 1c invariant — \
+                     analyzer owns the measurement protocol)"
+                );
             }
         }
         Ok(())

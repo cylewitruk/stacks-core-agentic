@@ -20,11 +20,13 @@ pub struct BenchArgs {
 /// Bench subcommands.
 #[derive(Debug, Subcommand)]
 pub enum BenchCommand {
-    /// Build per-target release binaries and run two benchmarks per
-    /// target serialized under the bench lock.
+    /// Build per-target release binaries, then run one stacks-bench
+    /// invocation per `verification_replay.invocations[]` entry under
+    /// the bench lock.
     Run(run::BenchRunArgs),
-    /// Clear per-target `run-*` dirs and `run-ids` files so the next
-    /// `bench run` re-benchmarks every target.
+    /// Clear per-target `candidate-run-ids.json` and per-invocation
+    /// bench-output dirs so the next `bench run` re-benchmarks every
+    /// target from scratch.
     Clean(clean::BenchCleanArgs),
 }
 

@@ -71,13 +71,14 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     // Schema-version sanity for v2 artifacts. Any parse error here surfaces
     // as a missing entry; mismatched schema_version is a soft warning to
     // mirror the bash behavior.
-    check_schema_version(&layout.candidates_json(), "triage/candidates.json", &mut report);
+    check_schema_version(&layout.candidates_json(), "triage/candidates.json", 2, &mut report);
     check_schema_version(
         &layout.optimization_targets_json(),
         "merge/optimization-targets.json",
+        3,
         &mut report,
     );
-    check_schema_version(&layout.summary_json(), "finalize/summary.json", &mut report);
+    check_schema_version(&layout.summary_json(), "finalize/summary.json", 3, &mut report);
 
     // Phase 1.5: every candidate family must have an analysis.json.
     // Surface load + cross-field-validate failures as hard errors.
@@ -208,9 +209,11 @@ fn is_non_empty_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Soft-check `schema_version` field on a v2 artifact. Mirrors the bash
-/// behavior: emits a warning, not a missing entry.
-fn check_schema_version(path: &PathBuf, label: &str, report: &mut ValidationReport) {
+/// Soft-check `schema_version` against an expected sentinel. Emits a
+/// warning, not a missing entry. The two Pass 1c-bumped artifacts
+/// (`analysis.json`, `optimization-targets.json`, `summary.json`) carry
+/// v3; the rest stay at v2.
+fn check_schema_version(path: &PathBuf, label: &str, expected: u64, report: &mut ValidationReport) {
     if !is_non_empty_file(path) {
         return;
     }
@@ -225,11 +228,11 @@ fn check_schema_version(path: &PathBuf, label: &str, report: &mut ValidationRepo
     let n = v
         .get("schema_version")
         .and_then(|x| x.as_u64());
-    if n != Some(2) {
+    if n != Some(expected) {
         report
             .schema_warnings
             .push(format!(
-                "{label} schema_version={} (expected 2)",
+                "{label} schema_version={} (expected {expected})",
                 n.map(|x| x.to_string())
                     .unwrap_or_else(|| "<unset>".to_owned())
             ));

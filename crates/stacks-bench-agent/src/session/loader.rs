@@ -145,6 +145,66 @@ pub fn read_optimizer_report_for_target(
     Ok(Some(report))
 }
 
+/// Read + validate `analyze/<target-id>/results-analysis.json` for one
+/// target. Returns `Ok(None)` when the file is absent OR when its
+/// `session_id` / `target_id` don't match the caller's context (treated
+/// as "no verdict for this target" rather than a hard error — a stale
+/// verdict from a different session should not feed into publish copy
+/// or render verdict blocks). Any other failure (IO, parse, schema,
+/// cross-field validation) is logged at WARN and returns `Ok(None)`
+/// too, so a single bad file can't take out the whole session.
+///
+/// This is the canonical loader: finalize, render, and publish all
+/// go through it so they agree on which verdicts are present.
+pub fn read_results_analysis_for_target(
+    layout: &SessionLayout,
+    target_id: &str,
+) -> Result<Option<crate::models::results_analysis::ResultsAnalysis>> {
+    use crate::models::FromJsonValidated;
+    use crate::models::results_analysis::ResultsAnalysis;
+
+    let path = layout.analyze_results_analysis_json(target_id);
+    let raw = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        }
+    };
+    let ra = match ResultsAnalysis::from_json_validated(&raw) {
+        Ok(ra) => ra,
+        Err(e) => {
+            tracing::warn!(
+                target_id,
+                error = %e,
+                "results-analysis.json failed parse/validate; treating as absent",
+            );
+            return Ok(None);
+        }
+    };
+    if let Err(e) = ra.validate_model() {
+        tracing::warn!(
+            target_id,
+            error = %e,
+            "results-analysis.json failed cross-field validation; treating as absent",
+        );
+        return Ok(None);
+    }
+    let expected_session = layout.id.as_str();
+    if ra.session_id != expected_session || ra.target_id != target_id {
+        tracing::warn!(
+            target_id,
+            actual_session = %ra.session_id,
+            actual_target = %ra.target_id,
+            expected_session,
+            "results-analysis.json carries the wrong session/target context; treating as \
+             missing-verdict",
+        );
+        return Ok(None);
+    }
+    Ok(Some(ra))
+}
+
 /// Read and parse all `analysis/<family-id>/analysis.json` files. Keyed by
 /// family_id; sort order is BTreeMap-deterministic for snapshot stability.
 pub fn read_all_analyses(layout: &SessionLayout) -> Result<BTreeMap<String, Analysis>> {

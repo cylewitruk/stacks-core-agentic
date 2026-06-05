@@ -14,6 +14,7 @@ use crate::cli::CliContext;
 use crate::types::SessionId;
 
 pub mod analysis;
+pub mod analyze_results;
 pub mod archive;
 pub mod baseline;
 pub mod bench;
@@ -70,6 +71,12 @@ pub enum SessionCommand {
     /// serialized under the bench lock.
     Bench(bench::BenchArgs),
 
+    /// Phase 3.5: fan out one results-analyzer per `bench_eligible`
+    /// target. Each agent judges measured vs the analyzer's
+    /// `expected_signal` and writes a typed verdict to
+    /// `analyze/<target>/results-analysis.json`.
+    AnalyzeResults(analyze_results::AnalyzeResultsArgs),
+
     /// Phase 5: generate per-target publish artifacts and push branches /
     /// open PRs / open issues. With `--dry-run`, generate only.
     Publish(publish::PublishArgs),
@@ -119,6 +126,9 @@ pub async fn run(args: SessionArgs, ctx: &CliContext) -> Result<()> {
         }
         SessionCommand::Bench(a) => {
             bench::run(a, ctx, &require_session_id(session_id, "bench")?).await
+        }
+        SessionCommand::AnalyzeResults(a) => {
+            analyze_results::run(a, ctx, &require_session_id(session_id, "analyze-results")?).await
         }
         SessionCommand::Publish(a) => {
             publish::run(a, ctx, &require_session_id(session_id, "publish")?).await

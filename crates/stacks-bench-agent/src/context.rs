@@ -45,6 +45,8 @@ pub enum Phase {
     Merge,
     /// Phase 2.
     Optimizer,
+    /// Phase 3.5 — post-bench results-analyzer.
+    ResultsAnalyzer,
     /// Phase 5 — draft PR shipping.
     PrWriter,
     /// Phase 5 — consensus-issue shipping.
@@ -59,6 +61,7 @@ impl Phase {
             Self::Analyzer => "analyzer",
             Self::Merge => "merge",
             Self::Optimizer => "optimizer",
+            Self::ResultsAnalyzer => "results_analyzer",
             Self::PrWriter => "pr_writer",
             Self::IssueWriter => "issue_writer",
         }

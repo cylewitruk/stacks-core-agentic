@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
 use crate::models::common::{
-    BreakageClass, DeliveryMode, KEBAB_PATTERN, LensDispositionEntry, SchemaVersionV2,
+    BreakageClass, DeliveryMode, KEBAB_PATTERN, LensDispositionEntry, SchemaVersionV3,
 };
 
 /// Top-level shape of `summary.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {
-    /// Constant: 2.
-    pub schema_version: SchemaVersionV2,
+    /// Constant: 3.
+    pub schema_version: SchemaVersionV3,
     /// Session this artifact belongs to.
     pub session_id: String,
     /// Baseline run id.

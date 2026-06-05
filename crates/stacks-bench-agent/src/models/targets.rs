@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 use crate::models::ValidateModel;
 use crate::models::common::{
     BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, KEBAB_PATTERN,
-    LensDispositionEntry, LensDispositionStatus, Risk, SchemaVersionV2, VerificationReplay,
+    LensDispositionEntry, LensDispositionStatus, Risk, SchemaVersionV3, VerificationReplay,
 };
 
 /// Top-level shape of `optimization-targets.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizationTargets {
-    /// Constant: 2.
-    pub schema_version: SchemaVersionV2,
+    /// Constant: 3.
+    pub schema_version: SchemaVersionV3,
     /// Session this artifact belongs to.
     pub session_id: String,
     /// Baseline run id (matches `<results>/baseline-run-id`).
@@ -139,12 +139,13 @@ pub struct MergedTarget {
     pub risk: Risk,
     /// Union of contributors' verification requirements.
     pub verification_plan: String,
-    /// Optional targeted-replay recipe carried through from analyzer
-    /// contributors. When multiple contributors disagree, the merger
-    /// picks the most specific recipe (broadest txid/block set) or
-    /// drops to `None` (full-range fallback) — recorded in
-    /// `merge_notes`. Absent → Phase 3 falls back to the session's
-    /// full-range bench.
+    /// Targeted-replay recipe carried through from analyzer contributors.
+    /// Required on `bench_eligible == true` targets (Pass 1c invariant —
+    /// Phase 1.8/3/3.5 require analyzer-emitted invocations); optional
+    /// and ignored on consensus targets. When contributors disagree on
+    /// the invocation set, the merger takes the union and records the
+    /// disagreement in `contributor_differences`. See
+    /// [`crate::models::common::VerificationReplay`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_replay: Option<VerificationReplay>,
     /// Optional reviewer-facing note from the merger.
@@ -272,6 +273,20 @@ impl ValidateModel for MergedTarget {
                 self.id,
                 self.bench_eligible,
                 self.delivery_mode
+            );
+        }
+        // Pass 1c invariant: every bench_eligible target carries a
+        // `verification_replay`. Phase 1.8 + Phase 3 + Phase 3.5 all
+        // assume non-empty invocations; the schema-level gate is here.
+        if self.bench_eligible
+            && self
+                .verification_replay
+                .is_none()
+        {
+            bail!(
+                "target `{}`: bench_eligible target must carry verification_replay (Pass 1c \
+                 invariant — Phase 1.8/3/3.5 require analyzer-emitted invocations)",
+                self.id
             );
         }
         Ok(())

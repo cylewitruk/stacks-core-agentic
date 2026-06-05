@@ -76,10 +76,16 @@ For N > 1 contributors:
   do not collapse the vector, average the axes, or dot-product it.
 - `risk`: most cautious risk.
 - `verification_plan`: union.
-- `verification_replay`: union txids/blocks, max repetitions, max explicit
-  `warmup`, joined rationales. If no contributor set `warmup`, omit it and let
-  the bench default apply. Cap `txids` and `blocks` at 16 entries each; if
-  exceeded, drop the lowest-cost representatives.
+- `verification_replay`: required on every non-consensus (bench-eligible)
+  merged target. Merge contributors' `invocations[]` by `id` — when two
+  analyzers emit the same id, prefer the contributor whose `samples`
+  variant is most specific (txids/blocks > block_range) and take
+  `max(repetitions)` + `max(warmup)`. When contributors disagree on
+  `expected_signal.direction`, drop the invocation and record the
+  disagreement in `contributor_differences`. Cap at 16 invocations per
+  target — if exceeded, keep the highest-confidence ones (cited in
+  multiple analyses or matching the strongest hotspot). Merge
+  `rationale`s into one cohesive line and union `suspected_spans`.
 - `merged_from`: all contributors in first-seen order.
 - `convergence_count`: `merged_from.length`.
 - `merge_notes`: one short provenance sentence.

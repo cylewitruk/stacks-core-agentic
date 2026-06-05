@@ -27,9 +27,15 @@
 //!                          (coordinator-written marker; the optimizer is
 //!                          skipped for consensus_issue mode); prompt.md,
 //!                          events.jsonl, stderr.log, final-message.md,
-//!                          conversation-id, nextest.log, run-ids,
-//!                          run-N/bench-run.json, pr-title.txt,
+//!                          conversation-id, nextest.log,
+//!                          candidate-run-ids.json,
+//!                          <invocation-id>/bench-run.json, pr-title.txt,
 //!                          pr-body.md, pr-writer-*, issue-*, etc.
+//!   analyze/<target-id>/   {results-analysis.json, results-analysis.md,
+//!                           prompt.md, events.jsonl, stderr.log,
+//!                           final-message.md, conversation-id}
+//!                          (Phase 3.5 results-analyzer agent output —
+//!                          one verdict per `bench_eligible` target)
 //!   finalize/   {summary.json, summary.md, targets.md}
 //! ```
 //!
@@ -323,43 +329,34 @@ impl SessionLayout {
             .join(target_id)
     }
 
-    /// Per-phase baseline calibration run dir for a single bench
-    /// invocation. `phase` is `"txid"` or `"block"`; `k` is the
-    /// 1-indexed invocation number (Pass 1a always writes `k=1`;
-    /// Path B multi-invocation variance — future work — would
-    /// produce `k=1..N`).
-    pub fn verify_baseline_run_dir(&self, target_id: &str, phase: &str, k: usize) -> PathBuf {
+    /// Per-invocation baseline calibration run dir. One subdir per
+    /// `BenchInvocation.id` on the target's `verification_replay`.
+    pub fn verify_baseline_invocation_dir(&self, target_id: &str, invocation_id: &str) -> PathBuf {
         self.verify_target_dir(target_id)
-            .join(format!("baseline-{phase}-run-{k}"))
+            .join(invocation_id)
     }
 
-    /// `results/verify/<target-id>/baseline-{phase}-run-{k}/bench-run.json`
-    /// — the stacks-bench output for one calibration invocation.
-    pub fn verify_baseline_bench_run_json(
-        &self,
-        target_id: &str,
-        phase: &str,
-        k: usize,
-    ) -> PathBuf {
-        self.verify_baseline_run_dir(target_id, phase, k)
+    /// `results/verify/<target-id>/<invocation-id>/bench-run.json` — the
+    /// stacks-bench output for one Phase 1.8 invocation.
+    pub fn verify_baseline_bench_run_json(&self, target_id: &str, invocation_id: &str) -> PathBuf {
+        self.verify_baseline_invocation_dir(target_id, invocation_id)
             .join("bench-run.json")
     }
 
-    /// `results/verify/<target-id>/baseline-{phase}-run-{k}/bench-run.stderr.
-    /// log`.
+    /// `results/verify/<target-id>/<invocation-id>/bench-run.stderr.log`.
     pub fn verify_baseline_bench_run_stderr(
         &self,
         target_id: &str,
-        phase: &str,
-        k: usize,
+        invocation_id: &str,
     ) -> PathBuf {
-        self.verify_baseline_run_dir(target_id, phase, k)
+        self.verify_baseline_invocation_dir(target_id, invocation_id)
             .join("bench-run.stderr.log")
     }
 
-    /// `results/verify/<target-id>/baseline-run-ids.json` — structured
-    /// `{txid_run_ids: [...], block_run_ids: [...]}` mapping replay
-    /// phase → run ids produced by Phase 1.8.
+    /// `results/verify/<target-id>/baseline-run-ids.json` —
+    /// [`InvocationRunIds`](crate::models::common::InvocationRunIds) JSON
+    /// pairing each invocation `id` with the stacks-bench `benchmark_run`
+    /// row Phase 1.8 produced for it.
     pub fn verify_baseline_run_ids_json(&self, target_id: &str) -> PathBuf {
         self.verify_target_dir(target_id)
             .join("baseline-run-ids.json")
@@ -410,11 +407,45 @@ impl SessionLayout {
             .join("consensus-issue.md")
     }
 
-    /// `results/optimize/<target-id>/run-ids` — newline-delimited list of
-    /// run ids the optimizer produced (one per benchmark execution).
-    pub fn experiment_run_ids_path(&self, target_id: &str) -> PathBuf {
+    /// `results/optimize/<target-id>/candidate-run-ids.json` —
+    /// [`InvocationRunIds`](crate::models::common::InvocationRunIds) JSON
+    /// pairing each invocation `id` with the stacks-bench `benchmark_run`
+    /// row Phase 3 produced for it. Symmetric with
+    /// [`Self::verify_baseline_run_ids_json`].
+    pub fn experiment_candidate_run_ids_json(&self, target_id: &str) -> PathBuf {
         self.experiment_dir(target_id)
-            .join("run-ids")
+            .join("candidate-run-ids.json")
+    }
+
+    /// Per-invocation candidate bench run dir. One subdir per
+    /// `BenchInvocation.id`.
+    pub fn experiment_candidate_invocation_dir(
+        &self,
+        target_id: &str,
+        invocation_id: &str,
+    ) -> PathBuf {
+        self.experiment_dir(target_id)
+            .join(invocation_id)
+    }
+
+    /// `results/optimize/<target-id>/<invocation-id>/bench-run.json`.
+    pub fn experiment_candidate_bench_run_json(
+        &self,
+        target_id: &str,
+        invocation_id: &str,
+    ) -> PathBuf {
+        self.experiment_candidate_invocation_dir(target_id, invocation_id)
+            .join("bench-run.json")
+    }
+
+    /// `results/optimize/<target-id>/<invocation-id>/bench-run.stderr.log`.
+    pub fn experiment_candidate_bench_run_stderr(
+        &self,
+        target_id: &str,
+        invocation_id: &str,
+    ) -> PathBuf {
+        self.experiment_candidate_invocation_dir(target_id, invocation_id)
+            .join("bench-run.stderr.log")
     }
 
     // ── Phase 3: bench ───────────────────────────────────────────────
@@ -422,6 +453,68 @@ impl SessionLayout {
     // optimizer's outputs inside `optimize/<target-id>/` so each
     // target has a single audit trail. `candidate-` prefix is the
     // disambiguator (vs the optimizer's `prompt.md`, `events.jsonl`).
+
+    // ── Phase 3.5: results-analyzer ──────────────────────────────────
+
+    /// `results/analyze/` — root for per-target results-analyzer agent
+    /// artifacts. Holds `<target>/results-analysis.{json,md}` plus the
+    /// per-target subagent log (prompt, events, etc.). Distinct from
+    /// `analysis/` (Phase 1.5 analyzer-agent output, family-keyed) and
+    /// from `verify/` + `optimize/` (which hold raw bench outputs).
+    pub fn analyze_dir(&self) -> PathBuf {
+        self.results_dir
+            .join("analyze")
+    }
+
+    /// `results/analyze/<target-id>/`.
+    pub fn analyze_target_dir(&self, target_id: &str) -> PathBuf {
+        self.analyze_dir()
+            .join(target_id)
+    }
+
+    /// `results/analyze/<target-id>/results-analysis.json` — typed
+    /// verdict written by the Phase 3.5 results-analyzer agent.
+    pub fn analyze_results_analysis_json(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("results-analysis.json")
+    }
+
+    /// `results/analyze/<target-id>/results-analysis.md` — operator-
+    /// facing companion (short prose).
+    pub fn analyze_results_analysis_md(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("results-analysis.md")
+    }
+
+    /// `results/analyze/<target-id>/prompt.md`.
+    pub fn analyze_prompt(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("prompt.md")
+    }
+
+    /// `results/analyze/<target-id>/events.jsonl`.
+    pub fn analyze_events_jsonl(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("events.jsonl")
+    }
+
+    /// `results/analyze/<target-id>/stderr.log`.
+    pub fn analyze_stderr(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("stderr.log")
+    }
+
+    /// `results/analyze/<target-id>/final-message.md`.
+    pub fn analyze_final_message(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("final-message.md")
+    }
+
+    /// `results/analyze/<target-id>/conversation-id`.
+    pub fn analyze_conversation_id(&self, target_id: &str) -> PathBuf {
+        self.analyze_target_dir(target_id)
+            .join("conversation-id")
+    }
 
     // ── Phase 4: finalize ────────────────────────────────────────────
 
@@ -475,6 +568,8 @@ impl SessionLayout {
             self.analysis_dir(),
             self.merge_dir(),
             self.optimize_dir(),
+            self.verify_dir(),
+            self.analyze_dir(),
             self.finalize_dir(),
         ] {
             std::fs::create_dir_all(dir)?;

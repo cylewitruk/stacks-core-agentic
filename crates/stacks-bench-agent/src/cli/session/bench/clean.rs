@@ -1,14 +1,15 @@
 //! `sbagent session bench clean` — clear Phase 3 per-target benchmark
-//! artifacts (`run-*` dirs and `run-ids` files) without touching the
-//! optimizer-side outputs (implementation/abort markers, subagent logs).
-//! Useful for re-benchmarking a target after a flaky run.
+//! artifacts (`candidate-run-ids.json` and the per-invocation
+//! `<invocation-id>/` subdirs) without touching the optimizer-side
+//! outputs (implementation / abort markers, subagent logs). Useful for
+//! re-benchmarking after a flaky run.
 
 use anyhow::Result;
 use clap::Args;
 
 use crate::cli::CliContext;
-use crate::session::SessionLayout;
 use crate::session::clean::{self, CleanReport};
+use crate::session::{SessionLayout, loader};
 use crate::types::SessionId;
 
 /// Args for `sbagent session bench clean`.
@@ -20,53 +21,29 @@ pub async fn run(_args: BenchCleanArgs, ctx: &CliContext, session_id: &SessionId
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
     let mut report = CleanReport::default();
 
-    // Walk optimize/<target>/ and remove every per-target bench output
-    // (Phase 3 writes candidate-bench-run.json, candidate-rerun.json,
-    // run-ids, run-N/ subdirs alongside the optimizer outputs). The
-    // optimizer's own artifacts (implementation/abort markers, the
-    // subagent log) are intentionally left intact — bench clean
-    // exists to re-bench without re-optimizing. Selection happens
-    // by file-name prefix (`candidate-`, `run-*`, `run-ids`), not
-    // by directory.
-    let exp_root = layout.optimize_dir();
-    let rd = match std::fs::read_dir(&exp_root) {
-        Ok(rd) => rd,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    // The Phase 3 outputs for one target are:
+    //  - `optimize/<target>/candidate-run-ids.json`
+    //  - `optimize/<target>/<invocation-id>/bench-run.json`
+    //  - `optimize/<target>/<invocation-id>/bench-run.stderr.log`
+    // The invocation set is sourced from the merged target's
+    // `verification_replay.invocations[].id` — deleting by that list
+    // (rather than by a name pattern) keeps clean from racing future
+    // sibling artifacts and lets it stay correct even when the operator
+    // hand-edits an invocation id.
+    let targets = match loader::read_optimization_targets(&layout) {
+        Ok(t) => t,
+        Err(_) => {
             clean::print_report("bench clean", &report);
             return Ok(());
         }
-        Err(e) => {
-            return Err(anyhow::Error::new(e).context(format!("reading {}", exp_root.display())));
-        }
     };
-    for entry in rd.flatten() {
-        if !entry
-            .file_type()
-            .map(|t| t.is_dir())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let target_dir = entry.path();
-        // Drop run-ids if present.
-        report.merge(clean::remove_one(&target_dir.join("run-ids"))?);
-        // Drop every run-N subdir.
-        if let Ok(srd) = std::fs::read_dir(&target_dir) {
-            for sub in srd.flatten() {
-                let name = sub.file_name();
-                if !sub
-                    .file_type()
-                    .map(|t| t.is_dir())
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-                if name
-                    .to_string_lossy()
-                    .starts_with("run-")
-                {
-                    report.merge(clean::remove_one(&sub.path())?);
-                }
+    for target in &targets.targets {
+        let exp = layout.experiment_dir(&target.id);
+        report.merge(clean::remove_one(&exp.join("candidate-run-ids.json"))?);
+        if let Some(vr) = &target.verification_replay {
+            for inv in &vr.invocations {
+                let inv_dir = layout.experiment_candidate_invocation_dir(&target.id, &inv.id);
+                report.merge(clean::remove_one(&inv_dir)?);
             }
         }
     }

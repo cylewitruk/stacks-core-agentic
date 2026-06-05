@@ -1,17 +1,17 @@
 //! Phase 3: build per-target release binaries, copy them out, then run
-//! two benchmarks per target serialized under BENCH_LOCK. Port of
-//! `scripts/bench-experiments.sh`.
+//! one `stacks-bench bench run` per `verification_replay.invocations[]`
+//! entry, serialized under BENCH_LOCK.
 //!
 //! Per target, the phase has two halves:
 //! 1. **Build** — `cargo build --release -p stacks-bench` inside the target's
 //!    worktree, copy the produced binary to `optimize/<id>/bin/stacks-bench`,
-//!    optional `cargo clean`. Builds can run in parallel; the bash uses a
-//!    sequential loop.
-//! 2. **Bench** — for run-1 and run-2, invoke the per-target binary with the
-//!    same range args the baseline used, capturing stdout/stderr to
-//!    `run-N/bench-run.json`. Wrapped in flock so two targets can't contend for
-//!    the host. After each run, the run id is appended to
-//!    `optimize/<id>/run-ids` (truncated up-front for idempotency).
+//!    optional `cargo clean`.
+//! 2. **Bench** — for each invocation, invoke the per-target binary with the
+//!    args derived from `BenchInvocation` (samples + repetitions + warmup +
+//!    profiler), capturing stdout/stderr to `optimize/<id>/<invocation-id>/`.
+//!    Wrapped in flock so two targets can't contend for the host. Run ids land
+//!    in `optimize/<id>/candidate-run-ids.json` as
+//!    [`crate::models::common::InvocationRunIds`].
 //!
 //! Targets are skipped when:
 //! - `bench_eligible == false` (consensus-routing modes — see
@@ -45,8 +45,10 @@ pub struct Inputs<'a> {
     pub worktrees_root: &'a Path,
     /// Loaded merged-targets artifact.
     pub targets: &'a OptimizationTargets,
-    /// Bench range args (forwarded to `bench run`).
-    pub range: BenchRange<'a>,
+    /// Session-global bench env (`--source` / `--network` / optional
+    /// `--shadow-dir-root`). Per-invocation knobs come from each target's
+    /// `verification_replay.invocations[]`.
+    pub env: BenchEnv<'a>,
     /// BENCH_LOCK path — flock'd around each `bench run` invocation.
     pub bench_lock: &'a Path,
     /// When true, skip the per-worktree `cargo clean` after building.
@@ -61,26 +63,15 @@ pub struct Inputs<'a> {
     pub bench_for_target: &'a dyn Fn(&Path) -> Box<dyn BenchClient + 'a>,
 }
 
-/// Bench range args.
+/// Session-global bench env. The per-invocation knobs (`--start-at`,
+/// `--count`, `--repetitions`, `--warmup`, `--filter`) are sourced from
+/// each target's `verification_replay.invocations[]`, not from here.
 #[derive(Debug, Clone, Copy)]
-pub struct BenchRange<'a> {
+pub struct BenchEnv<'a> {
     /// `--source` arg.
     pub source_dir: &'a Path,
     /// `--network` arg.
     pub network: &'a str,
-    /// `--start-at` arg. Only used in full-range mode (no
-    /// `verification_replay` on the target); required when at least
-    /// one target needs that mode, ignored otherwise. The CLI's
-    /// preflight enforces presence iff a target actually needs it,
-    /// so reaching the full-range fallback path with `None` here is a
-    /// caller bug.
-    pub start_at: Option<u64>,
-    /// `--count` arg. Same semantics as [`Self::start_at`].
-    pub count: Option<u64>,
-    /// Optional `--warmup` arg.
-    pub warmup: Option<u64>,
-    /// Optional `--filter` arg (e.g. `contract-call`).
-    pub filter: Option<&'a str>,
     /// Optional `--shadow-dir-root` arg. When set, stacks-bench creates
     /// its reflink shadow copy of the source chainstate under this dir
     /// instead of beside the source. Required when the source's parent
@@ -95,8 +86,8 @@ pub struct BenchRange<'a> {
 pub enum TargetOutcome {
     /// Target was successfully built + benchmarked.
     Benched {
-        /// Run ids appended to `optimize/<id>/run-ids` (one per run, in
-        /// order).
+        /// Run ids produced by Phase 3, one per invocation in the order
+        /// listed on the target's `verification_replay.invocations[]`.
         run_ids: Vec<i64>,
     },
     /// Target was skipped; no work happened.
@@ -178,8 +169,11 @@ fn build_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
     Ok(TargetOutcome::Benched { run_ids: Vec::new() })
 }
 
-/// Phase B for one target: two `bench run` invocations under BENCH_LOCK,
-/// with run ids appended to `run-ids`.
+/// Phase B for one target: one `bench run` invocation per
+/// `verification_replay.invocations[]` entry, sequentially under
+/// BENCH_LOCK. Run ids land in
+/// `optimize/<target>/candidate-run-ids.json` as
+/// [`InvocationRunIds`](crate::models::common::InvocationRunIds).
 fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome> {
     let exp_dir = inputs
         .layout
@@ -193,52 +187,45 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
         return Ok(TargetOutcome::Skipped { reason });
     }
 
-    // Idempotency: truncate run-ids before re-populating so a re-run of
-    // this phase doesn't leave stale ids alongside fresh ones.
-    let run_ids_path = inputs
-        .layout
-        .experiment_run_ids_path(&target.id);
-    fs::write(&run_ids_path, b"")
-        .with_context(|| format!("truncating {}", run_ids_path.display()))?;
+    let invocations = crate::session::calibration::require_invocations(target)?;
 
     let bench = (inputs.bench_for_target)(&bin_path);
     let source_str = inputs
-        .range
+        .env
         .source_dir
         .to_string_lossy()
         .into_owned();
     let shadow_str = inputs
-        .range
+        .env
         .shadow_dir_root
         .map(|p| {
             p.to_string_lossy()
                 .into_owned()
         });
 
-    let phases = build_phases(target, &inputs.range);
-    let mut run_ids = Vec::with_capacity(phases.len());
-    for (idx, phase) in phases.iter().enumerate() {
-        let n = idx + 1;
-        let run_dir = exp_dir.join(format!("run-{n}"));
+    let mut run_ids = Vec::with_capacity(invocations.len());
+    let mut entries = Vec::with_capacity(invocations.len());
+    for inv in invocations {
+        let run_dir = inputs
+            .layout
+            .experiment_candidate_invocation_dir(&target.id, &inv.id);
         fs::create_dir_all(&run_dir).with_context(|| format!("creating {}", run_dir.display()))?;
-        let bench_name = format!("{}-{}", target.id, phase.bench_name_suffix);
+        let bench_name = format!("candidate-{}-{}", target.id, inv.id);
         // Candidate bench: same profiler-flag set as the Phase 1.8 baseline
-        // calibration this candidate's `improvement_pct` will be compared
-        // against. Pass 1c invariant — flag symmetry within a comparison.
+        // calibration this candidate's results-analyzer will compare it to.
+        // Pass 1c invariant — flag symmetry within a comparison.
         // Asymmetric profiling (e.g. lean candidate vs rich baseline) lets
         // profile overhead bias the comparison; see
         // [calibration.rs](super::calibration) for the matching baseline
-        // arg construction. When measurement profiles land (roadmap), this
-        // flag set comes from the profile descriptor rather than being
-        // hard-coded; the invariant is "same profile flags on both sides
-        // of a comparison."
+        // arg construction.
+        let extra = crate::session::calibration::build_invocation_args(inv);
         let mut args: Vec<&str> = vec![
             "bench",
             "run",
             "--source",
             &source_str,
             "--network",
-            inputs.range.network,
+            inputs.env.network,
             "--name",
             &bench_name,
         ];
@@ -246,11 +233,15 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
             args.push("--shadow-dir-root");
             args.push(sd);
         }
-        for a in &phase.extra_args {
+        for a in &extra {
             args.push(a);
         }
-        let stdout_path = run_dir.join("bench-run.json");
-        let stderr_path = run_dir.join("bench-run.stderr.log");
+        let stdout_path = inputs
+            .layout
+            .experiment_candidate_bench_run_json(&target.id, &inv.id);
+        let stderr_path = inputs
+            .layout
+            .experiment_candidate_bench_run_stderr(&target.id, &inv.id);
         bench.invoke(InvokeOptions {
             args: &args,
             stdout: Some(&stdout_path),
@@ -259,19 +250,25 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
         })?;
 
         let id = extract_run_id(&stdout_path)
-            .with_context(|| format!("extracting run id for {} run-{n}", target.id))?;
+            .with_context(|| format!("extracting run id for `{}` / `{}`", target.id, inv.id))?;
         run_ids.push(id);
-
-        // Append to run-ids
-        let prior = fs::read_to_string(&run_ids_path).unwrap_or_default();
-        let mut updated = prior;
-        if !updated.is_empty() && !updated.ends_with('\n') {
-            updated.push('\n');
-        }
-        updated.push_str(&id.to_string());
-        updated.push('\n');
-        fs::write(&run_ids_path, updated)?;
+        entries.push(crate::models::common::InvocationRunId {
+            invocation_id: inv.id.clone(),
+            run_id: id,
+        });
     }
+
+    let ids = crate::models::common::InvocationRunIds { entries };
+    use crate::models::ValidateModel as _;
+    ids.validate_model()
+        .with_context(|| format!("invalid candidate-run-ids for `{}`", target.id))?;
+    let ids_path = inputs
+        .layout
+        .experiment_candidate_run_ids_json(&target.id);
+    let serialized = serde_json::to_string_pretty(&ids)
+        .with_context(|| format!("serializing candidate-run-ids for {}", target.id))?;
+    fs::write(&ids_path, format!("{serialized}\n"))
+        .with_context(|| format!("writing {}", ids_path.display()))?;
 
     Ok(TargetOutcome::Benched { run_ids })
 }
@@ -290,121 +287,6 @@ pub fn strip_hex_prefix(s: &str) -> String {
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s)
         .to_owned()
-}
-
-/// One bench invocation's worth of CLI arg variation. Either a full-range
-/// phase (`--start-at`/`--count`/`--filter`) or a targeted-replay phase
-/// (`--txid` repeated, or `--block` repeated, with `--repetitions`). The
-/// returned vector flattens into `stacks-bench bench run` after the
-/// per-invocation common prefix (`--source`/`--network`/`--name`).
-struct BenchPhase {
-    /// Suffix appended to the bench `--name` arg so operators can tell
-    /// per-target phases apart in the stacks-bench UI. Example values:
-    /// `"run-1"`, `"txids"`, `"blocks"`.
-    bench_name_suffix: String,
-    /// Args specific to this phase, in CLI order.
-    extra_args: Vec<String>,
-}
-
-/// Build the phase list for a single target. Targeted replay (per
-/// `target.verification_replay`) produces one phase per non-empty section
-/// (`txids` ⇒ one phase, `blocks` ⇒ one phase, both ⇒ two phases — they
-/// can't be combined in a single `stacks-bench` invocation because the
-/// flags conflict). Absence falls back to two full-range invocations
-/// (variance smoothing over the whole block range).
-fn build_phases(target: &MergedTarget, range: &BenchRange<'_>) -> Vec<BenchPhase> {
-    if let Some(vr) = &target.verification_replay {
-        let mut phases = Vec::with_capacity(2);
-        let reps = vr.repetitions.to_string();
-        // Default warmup = 10 when the recipe omits it. Cold-fork
-        // single-tx / single-block replay starts with empty caches; ~10
-        // discarded reps lets MARF + SQLite caches settle before
-        // measurement.
-        let warmup = vr
-            .warmup
-            .unwrap_or(10)
-            .to_string();
-        if let Some(txids) = vr
-            .txids
-            .as_deref()
-            .filter(|v| !v.is_empty())
-        {
-            let mut extra = Vec::with_capacity(4 + 2 * txids.len());
-            extra.push("--repetitions".to_owned());
-            extra.push(reps.clone());
-            extra.push("--warmup".to_owned());
-            extra.push(warmup.clone());
-            for tx in txids {
-                extra.push("--txid".to_owned());
-                extra.push(strip_hex_prefix(tx));
-            }
-            phases.push(BenchPhase {
-                bench_name_suffix: "txids".to_owned(),
-                extra_args: extra,
-            });
-        }
-        if let Some(blocks) = vr
-            .blocks
-            .as_deref()
-            .filter(|v| !v.is_empty())
-        {
-            let mut extra = Vec::with_capacity(4 + 2 * blocks.len());
-            extra.push("--repetitions".to_owned());
-            extra.push(reps);
-            extra.push("--warmup".to_owned());
-            extra.push(warmup);
-            for b in blocks {
-                extra.push("--block".to_owned());
-                extra.push(strip_hex_prefix(b));
-            }
-            phases.push(BenchPhase {
-                bench_name_suffix: "blocks".to_owned(),
-                extra_args: extra,
-            });
-        }
-        if !phases.is_empty() {
-            return phases;
-        }
-        // verification_replay was present but empty on both sides; fall
-        // through to full-range. (`VerificationReplay::validate` would
-        // normally catch this, but defense-in-depth at the bench layer.)
-    }
-
-    // Full-range default: two invocations for variance smoothing.
-    // start_at + count MUST be Some here — the CLI preflight rejects
-    // configs missing them whenever any target lacks a recipe. Unwrap
-    // via .expect with a pointed message so a future regression in
-    // the preflight surfaces as a clear panic instead of a confusing
-    // bench failure.
-    let start_at = range.start_at.expect(
-        "reached full-range bench fallback with BenchRange.start_at=None; CLI preflight should \
-         have required it",
-    );
-    let count = range.count.expect(
-        "reached full-range bench fallback with BenchRange.count=None; CLI preflight should have \
-         required it",
-    );
-    (1..=2u32)
-        .map(|n| {
-            let mut extra = Vec::with_capacity(6);
-            extra.push("--start-at".to_owned());
-            extra.push(start_at.to_string());
-            extra.push("--count".to_owned());
-            extra.push(count.to_string());
-            if let Some(w) = range.warmup {
-                extra.push("--warmup".to_owned());
-                extra.push(w.to_string());
-            }
-            if let Some(f) = range.filter {
-                extra.push("--filter".to_owned());
-                extra.push(f.to_owned());
-            }
-            BenchPhase {
-                bench_name_suffix: format!("run-{n}"),
-                extra_args: extra,
-            }
-        })
-        .collect()
 }
 
 /// Skip predicate identical to the bash's two-pass check. Returns

@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use crate::models::analyze::Analysis;
-use crate::models::common::{Bucket, LensDispositionStatus, SchemaVersionV2, SelectionLens};
+use crate::models::common::{Bucket, LensDispositionStatus, SchemaVersionV3, SelectionLens};
 use crate::models::summary::{Experiment, ExperimentStatus, Summary};
 use crate::models::targets::{MergedTarget, OptimizationTargets};
 use crate::session::SessionLayout;
@@ -33,6 +33,43 @@ pub struct ExperimentNotes {
 /// Load per-target writeup excerpts from the session tree. Returns one
 /// entry per target id (including empty entries when neither file exists),
 /// so callers can pass the map straight to [`render_summary_md`].
+/// Load each target's Phase 3.5 verdict via
+/// [`crate::session::loader::read_results_analysis_for_target`] — the
+/// same context-checking loader finalize uses. A target's verdict is
+/// included only when the file exists, parses, validates, and carries
+/// matching `session_id` + `target_id`; otherwise it's skipped (and
+/// finalize will surface the target as `Aborted`). This guarantees the
+/// summary table and the per-target verdict blocks in `summary.md`
+/// agree on which verdicts are valid for this session.
+///
+/// Used as a standalone helper for the
+/// `sbagent session finalize render` re-render flow. The full
+/// `session finalize run` path builds the verdict map inside finalize
+/// and passes it through directly so render and finalize see the
+/// exact same map.
+pub fn load_results_analyses(
+    layout: &SessionLayout,
+    targets: &OptimizationTargets,
+) -> BTreeMap<String, crate::models::results_analysis::ResultsAnalysis> {
+    let mut out = BTreeMap::new();
+    for t in &targets.targets {
+        match crate::session::loader::read_results_analysis_for_target(layout, &t.id) {
+            Ok(Some(ra)) => {
+                out.insert(t.id.clone(), ra);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target_id = %t.id,
+                    error = %e,
+                    "skipping results-analysis.json in summary.md render",
+                );
+            }
+        }
+    }
+    out
+}
+
 pub fn load_experiment_notes(
     layout: &SessionLayout,
     targets: &OptimizationTargets,
@@ -80,6 +117,7 @@ pub fn render_summary_md(
     targets: &OptimizationTargets,
     analyses: &BTreeMap<String, Analysis>,
     notes: &BTreeMap<String, ExperimentNotes>,
+    verdicts: &BTreeMap<String, crate::models::results_analysis::ResultsAnalysis>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -102,7 +140,7 @@ pub fn render_summary_md(
     out.push('\n');
 
     out.push_str(&render_what_was_found(targets, analyses));
-    out.push_str(&render_what_was_chosen(summary, targets, analyses, notes));
+    out.push_str(&render_what_was_chosen(summary, targets, analyses, notes, verdicts));
 
     out.push_str("## Outcomes\n\n");
     out.push_str("| Delivery mode    | Counts                                       |\n");
@@ -157,7 +195,18 @@ pub fn render_summary_md(
             .improvement_pct
             .map(|v| format!("{:.2}%", v))
             .unwrap_or_else(|| "—".to_owned());
-        let run_ids = render_run_ids(&e.target_id, e.run_ids.as_deref());
+        let invocation_ids = targets
+            .targets
+            .iter()
+            .find(|t| t.id == e.target_id)
+            .and_then(|t| t.verification_replay.as_ref())
+            .map(|vr| {
+                vr.invocations
+                    .iter()
+                    .map(|i| i.id.as_str())
+                    .collect::<Vec<_>>()
+            });
+        let run_ids = render_run_ids(&e.target_id, e.run_ids.as_deref(), invocation_ids.as_deref());
         let mut notes = e
             .reason
             .clone()
@@ -225,7 +274,7 @@ pub fn render_targets_md(
     targets: &OptimizationTargets,
     analyses: &BTreeMap<String, Analysis>,
 ) -> String {
-    let _ = SchemaVersionV2;
+    let _ = SchemaVersionV3;
     let mut out = String::new();
     out.push_str(&format!("# Optimization targets — session {sid}\n\n", sid = targets.session_id));
     out.push_str(
@@ -585,6 +634,7 @@ fn render_what_was_chosen(
     targets: &OptimizationTargets,
     _analyses: &BTreeMap<String, Analysis>,
     notes: &BTreeMap<String, ExperimentNotes>,
+    verdicts: &BTreeMap<String, crate::models::results_analysis::ResultsAnalysis>,
 ) -> String {
     if targets.targets.is_empty() {
         return String::new();
@@ -607,7 +657,12 @@ fn render_what_was_chosen(
 
     for t in &targets.targets {
         let exp = exp_by_id.get(t.id.as_str());
-        out.push_str(&render_target_narrative(t, exp.copied(), notes.get(&t.id)));
+        out.push_str(&render_target_narrative(
+            t,
+            exp.copied(),
+            notes.get(&t.id),
+            verdicts.get(&t.id),
+        ));
     }
     out
 }
@@ -616,6 +671,7 @@ fn render_target_narrative(
     t: &MergedTarget,
     exp: Option<&Experiment>,
     note: Option<&ExperimentNotes>,
+    verdict: Option<&crate::models::results_analysis::ResultsAnalysis>,
 ) -> String {
     let mut out = String::new();
 
@@ -671,6 +727,10 @@ fn render_target_narrative(
         {
             out.push_str(&format!("**Outcome (aborted).** {text}\n\n"));
         }
+    }
+
+    if let Some(v) = verdict {
+        out.push_str(&render_verdict_block(t, v));
     }
 
     // Footer line: contributors first, then detail links. One line each.
@@ -881,6 +941,69 @@ fn render_improvement_chart(experiments: &[Experiment]) -> Option<String> {
     Some(out)
 }
 
+/// Render the Phase 3.5 verdict block for one target: the agent's
+/// `headline_rationale`, a per-invocation table (label, baseline +
+/// candidate run-ids linked to their bench-run.json files, measured
+/// improvement, match-vs-expected flag), and any caveats.
+fn render_verdict_block(
+    t: &MergedTarget,
+    v: &crate::models::results_analysis::ResultsAnalysis,
+) -> String {
+    use crate::models::results_analysis::{Confidence, Verdict};
+
+    let mut out = String::new();
+    let verdict_label = match v.verdict {
+        Verdict::Accepted => "Accepted",
+        Verdict::Mixed => "Mixed",
+        Verdict::Rejected => "Rejected",
+    };
+    let confidence_label = match v.confidence {
+        Confidence::High => "high",
+        Confidence::Medium => "medium",
+        Confidence::Low => "low",
+    };
+    out.push_str(&format!(
+        "**Verdict.** `{verdict_label}` (confidence: {confidence_label}). {}\n\n",
+        v.headline_rationale.trim()
+    ));
+
+    if !v.per_invocation.is_empty() {
+        out.push_str("| Invocation | Baseline | Candidate | Measured | Matches expected? |\n");
+        out.push_str("| ---------- | -------- | --------- | -------- | ----------------- |\n");
+        for row in &v.per_invocation {
+            let baseline_link = format!(
+                "[{rid}](../verify/{tid}/{iid}/bench-run.json)",
+                rid = row.baseline_run_id,
+                tid = t.id,
+                iid = row.invocation_id,
+            );
+            let candidate_link = format!(
+                "[{rid}](../optimize/{tid}/{iid}/bench-run.json)",
+                rid = row.candidate_run_id,
+                tid = t.id,
+                iid = row.invocation_id,
+            );
+            let measured = format!("{:+.2}%", row.measured_pct);
+            let matches = if row.matches_expected_signal { "yes" } else { "no" };
+            out.push_str(&format!(
+                "| {label} | {baseline_link} | {candidate_link} | {measured} | {matches} |\n",
+                label = row.label,
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !v.caveats.is_empty() {
+        out.push_str("**Caveats.**\n");
+        for c in &v.caveats {
+            out.push_str(&format!("- {c}\n"));
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
 fn render_status_link(target_id: &str, status: ExperimentStatus) -> String {
     let label = humanize_status(status);
     let file = match status {
@@ -893,17 +1016,29 @@ fn render_status_link(target_id: &str, status: ExperimentStatus) -> String {
     format!("[{label}](../optimize/{target_id}/{file})")
 }
 
-fn render_run_ids(target_id: &str, run_ids: Option<&[i64]>) -> String {
+/// Render run-ids as markdown links to the Phase 3 candidate bench
+/// outputs. Each invocation lives at
+/// `optimize/<target>/<invocation-id>/bench-run.json`; pair by index
+/// against the target's `verification_replay.invocations[]`.
+/// `invocation_ids` is `None` when the run-id set is empty or the
+/// target has no VR (defensive; non-VR rows go through Aborted before
+/// reaching this surface).
+fn render_run_ids(
+    target_id: &str,
+    run_ids: Option<&[i64]>,
+    invocation_ids: Option<&[&str]>,
+) -> String {
     let Some(ids) = run_ids else { return "—".to_owned() };
     if ids.is_empty() {
         return "—".to_owned();
     }
     ids.iter()
         .enumerate()
-        .map(|(idx, id)| {
-            // `run-N` directories are 1-indexed by Phase 3 ordering, which
-            // is the same order Phase 4 reads from `run-ids`.
-            format!("[{id}](../optimize/{target_id}/run-{n}/bench-run.json)", n = idx + 1)
+        .map(|(idx, id)| match invocation_ids.and_then(|labels| labels.get(idx)) {
+            Some(label) => {
+                format!("[{id}](../optimize/{target_id}/{label}/bench-run.json)")
+            }
+            None => format!("{id}"),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -1078,7 +1213,7 @@ mod tests {
     use crate::models::analyze::Analysis;
     use crate::models::common::{
         BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, LensDispositionEntry,
-        LensDispositionStatus, Risk, SchemaVersionV2, SelectionLens,
+        LensDispositionStatus, Risk, SchemaVersionV3, SelectionLens,
     };
     use crate::models::summary::{
         ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
@@ -1086,9 +1221,32 @@ mod tests {
     };
     use crate::models::targets::{MergeMethod, MergedFrom, MergedTarget, OptimizationTargets};
 
+    fn bench_invocation(id: &str) -> crate::models::common::BenchInvocation {
+        use crate::models::common::{
+            BenchInvocation, BenchSamples, ExpectedSignal, ProfilerMode, SignalDirection,
+        };
+        BenchInvocation {
+            id: id.into(),
+            label: id.into(),
+            purpose: "render fixture".into(),
+            samples: BenchSamples::Blocks {
+                blocks: vec![format!("0x{}", "a".repeat(64))],
+            },
+            warmup: 10,
+            repetitions: 20,
+            profiler: ProfilerMode::Rich,
+            expected_signal: ExpectedSignal {
+                axis: SelectionLens::CommitTime,
+                direction: SignalDirection::Improves,
+                estimate_pct: Some(8.0),
+                tolerance_pct: Some(2.0),
+            },
+        }
+    }
+
     fn fixture_targets() -> OptimizationTargets {
         OptimizationTargets {
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             session_id: "20260511-063216".into(),
             baseline_run_id: 4,
             baseline_rerun_id: 4,
@@ -1125,7 +1283,14 @@ mod tests {
                     },
                     risk: Risk::Low,
                     verification_plan: "Full nextest pass + bench rerun".into(),
-                    verification_replay: None,
+                    verification_replay: Some(crate::models::common::VerificationReplay {
+                        rationale: "render fixture".into(),
+                        invocations: vec![
+                            bench_invocation("cold-first-touch"),
+                            bench_invocation("warm-steady"),
+                        ],
+                        suspected_spans: None,
+                    }),
                     merge_notes: None,
                     contributor_differences: None,
                     consensus_breaking: false,
@@ -1189,7 +1354,7 @@ mod tests {
 
     fn fixture_summary() -> Summary {
         Summary {
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             session_id: "20260511-063216".into(),
             baseline_run_id: 4,
             baseline_rerun_id: 4,
@@ -1252,7 +1417,8 @@ mod tests {
         let summary = fixture_summary();
         let targets = fixture_targets();
         let analyses = fixture_analyses();
-        let md = render_summary_md(&summary, &targets, &analyses, &BTreeMap::new());
+        let md =
+            render_summary_md(&summary, &targets, &analyses, &BTreeMap::new(), &BTreeMap::new());
 
         assert!(md.contains("[targets.md](targets.md)"));
         assert!(md.contains("```mermaid"));
@@ -1266,12 +1432,12 @@ mod tests {
         assert!(md.contains(
             "[Accepted](../optimize/sqlite-side-store-batched-replace/implementation.md)"
         ));
-        assert!(
-            md.contains("[11](../optimize/sqlite-side-store-batched-replace/run-1/bench-run.json)")
-        );
-        assert!(
-            md.contains("[12](../optimize/sqlite-side-store-batched-replace/run-2/bench-run.json)")
-        );
+        assert!(md.contains(
+            "[11](../optimize/sqlite-side-store-batched-replace/cold-first-touch/bench-run.json)"
+        ));
+        assert!(md.contains(
+            "[12](../optimize/sqlite-side-store-batched-replace/warm-steady/bench-run.json)"
+        ));
         assert!(md.contains(
             "[blocksurvey-proof-submission-write-budget-family](../analysis/\
              blocksurvey-proof-submission-write-budget-family/analysis.json)"
@@ -1284,8 +1450,13 @@ mod tests {
         for e in &mut summary.experiments {
             e.improvement_pct = None;
         }
-        let md =
-            render_summary_md(&summary, &fixture_targets(), &fixture_analyses(), &BTreeMap::new());
+        let md = render_summary_md(
+            &summary,
+            &fixture_targets(),
+            &fixture_analyses(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
         assert!(!md.contains("```mermaid"));
     }
 

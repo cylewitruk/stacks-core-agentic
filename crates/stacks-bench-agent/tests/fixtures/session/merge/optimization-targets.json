@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "session_id": "20260507-104400",
   "baseline_run_id": 100,
   "baseline_rerun_id": 101,
@@ -36,6 +36,47 @@
       },
       "risk": "low",
       "verification_plan": "cargo nextest run -p stackslib clarity_vm::database",
+      "verification_replay": {
+        "rationale": "cold-first-touch isolates MARF node-cache miss overhead; warm-steady measures the steady-state replay benefit once the cache is populated.",
+        "invocations": [
+          {
+            "id": "cold-first-touch",
+            "label": "cold first-touch",
+            "purpose": "Measure MARF node-cache miss cost on the first read of each block.",
+            "samples": {
+              "kind": "blocks",
+              "blocks": ["0xaa00000000000000000000000000000000000000000000000000000000000000"]
+            },
+            "warmup": 0,
+            "repetitions": 20,
+            "profiler": "rich",
+            "expected_signal": {
+              "axis": "tx_latency",
+              "direction": "improves",
+              "estimate_pct": 8.0,
+              "tolerance_pct": 3.0
+            }
+          },
+          {
+            "id": "warm-steady",
+            "label": "warm steady-state",
+            "purpose": "Measure steady-state benefit with the read cache populated.",
+            "samples": {
+              "kind": "blocks",
+              "blocks": ["0xaa00000000000000000000000000000000000000000000000000000000000000"]
+            },
+            "warmup": 10,
+            "repetitions": 20,
+            "profiler": "rich",
+            "expected_signal": {
+              "axis": "tx_latency",
+              "direction": "improves",
+              "estimate_pct": 4.2,
+              "tolerance_pct": 2.0
+            }
+          }
+        ]
+      },
       "merge_notes": "2 contributors converged from 2 distinct families.",
       "consensus_breaking": false,
       "delivery_mode": "normal_pr",

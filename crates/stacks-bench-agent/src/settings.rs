@@ -66,6 +66,10 @@ pub struct Settings {
     #[serde(default)]
     pub optimizer: OptimizerSettings,
 
+    /// Phase 3.5 results-analyzer config (publish confidence floor).
+    #[serde(default)]
+    pub results_analysis: ResultsAnalysisSettings,
+
     /// Codex CLI invocation knobs (model, reasoning effort, sandbox,
     /// timeout). Shared by every agent-driving phase.
     #[serde(default)]
@@ -285,6 +289,42 @@ pub struct AnalyzerSettings {
     /// the host. Defaults to 4.
     #[serde(default)]
     pub concurrency_cap: Option<usize>,
+
+    /// Operator-side cap on
+    /// `verification_replay.invocations[]` length per analyzer-emitted
+    /// target. Rejected at analyzer-output validation, BEFORE Phase 1.8
+    /// runs even one stacks-bench command — protects host time against
+    /// an analyzer that emits the schema hard max (16). The schema
+    /// `BENCH_INVOCATION_HARD_MAX` is the absolute ceiling; this is the
+    /// operator's tighter knob. Defaults to 8.
+    #[serde(default)]
+    pub max_invocations_per_target: Option<usize>,
+}
+
+impl AnalyzerSettings {
+    /// Default cap on `verification_replay.invocations[]` per target
+    /// when the operator hasn't set one. Tighter than the schema's
+    /// [`BENCH_INVOCATION_HARD_MAX`](crate::models::common::BENCH_INVOCATION_HARD_MAX)
+    /// (16) because a typical session runs 10-20 candidates and each
+    /// invocation costs minutes; 8 lets analyzers decompose cache
+    /// regimes (cold/warm + tx/block) without inflating the bench
+    /// budget.
+    pub const DEFAULT_MAX_INVOCATIONS_PER_TARGET: usize = 8;
+
+    /// Resolve [`Self::max_invocations_per_target`] against the
+    /// default and clamp to the schema hard max
+    /// [`BENCH_INVOCATION_HARD_MAX`](crate::models::common::BENCH_INVOCATION_HARD_MAX).
+    /// [`Settings::validate`] rejects misconfig before reaching here,
+    /// but the clamp is defense-in-depth — load paths that skip
+    /// validate (none today, but a future caller could) still get a
+    /// bounded cap so the analyzer prompt and the analyzer-output gate
+    /// never disagree.
+    pub fn effective_max_invocations_per_target(&self) -> usize {
+        let configured = self
+            .max_invocations_per_target
+            .unwrap_or(Self::DEFAULT_MAX_INVOCATIONS_PER_TARGET);
+        configured.clamp(1, crate::models::common::BENCH_INVOCATION_HARD_MAX)
+    }
 }
 
 /// `[optimizer]` — optimizer-phase tuning.
@@ -304,6 +344,41 @@ pub struct OptimizerSettings {
     /// prompt-level soft cap the agent self-enforces. Default: 60.
     #[serde(default)]
     pub budget_minutes: Option<u32>,
+}
+
+/// `[results_analysis]` — Phase 3.5 results-analyzer config.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResultsAnalysisSettings {
+    /// Minimum [`Confidence`](crate::models::results_analysis::Confidence)
+    /// required for a `normal_pr` target to publish in Phase 5. Targets
+    /// whose Phase 3.5 verdict scores below this floor are skipped by
+    /// `decide_publish` with an explicit `confidence=<x> below
+    /// floor=<y>` reason — operator review decides whether to ship.
+    /// Defaults to
+    /// [`Confidence::Medium`](crate::models::results_analysis::Confidence::Medium)
+    /// when unset: `high` and `medium` ship; `low` holds.
+    #[serde(default)]
+    pub confidence_floor: Option<crate::models::results_analysis::Confidence>,
+}
+
+impl ResultsAnalysisSettings {
+    /// Default confidence floor when the operator hasn't set one.
+    /// `Medium` is the conservative-safe default for an autonomous
+    /// publish path: `low` confidence verdicts hold for operator
+    /// review by default, while `high` + `medium` ship without
+    /// friction. Operators tightening for safety pin
+    /// `confidence_floor = "high"`; operators sweeping to clear a
+    /// backlog can drop to `"low"` (no gate).
+    pub const DEFAULT_CONFIDENCE_FLOOR: crate::models::results_analysis::Confidence =
+        crate::models::results_analysis::Confidence::Medium;
+
+    /// Resolve [`Self::confidence_floor`] against the default. Used by
+    /// the Phase 5 publish gate.
+    pub fn effective_confidence_floor(&self) -> crate::models::results_analysis::Confidence {
+        self.confidence_floor
+            .unwrap_or(Self::DEFAULT_CONFIDENCE_FLOOR)
+    }
 }
 
 /// `[codex]` — Codex CLI invocation knobs.
@@ -840,6 +915,12 @@ impl Settings {
     ///   process inherits.
     /// - [`LayoutSettings::operator_repo_root`] must be **absolute** when set.
     ///   The archive flow runs git from absolute paths.
+    /// - [`AnalyzerSettings::max_invocations_per_target`] must not exceed the
+    ///   schema hard max
+    ///   [`BENCH_INVOCATION_HARD_MAX`](crate::models::common::BENCH_INVOCATION_HARD_MAX).
+    ///   The operator cap is a *tightening* knob on top of the schema; raising
+    ///   it above the hard max would tell analyzers a budget the schema then
+    ///   rejects, wasting the (expensive) Codex call.
     pub fn validate(&self) -> Result<()> {
         for (i, path) in self
             .codex
@@ -863,6 +944,27 @@ impl Settings {
                  from absolute paths so its behavior doesn't depend on the caller's cwd",
                 p.display(),
             );
+        }
+        if let Some(cap) = self
+            .analyzer
+            .max_invocations_per_target
+        {
+            let hard_max = crate::models::common::BENCH_INVOCATION_HARD_MAX;
+            if cap == 0 {
+                anyhow::bail!(
+                    "analyzer.max_invocations_per_target = 0 disallows every analyzer-emitted \
+                     invocation; set to 1 (or higher) or remove the override to use the default \
+                     of {}",
+                    AnalyzerSettings::DEFAULT_MAX_INVOCATIONS_PER_TARGET,
+                );
+            }
+            if cap > hard_max {
+                anyhow::bail!(
+                    "analyzer.max_invocations_per_target = {cap} exceeds the schema hard max of \
+                     {hard_max}; the operator cap is a tightening knob, not a way to widen the \
+                     schema. Lower the value or remove the override.",
+                );
+            }
         }
         Ok(())
     }
@@ -1280,5 +1382,63 @@ mod tests {
         };
         s.validate()
             .expect("absolute operator_repo_root must pass validation");
+    }
+
+    #[test]
+    fn validate_rejects_max_invocations_above_schema_hard_max() {
+        let s = Settings {
+            analyzer: AnalyzerSettings {
+                max_invocations_per_target: Some(
+                    crate::models::common::BENCH_INVOCATION_HARD_MAX + 1,
+                ),
+                ..AnalyzerSettings::default()
+            },
+            ..Settings::default()
+        };
+        let err = s
+            .validate()
+            .expect_err("over-hard-max must fail validation");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("exceeds the schema hard max"), "{msg}");
+    }
+
+    #[test]
+    fn validate_rejects_max_invocations_zero() {
+        let s = Settings {
+            analyzer: AnalyzerSettings {
+                max_invocations_per_target: Some(0),
+                ..AnalyzerSettings::default()
+            },
+            ..Settings::default()
+        };
+        let err = s
+            .validate()
+            .expect_err("zero cap must fail validation");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("disallows every"), "{msg}");
+    }
+
+    #[test]
+    fn effective_max_invocations_clamps_above_hard_max() {
+        // Even if validate is bypassed, the effective accessor must
+        // bound the value so the prompt + the analyzer-output gate
+        // never disagree.
+        let a = AnalyzerSettings {
+            max_invocations_per_target: Some(99),
+            ..AnalyzerSettings::default()
+        };
+        assert_eq!(
+            a.effective_max_invocations_per_target(),
+            crate::models::common::BENCH_INVOCATION_HARD_MAX
+        );
+    }
+
+    #[test]
+    fn effective_max_invocations_clamps_below_one() {
+        let a = AnalyzerSettings {
+            max_invocations_per_target: Some(0),
+            ..AnalyzerSettings::default()
+        };
+        assert_eq!(a.effective_max_invocations_per_target(), 1);
     }
 }

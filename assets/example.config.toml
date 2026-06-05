@@ -160,6 +160,13 @@ single_run_noise_floor_pct = 1.0
 # Codex call with deep reasoning, several minutes per family.
 # concurrency_cap = 4
 
+# Operator cap on `verification_replay.invocations[]` length per
+# analyzer-emitted target. Enforced at analyzer-output validation,
+# BEFORE any stacks-bench command runs in Phase 1.8. Tighter than the
+# schema hard max of 16 — typical sessions run 10-20 candidates and
+# each invocation costs minutes of bench time.
+# max_invocations_per_target = 8
+
 
 # ---------------------------------------------------------------------------
 # [optimizer] — Phase 2 tuning.
@@ -173,6 +180,23 @@ single_run_noise_floor_pct = 1.0
 # Wall-clock budget per target (minutes). Soft cap the agent
 # self-enforces; `codex.exec_timeout_sec` is the hard kill.
 # budget_minutes  = 60
+
+
+# ---------------------------------------------------------------------------
+# [results_analysis] — Phase 3.5 results-analyzer config.
+# ---------------------------------------------------------------------------
+
+# [results_analysis]
+# Minimum confidence required for a `normal_pr` target to publish in
+# Phase 5. Verdicts whose confidence is below this floor are skipped by
+# `decide_publish` with an explicit "below floor" reason — operator
+# review decides whether to ship.
+#
+# Values: "high" | "medium" | "low". Defaults to "medium" — `high` and
+# `medium` confidence verdicts ship; `low` holds for operator review.
+# Tighten to "high" for safety-critical sessions; drop to "low" to
+# disable the gate (every shippable verdict flows through).
+# confidence_floor = "medium"
 
 
 # ---------------------------------------------------------------------------

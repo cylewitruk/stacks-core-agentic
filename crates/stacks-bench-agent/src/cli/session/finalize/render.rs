@@ -52,7 +52,8 @@ pub async fn run(args: FinalizeRenderArgs, ctx: &CliContext, session_id: &Sessio
     let analyses = loader::read_all_analyses(&layout)?;
 
     let notes = render::load_experiment_notes(&layout, &targets);
-    let summary_md = render::render_summary_md(&summary, &targets, &analyses, &notes);
+    let verdicts = render::load_results_analyses(&layout, &targets);
+    let summary_md = render::render_summary_md(&summary, &targets, &analyses, &notes, &verdicts);
     let targets_md = render::render_targets_md(&targets, &analyses);
 
     std::fs::write(layout.summary_md(), summary_md)

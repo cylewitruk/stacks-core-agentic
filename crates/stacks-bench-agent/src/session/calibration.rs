@@ -1,27 +1,27 @@
 //! Phase 1.8: per-target targeted baseline calibration.
 //!
-//! For each `normal_pr` target with a non-empty `verification_replay`,
-//! runs ONE bench invocation per replay phase (txid + block) against
+//! For each `bench_eligible` target (`delivery_mode == normal_pr`), runs
+//! every `BenchInvocation` in the target's `verification_replay` against
 //! the strict archived baseline binary from Phase 0a. The resulting
-//! per-target baseline-run-ids feed Phase 4 finalize's per-target
-//! `improvement_pct` comparison so numerator (candidate) and
-//! denominator (baseline) are both measured under targeted-replay
-//! cache regimes.
+//! per-invocation baseline run-ids feed Phase 3.5's per-invocation
+//! candidate ↔ baseline pairing so numerator and denominator are both
+//! measured under matching sample sets, repetitions, warmup, and
+//! profiler mode.
 //!
-//! Targets without `verification_replay` are skipped at Phase 1.8 and
-//! keep the legacy P0-vs-full-range comparison until Pass 2 lands the
-//! full-range fallback machinery.
-//!
-//! See [baseline-verification-agent-plan.md](../../../../
-//! baseline-verification-agent-plan.md) (Pass 1a, Sub-step C).
+//! Consensus-mode targets (`consensus_poc_pr` / `consensus_issue`) never
+//! reach Phase 1.8. The merge schema enforces that `verification_replay`
+//! is present on every `bench_eligible` target, so this phase always has
+//! invocations to run.
 
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{Context as _, Result, bail};
 
-use crate::models::common::DeliveryMode;
+use crate::models::ValidateModel;
+use crate::models::common::{
+    BenchInvocation, BenchSamples, DeliveryMode, InvocationRunId, InvocationRunIds, ProfilerMode,
+};
 use crate::models::targets::{MergedTarget, OptimizationTargets};
 use crate::session::SessionLayout;
 use crate::session::bench::{BenchClient, InvokeOptions, extract_run_id};
@@ -45,65 +45,42 @@ pub struct Inputs<'a> {
     pub targets: &'a OptimizationTargets,
 }
 
-/// Outputs of [`run`] — one entry per target that received a
-/// calibration. Targets without `verification_replay` are absent.
+/// Outputs of [`run`] — one entry per `bench_eligible` target.
 #[derive(Debug, Default)]
 pub struct Outputs {
-    /// Per-target structured baseline run ids. Keyed by target id.
-    pub per_target: std::collections::BTreeMap<String, BaselineRunIds>,
+    /// Per-target invocation run ids. Keyed by target id.
+    pub per_target: std::collections::BTreeMap<String, InvocationRunIds>,
 }
 
-/// Phase-aware baseline run ids for one target. Serialized to
-/// `verify/<target>/baseline-run-ids.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BaselineRunIds {
-    /// Run ids from the txid-phase calibration(s). Pass 1a writes
-    /// at most one; Pass 1b (multi-invocation variance) may write
-    /// more.
-    pub txid_run_ids: Vec<i64>,
-    /// Run ids from the block-phase calibration(s). Same shape
-    /// semantics as `txid_run_ids`.
-    pub block_run_ids: Vec<i64>,
-}
-
-/// Per-replay-phase descriptor for a single Phase 1.8 invocation.
-struct CalibrationPhase {
-    /// `"txid"` or `"block"`. Used in artifact paths
-    /// (`baseline-{phase}-run-K/`) and the bench name suffix.
-    phase: &'static str,
-    /// Args to append AFTER the common prefix
-    /// (`--source/--network/--name/--shadow-dir-root` are added by
-    /// `run`). Includes `--repetitions`, `--warmup`, and the
-    /// per-replay `--txid`/`--block` repeats.
-    extra: Vec<String>,
-}
-
-/// Run Phase 1.8 for every `normal_pr` target with a non-empty
-/// `verification_replay`. Sequential under the bench lock — each
-/// invocation owns the lock for its duration.
+/// Run Phase 1.8 for every `bench_eligible` target. Sequential under
+/// the bench lock — each invocation owns the lock for its duration.
 pub fn run(inputs: &Inputs<'_>) -> Result<Outputs> {
     let mut out = Outputs::default();
     for target in &inputs.targets.targets {
         if !matches!(target.delivery_mode, DeliveryMode::NormalPr) {
             continue;
         }
-        let phases = build_phases(target);
-        if phases.is_empty() {
-            // No verification_replay OR both phases empty — skip
-            // Phase 1.8 for this target. Legacy P0 ↔ candidate
-            // full-range comparison continues to apply at Phase 4.
-            continue;
+        let vr = target
+            .verification_replay
+            .as_ref()
+            .with_context(|| {
+                format!(
+                    "Phase 1.8: bench_eligible target `{}` has no verification_replay; merge \
+                     schema should have rejected this",
+                    target.id
+                )
+            })?;
+        let mut entries = Vec::with_capacity(vr.invocations.len());
+        for inv in &vr.invocations {
+            let run_id = invoke_one(inputs, target, inv)?;
+            entries.push(InvocationRunId {
+                invocation_id: inv.id.clone(),
+                run_id,
+            });
         }
-        let mut ids = BaselineRunIds::default();
-        for phase in &phases {
-            let run_id = invoke_phase(inputs, target, phase)?;
-            match phase.phase {
-                "txid" => ids.txid_run_ids.push(run_id),
-                "block" => ids.block_run_ids.push(run_id),
-                other => unreachable!("unexpected phase tag {other}"),
-            }
-        }
-        // Persist structured run-ids.json.
+        let ids = InvocationRunIds { entries };
+        ids.validate_model()
+            .with_context(|| format!("Phase 1.8: invalid baseline-run-ids for `{}`", target.id))?;
         let ids_path = inputs
             .layout
             .verify_baseline_run_ids_json(&target.id);
@@ -120,73 +97,10 @@ pub fn run(inputs: &Inputs<'_>) -> Result<Outputs> {
     Ok(out)
 }
 
-/// Build the list of phases (txid, block, or both) for a single
-/// target. Mirrors the Phase 3 candidate bench's phase structure so
-/// candidate ↔ baseline comparison stays phase-by-phase symmetric.
-fn build_phases(target: &MergedTarget) -> Vec<CalibrationPhase> {
-    let Some(vr) = &target.verification_replay else {
-        return Vec::new();
-    };
-    let mut phases = Vec::with_capacity(2);
-    let reps = vr.repetitions.to_string();
-    let warmup = vr
-        .warmup
-        .unwrap_or(10)
-        .to_string();
-    if let Some(txids) = vr
-        .txids
-        .as_deref()
-        .filter(|v| !v.is_empty())
-    {
-        let mut extra = Vec::with_capacity(4 + 2 * txids.len());
-        extra.push("--repetitions".to_owned());
-        extra.push(reps.clone());
-        extra.push("--warmup".to_owned());
-        extra.push(warmup.clone());
-        for tx in txids {
-            extra.push("--txid".to_owned());
-            extra.push(strip_hex_prefix(tx));
-        }
-        phases.push(CalibrationPhase { phase: "txid", extra });
-    }
-    if let Some(blocks) = vr
-        .blocks
-        .as_deref()
-        .filter(|v| !v.is_empty())
-    {
-        let mut extra = Vec::with_capacity(4 + 2 * blocks.len());
-        extra.push("--repetitions".to_owned());
-        extra.push(reps);
-        extra.push("--warmup".to_owned());
-        extra.push(warmup);
-        for b in blocks {
-            extra.push("--block".to_owned());
-            extra.push(strip_hex_prefix(b));
-        }
-        phases.push(CalibrationPhase { phase: "block", extra });
-    }
-    phases
-}
-
-/// Invoke one calibration phase against the strict archived
-/// baseline binary. Returns the run id stacks-bench recorded.
-///
-/// Pass 1a writes one invocation per phase (k=1). Pass 1b's
-/// multi-invocation variance work would call this in a loop with
-/// incrementing k and aggregate the resulting run ids.
-fn invoke_phase(
-    inputs: &Inputs<'_>,
-    target: &MergedTarget,
-    phase: &CalibrationPhase,
-) -> Result<i64> {
-    let k = 1_usize;
-    let bench_name = format!("baseline-{}-{}-run-{k}", target.id, phase.phase);
-    // Common prefix matches Phase 0b's baseline run except that this
-    // is a targeted-replay phase (no `--start-at`/`--count` at this
-    // layer; those args come from `phase.extra` when applicable).
-    // Notably: NO `--bench-spans-only` and NO `--no-profiler-kv`.
-    // Phase 1.9's verifier needs span + profiler-kv data the
-    // candidate's minimal flags strip.
+/// Invoke one `BenchInvocation` against the strict archived baseline
+/// binary. Returns the run id stacks-bench recorded.
+fn invoke_one(inputs: &Inputs<'_>, target: &MergedTarget, inv: &BenchInvocation) -> Result<i64> {
+    let bench_name = format!("baseline-{}-{}", target.id, inv.id);
     let source_str = inputs
         .source_dir
         .to_string_lossy()
@@ -197,6 +111,8 @@ fn invoke_phase(
             p.to_string_lossy()
                 .into_owned()
         });
+    let extra = build_invocation_args(inv);
+
     let mut args: Vec<&str> = vec![
         "bench",
         "run",
@@ -211,16 +127,16 @@ fn invoke_phase(
         args.push("--shadow-dir-root");
         args.push(sd);
     }
-    for ea in &phase.extra {
+    for ea in &extra {
         args.push(ea);
     }
 
     let bench_run_json = inputs
         .layout
-        .verify_baseline_bench_run_json(&target.id, phase.phase, k);
+        .verify_baseline_bench_run_json(&target.id, &inv.id);
     let stderr_path = inputs
         .layout
-        .verify_baseline_bench_run_stderr(&target.id, phase.phase, k);
+        .verify_baseline_bench_run_stderr(&target.id, &inv.id);
     if let Some(parent) = bench_run_json.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
@@ -233,21 +149,107 @@ fn invoke_phase(
             stderr: Some(&stderr_path),
             lock: Some(inputs.bench_lock),
         })
-        .with_context(|| format!("Phase 1.8 calibration for {} ({})", target.id, phase.phase))?;
+        .with_context(|| format!("Phase 1.8 calibration for `{}` / `{}`", target.id, inv.id))?;
 
     extract_run_id(&bench_run_json)
         .with_context(|| format!("extracting run id from {}", bench_run_json.display()))
+}
+
+/// Lower a [`BenchInvocation`] to the CLI arg list appended after the
+/// common prefix (`--source`/`--network`/`--name`/`--shadow-dir-root`).
+/// Public so [`bench_experiments`](crate::session::bench_experiments) can
+/// share the same arg-construction convention with Phase 1.8.
+pub(super) fn build_invocation_args(inv: &BenchInvocation) -> Vec<String> {
+    let mut extra = Vec::with_capacity(8);
+    extra.push("--repetitions".to_owned());
+    extra.push(inv.repetitions.to_string());
+    extra.push("--warmup".to_owned());
+    extra.push(inv.warmup.to_string());
+    match &inv.samples {
+        BenchSamples::Txids { txids } => {
+            for tx in txids {
+                extra.push("--txid".to_owned());
+                extra.push(strip_hex_prefix(tx));
+            }
+        }
+        BenchSamples::Blocks { blocks } => {
+            for b in blocks {
+                extra.push("--block".to_owned());
+                extra.push(strip_hex_prefix(b));
+            }
+        }
+        BenchSamples::BlockRange { start_at, count } => {
+            extra.push("--start-at".to_owned());
+            extra.push(start_at.to_string());
+            extra.push("--count".to_owned());
+            extra.push(count.to_string());
+        }
+    }
+    profiler_flags(inv.profiler)
+        .into_iter()
+        .for_each(|f| extra.push(f.to_owned()));
+    extra
+}
+
+/// Profiler-mode → stacks-bench CLI flags. Currently `Rich` (the default)
+/// emits no flags; future variants (e.g. lean / no-kv) would add
+/// `--bench-spans-only` / `--no-profiler-kv`.
+fn profiler_flags(mode: ProfilerMode) -> Vec<&'static str> {
+    match mode {
+        ProfilerMode::Rich => Vec::new(),
+    }
+}
+
+/// Helper: assert this target's `verification_replay.invocations[]` is
+/// non-empty. Phase 1.8 + Phase 3 both expect non-empty invocations on
+/// every `bench_eligible` target; the merge validator enforces this, but
+/// callers double-check to surface a clear error if they reach a target
+/// in a violating state.
+pub(crate) fn require_invocations(target: &MergedTarget) -> Result<&[BenchInvocation]> {
+    let Some(vr) = &target.verification_replay else {
+        bail!(
+            "target `{}`: bench_eligible target must carry verification_replay (Pass 1c invariant)",
+            target.id
+        );
+    };
+    if vr.invocations.is_empty() {
+        bail!("target `{}`: verification_replay.invocations is empty", target.id);
+    }
+    Ok(&vr.invocations)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::common::{
-        Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, VerificationReplay,
+        BenchSamples, Bucket, DeliveryMode, ExpectedSignal, Hotspot, ImprovementVector,
+        ProfilerMode, Risk, SelectionLens, SignalDirection, VerificationReplay,
     };
     use crate::models::targets::{MergedFrom, MergedTarget};
 
-    fn target_with_replay(id: &str, replay: Option<VerificationReplay>) -> MergedTarget {
+    fn hex64(b: u8) -> String {
+        format!("0x{}", std::iter::repeat_n(format!("{:02x}", b), 32).collect::<String>())
+    }
+
+    fn invocation(id: &str, samples: BenchSamples) -> BenchInvocation {
+        BenchInvocation {
+            id: id.to_owned(),
+            label: format!("label-{id}"),
+            purpose: format!("purpose-{id}"),
+            samples,
+            warmup: 5,
+            repetitions: 10,
+            profiler: ProfilerMode::Rich,
+            expected_signal: ExpectedSignal {
+                axis: SelectionLens::TxLatency,
+                direction: SignalDirection::Improves,
+                estimate_pct: Some(4.0),
+                tolerance_pct: Some(2.0),
+            },
+        }
+    }
+
+    fn target(id: &str, vr: Option<VerificationReplay>) -> MergedTarget {
         MergedTarget {
             id: id.to_owned(),
             merged_from: vec![MergedFrom {
@@ -275,7 +277,7 @@ mod tests {
             },
             risk: Risk::Low,
             verification_plan: "v".to_owned(),
-            verification_replay: replay,
+            verification_replay: vr,
             merge_notes: None,
             contributor_differences: None,
             consensus_breaking: false,
@@ -288,102 +290,62 @@ mod tests {
         }
     }
 
-    fn replay(
-        txids: Option<Vec<String>>,
-        blocks: Option<Vec<String>>,
-        reps: u32,
-        warmup: Option<u32>,
-    ) -> VerificationReplay {
-        VerificationReplay {
-            txids,
-            blocks,
-            repetitions: reps,
-            warmup,
+    #[test]
+    fn build_invocation_args_emits_txids() {
+        let inv = invocation("cold", BenchSamples::Txids { txids: vec![hex64(0xab)] });
+        let args = build_invocation_args(&inv);
+        assert!(args.contains(&"--repetitions".to_owned()));
+        assert!(args.contains(&"10".to_owned()));
+        assert!(args.contains(&"--warmup".to_owned()));
+        assert!(args.contains(&"5".to_owned()));
+        assert!(args.contains(&"--txid".to_owned()));
+        assert!(
+            args.iter()
+                .any(|a| a.starts_with("ab") && a.len() == 64)
+        );
+    }
+
+    #[test]
+    fn build_invocation_args_emits_blocks() {
+        let inv = invocation("warm", BenchSamples::Blocks { blocks: vec![hex64(0xcd)] });
+        let args = build_invocation_args(&inv);
+        assert!(args.contains(&"--block".to_owned()));
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--txid")
+        );
+    }
+
+    #[test]
+    fn build_invocation_args_emits_block_range() {
+        let inv = invocation("rng", BenchSamples::BlockRange { start_at: 100, count: 50 });
+        let args = build_invocation_args(&inv);
+        assert!(args.contains(&"--start-at".to_owned()));
+        assert!(args.contains(&"100".to_owned()));
+        assert!(args.contains(&"--count".to_owned()));
+        assert!(args.contains(&"50".to_owned()));
+    }
+
+    #[test]
+    fn require_invocations_rejects_target_without_vr() {
+        let t = target("a", None);
+        assert!(require_invocations(&t).is_err());
+    }
+
+    #[test]
+    fn require_invocations_accepts_target_with_vr() {
+        let vr = VerificationReplay {
             rationale: "r".to_owned(),
-        }
-    }
-
-    #[test]
-    fn build_phases_returns_empty_for_target_without_replay() {
-        let t = target_with_replay("a", None);
-        assert!(build_phases(&t).is_empty());
-    }
-
-    #[test]
-    fn build_phases_returns_empty_for_replay_with_empty_arrays() {
-        let t = target_with_replay("a", Some(replay(Some(vec![]), Some(vec![]), 10, None)));
-        assert!(build_phases(&t).is_empty());
-    }
-
-    #[test]
-    fn build_phases_emits_txid_only_when_blocks_absent() {
-        let t =
-            target_with_replay("a", Some(replay(Some(vec!["0xabc".to_owned()]), None, 5, Some(3))));
-        let phases = build_phases(&t);
-        assert_eq!(phases.len(), 1);
-        assert_eq!(phases[0].phase, "txid");
-        // Sanity: args carry stripped txid + repetitions + warmup.
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"--repetitions".to_owned())
+            invocations: vec![invocation("cold", BenchSamples::Blocks { blocks: vec![hex64(1)] })],
+            suspected_spans: None,
+        };
+        let t = target("a", Some(vr));
+        assert_eq!(
+            require_invocations(&t)
+                .unwrap()
+                .len(),
+            1
         );
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"5".to_owned())
-        );
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"--warmup".to_owned())
-        );
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"3".to_owned())
-        );
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"--txid".to_owned())
-        );
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"abc".to_owned())
-        );
-    }
-
-    #[test]
-    fn build_phases_emits_block_only_when_txids_absent() {
-        let t =
-            target_with_replay("a", Some(replay(None, Some(vec!["0xdef".to_owned()]), 7, None)));
-        let phases = build_phases(&t);
-        assert_eq!(phases.len(), 1);
-        assert_eq!(phases[0].phase, "block");
-        // Default warmup is 10 when omitted.
-        assert!(
-            phases[0]
-                .extra
-                .contains(&"10".to_owned())
-        );
-    }
-
-    #[test]
-    fn build_phases_emits_both_when_replay_carries_txids_and_blocks() {
-        let t = target_with_replay(
-            "a",
-            Some(replay(
-                Some(vec!["0x111".to_owned()]),
-                Some(vec!["0x222".to_owned()]),
-                3,
-                Some(1),
-            )),
-        );
-        let phases = build_phases(&t);
-        assert_eq!(phases.len(), 2);
-        assert_eq!(phases[0].phase, "txid");
-        assert_eq!(phases[1].phase, "block");
     }
 }

@@ -165,7 +165,7 @@ fn block_validation_forces_poc_implementable_false() {
     // + poc_implementable=true, which the injected rule must reject.
     let validator = schema_for("analysis.schema.json");
     let value = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "family_id": "x-fam",
         "status": "accepted",
         "selection_lens": "tx_latency",
@@ -251,7 +251,7 @@ fn lens_disposition_reason_rejects_null() {
     // status=not_actionable requires non-null reason.
     let validator = schema_for("summary.schema.json");
     let value = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "session_id": "x",
         "baseline_run_id": 1,
         "baseline_rerun_id": 2,
@@ -281,7 +281,7 @@ fn lens_disposition_reason_rejects_null() {
 /// (target is non-consensus).
 fn accepted_analysis_template() -> Value {
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "family_id": "x-fam",
         "status": "accepted",
         "selection_lens": "tx_latency",
@@ -302,6 +302,27 @@ fn accepted_analysis_template() -> Value {
             },
             "risk": "low",
             "verification_plan": "v",
+            "verification_replay": {
+                "rationale": "schema-parity baseline template",
+                "invocations": [{
+                    "id": "warm-steady",
+                    "label": "warm",
+                    "purpose": "smoke",
+                    "samples": {
+                        "kind": "blocks",
+                        "blocks": ["0xaa00000000000000000000000000000000000000000000000000000000000000"]
+                    },
+                    "warmup": 10,
+                    "repetitions": 20,
+                    "profiler": "rich",
+                    "expected_signal": {
+                        "axis": "tx_latency",
+                        "direction": "improves",
+                        "estimate_pct": 4.0,
+                        "tolerance_pct": 2.0
+                    }
+                }]
+            },
             "consensus_breaking": false
         }]
     })
@@ -393,7 +414,7 @@ fn experiment_status_constrained_by_delivery_mode() {
     // PocLanded is invalid for normal_pr per the injected enum-narrowing.
     let validator = schema_for("summary.schema.json");
     let value = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "session_id": "x",
         "baseline_run_id": 1,
         "baseline_rerun_id": 2,

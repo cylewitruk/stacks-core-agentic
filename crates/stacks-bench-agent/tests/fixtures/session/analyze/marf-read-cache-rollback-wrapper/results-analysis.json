@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "session_id": "20260507-104400",
+  "target_id": "marf-read-cache-rollback-wrapper",
+  "axis": "tx_latency",
+  "verdict": "accepted",
+  "confidence": "high",
+  "headline_rationale": "Warm steady-state landed at +4.2% (within tolerance); cold first-touch neutral confirms the gain is a measurement-phase cache hit, not warmup smearing.",
+  "headline_improvement_pct": 4.2,
+  "per_invocation": [
+    {
+      "invocation_id": "cold-first-touch",
+      "label": "cold first-touch",
+      "baseline_run_id": 200,
+      "candidate_run_id": 500,
+      "measured_pct": 0.8,
+      "matches_expected_signal": true,
+      "observations": ["within neutral tolerance — first-touch unchanged as predicted"]
+    },
+    {
+      "invocation_id": "warm-steady",
+      "label": "warm steady-state",
+      "baseline_run_id": 201,
+      "candidate_run_id": 501,
+      "measured_pct": 4.2,
+      "matches_expected_signal": true,
+      "observations": ["within ±2% of analyzer estimate (4.2%); RollbackWrapper::lookup self_wall_us drops ~32%"]
+    }
+  ],
+  "caveats": [],
+  "pr_body_summary": "MARF historical read benefits from a per-block node cache. Warm steady-state measures +4.2% (analyzer estimated 4.2±2%); cold first-touch unchanged at +0.8% confirms the gain comes from measurement-phase cache hits, not warmup smear.",
+  "db_queries": []
+}

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "family_id": "marf-read-pattern",
   "status": "accepted",
   "selection_lens": "commit_time",
@@ -32,6 +32,29 @@
       },
       "risk": "low",
       "verification_plan": "cargo nextest run -p stackslib clarity_vm::database",
+      "verification_replay": {
+        "rationale": "Block-level samples; warm-steady captures the lookup-cache benefit on commit-bucket spans.",
+        "invocations": [
+          {
+            "id": "warm-steady",
+            "label": "warm steady-state",
+            "purpose": "Measure benefit of the per-tenure read-through cache on RollbackWrapper::lookup.",
+            "samples": {
+              "kind": "blocks",
+              "blocks": ["0xaa00000000000000000000000000000000000000000000000000000000000000"]
+            },
+            "warmup": 10,
+            "repetitions": 20,
+            "profiler": "rich",
+            "expected_signal": {
+              "axis": "commit_time",
+              "direction": "improves",
+              "estimate_pct": 6.8,
+              "tolerance_pct": 2.5
+            }
+          }
+        ]
+      },
       "consensus_breaking": false
     },
     {

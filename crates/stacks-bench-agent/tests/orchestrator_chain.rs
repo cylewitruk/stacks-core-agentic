@@ -448,24 +448,36 @@ async fn post_merge_chain_optimizers_finalize_publish() {
     assert_eq!(optimizers_outputs.landed, 2, "optimizers={optimizers_outputs:?}");
     assert_eq!(optimizers_outputs.routed_to_issue, 1);
 
-    // Substitute Phase 3: stage run-ids + canned bench data so finalize can
-    // compute durations. Only normal_pr targets need run-ids in the fixture.
+    // Substitute Phase 1.8 + Phase 3: stage per-target baseline-run-ids.json
+    // + candidate-run-ids.json + canned bench data so finalize can compute
+    // durations. Only normal_pr targets need them.
     let pr_target = "marf-read-cache-rollback-wrapper";
+    let verify_target = session
+        .results_dir
+        .join("verify")
+        .join(pr_target);
+    std::fs::create_dir_all(&verify_target).unwrap();
+    std::fs::write(
+        verify_target.join("baseline-run-ids.json"),
+        r#"{"entries":[{"invocation_id":"cold-first-touch","run_id":200},{"invocation_id":"warm-steady","run_id":201}]}"#,
+    )
+    .unwrap();
     let exp = session.experiment_dir(pr_target);
-    std::fs::write(exp.join("run-ids"), "500\n501\n").unwrap();
+    std::fs::write(
+        exp.join("candidate-run-ids.json"),
+        r#"{"entries":[{"invocation_id":"cold-first-touch","run_id":500},{"invocation_id":"warm-steady","run_id":501}]}"#,
+    )
+    .unwrap();
 
     // Phase 4: finalize.
     let mut canned = HashMap::new();
-    canned.insert(100i64, 1_010_000i64);
-    canned.insert(101, 990_000);
+    canned.insert(200i64, 1_010_000i64);
+    canned.insert(201, 990_000);
     canned.insert(500, 940_000);
     canned.insert(501, 950_000);
     let bench = ChainBench(canned);
-    let summary = finalize(&FinalizeInputs {
-        layout: &session,
-        bench: &bench,
-    })
-    .expect("finalize");
+    let _ = bench;
+    let summary = finalize(&FinalizeInputs { layout: &session }).expect("finalize");
     assert_eq!(
         summary
             .outcome_counts

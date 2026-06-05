@@ -21,6 +21,7 @@ pub mod candidates;
 pub mod common;
 pub mod coordinator_provenance;
 pub mod optimizer_report;
+pub mod results_analysis;
 pub mod session_record;
 pub mod summary;
 pub mod targets;

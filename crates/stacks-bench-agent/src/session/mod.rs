@@ -20,6 +20,7 @@ pub mod optimizers;
 pub mod preflight;
 pub mod publish;
 pub mod render;
+pub mod results_analyzer;
 pub mod triage;
 pub mod triage_queries;
 pub mod validate;

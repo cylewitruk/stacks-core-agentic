@@ -191,38 +191,73 @@ Calibration examples:
 
 # Targeted Replay
 
-`verification_replay` is optional but recommended when a small tx/block set can
-measure the hotspot directly.
+`verification_replay` is REQUIRED on every non-consensus (bench-eligible) target.
+It carries one or more `BenchInvocation`s — each invocation is one
+self-contained `stacks-bench bench run` call that Phase 1.8 + Phase 3 + Phase
+3.5 use to compare baseline vs candidate.
 
 ```json
 {
-  "txids": ["0x<64-hex>"],
-  "blocks": ["0x<64-hex>"],
-  "repetitions": 20,
-  "warmup": 10,
-  "rationale": "one line"
+  "rationale": "one-line overall strategy",
+  "invocations": [
+    {
+      "id": "cold-first-touch",
+      "label": "cold first-touch",
+      "purpose": "Isolate MARF node-cache miss overhead.",
+      "samples": { "kind": "txids", "txids": ["0x<64-hex>"] },
+      "warmup": 0,
+      "repetitions": 20,
+      "profiler": "rich",
+      "expected_signal": {
+        "axis": "tx_latency",
+        "direction": "improves",
+        "estimate_pct": 8.0,
+        "tolerance_pct": 3.0
+      }
+    }
+  ],
+  "suspected_spans": ["RollbackWrapper::lookup"]
 }
 ```
 
 Rules:
 
-- All hashes are 0x-prefixed 64-hex.
-- Heights and synthetic ids are never acceptable. Pick hashes from the same dim
-  columns used for `representative_ids`: `tx_hash` and `stacks_block_hash`.
-- Use `txids` for per-tx execution hotspots.
-- Use `blocks` for whole-block or commit/finalize hotspots.
-- Use both only when both paths require measurement.
-- Omit when the hotspot is too diffuse or needs more than about 16 examples.
-- `repetitions` must be in `[1, 200]`; typical values are 20 for txid mode and
-  10 for block mode.
-- `warmup` must be in `[0, 200]`; omit for the coordinator default of 10, use 0
-  only when cold-cache behavior is the signal, and raise it for expensive blocks
-  that need cache settling. This is downstream replay guidance only — do not run
-  stacks-bench yourself.
+- One invocation per measurement intent. Decompose by cache regime
+  (cold vs warm), by sample mode (txids vs blocks), or by sample set —
+  not by repetition count. Operator cap is **{{max_invocations_per_target}}**
+  invocations per target (analyzer output rejected after the Codex run
+  if exceeded); the schema hard max is 16.
+- `id` is lowercase kebab-case, max 40 chars, unique within the target.
+  Stable on-disk path (`verify/<target>/<id>/`, `optimize/<target>/<id>/`)
+  and used as the join key on the results-analyzer's per-invocation
+  breakdown.
+- `samples.kind` is one of:
+  - `"txids"` — 1-16 `0x`-prefixed 64-hex tx hashes from the `tx_hash`
+    column. Per-tx execution hotspots.
+  - `"blocks"` — 1-16 `0x`-prefixed 64-hex stacks index block hashes
+    from the `stacks_block_hash` column. Whole-block or commit hotspots.
+  - `"block_range"` — `start_at` (>=1) + `count` (1..=50000). Use when
+    the analyzer wants a canonical range rather than a hand-picked set.
+- Heights and synthetic ids are NEVER acceptable for `txids` / `blocks`.
+- `repetitions` in `[1, 200]`. Typical: 20 for txid mode, 10 for block mode.
+- `warmup` in `[0, 200]`. 0 for cold-cache signal, 10 for steady-state.
+- `profiler` is `"rich"` today (no flag changes; future variants will lower
+  profile overhead). Must match across baseline and candidate per
+  invocation — that's the flag-symmetry invariant.
+- `expected_signal` is the analyzer's prediction the results-analyzer
+  (Phase 3.5) checks against:
+  - `direction`: `improves` (cold→warm latency drop), `neutral` (no change
+    expected — useful as a baseline check), or `regresses` (rare).
+  - `estimate_pct` + `tolerance_pct` are optional; provide them when you
+    can defend a number. Magnitude mismatch beyond tolerance demotes the
+    verdict toward `mixed`.
 
-Good rationales are short and specific, e.g. "per-tx Clarity runtime hotspot;
-three representative swaps with comparable cost" or "block-context seal path;
-four commit-bucket blocks where the span dominates".
+`suspected_spans` is an optional list of span names you expect the fix to
+move. Used by the results-analyzer as a hint; not enforced by any gate.
+
+Good rationales connect the invocation set to the proposed mechanism, e.g.
+"cold-first-touch isolates MARF node-cache misses; warm-steady measures
+the steady-state benefit of the read-through cache."
 
 # Consensus-Breaking Targets
 

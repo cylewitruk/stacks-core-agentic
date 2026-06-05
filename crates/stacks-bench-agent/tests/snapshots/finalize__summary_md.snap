@@ -16,12 +16,12 @@ xychart-beta
     title "Per-target improvement vs baseline (%)"
     x-axis ["marf-read-cache-rollbac…"]
     y-axis "% improvement" 0 --> 10
-    bar [5.50]
+    bar [4.20]
 ```
 
 ## TL;DR
 
-Out of **3** merged optimization target(s), 1 normal-PR target(s) measurably improved (avg +5.50%); 1 consensus PoC PR(s) landed for HIP discussion; 1 routed to a tracking issue.
+Out of **3** merged optimization target(s), 1 normal-PR target(s) measurably improved (avg +4.20%); 1 consensus PoC PR(s) landed for HIP discussion; 1 routed to a tracking issue.
 
 ## What was found
 
@@ -37,7 +37,7 @@ Triage promoted **3** family(ies) to per-family analysis. Their dispositions:
 
 Each merged optimization target below carries the hotspot evidence the analyzer identified, the proposed change, and what the optimizer actually shipped. Excerpts are short — follow the links to the full writeups.
 
-### 🔧 ✅ marf-read-cache-rollback-wrapper — Normal PR · **Accepted** (+5.50%)
+### 🔧 ✅ marf-read-cache-rollback-wrapper — Normal PR · **Accepted** (+4.20%)
 
 `RollbackWrapper::lookup` at `stackslib/src/clarity_vm/database/rollback_wrapper.rs:88` · self_wall 1.24 s · 18k calls · risk: Low · 2 contributor(s)
 
@@ -46,6 +46,13 @@ Each merged optimization target below carries the hotspot evidence the analyzer 
 **Proposed.** Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).
 
 **Outcome.** Implemented per-tenure cache. 12/12 tests passed.
+
+**Verdict.** `Accepted` (confidence: high). Warm steady-state landed at +4.2% (within tolerance); cold first-touch neutral confirms the gain is a measurement-phase cache hit, not warmup smearing.
+
+| Invocation | Baseline | Candidate | Measured | Matches expected? |
+| ---------- | -------- | --------- | -------- | ----------------- |
+| cold first-touch | [200](../verify/marf-read-cache-rollback-wrapper/cold-first-touch/bench-run.json) | [500](../optimize/marf-read-cache-rollback-wrapper/cold-first-touch/bench-run.json) | +0.80% | yes |
+| warm steady-state | [201](../verify/marf-read-cache-rollback-wrapper/warm-steady/bench-run.json) | [501](../optimize/marf-read-cache-rollback-wrapper/warm-steady/bench-run.json) | +4.20% | yes |
 
 Contributors: [dlmm-router-contract-family](../analysis/dlmm-router-contract-family/analysis.json), [marf-read-pattern](../analysis/marf-read-pattern/analysis.json)
 
@@ -104,7 +111,7 @@ Details: [experiment dir](../optimize/marf-layout-redesign/) · [target catalog]
 
 | Target | Delivery mode | Status | Improvement | Run ids | Notes |
 | ------ | ------------- | ------ | ----------- | ------- | ----- |
-| [marf-read-cache-rollback-wrapper](../optimize/marf-read-cache-rollback-wrapper/) | Normal PR | [Accepted](../optimize/marf-read-cache-rollback-wrapper/implementation.md) | 5.50% | [500](../optimize/marf-read-cache-rollback-wrapper/run-1/bench-run.json), [501](../optimize/marf-read-cache-rollback-wrapper/run-2/bench-run.json) |  |
+| [marf-read-cache-rollback-wrapper](../optimize/marf-read-cache-rollback-wrapper/) | Normal PR | [Accepted](../optimize/marf-read-cache-rollback-wrapper/implementation.md) | 4.20% | [500](../optimize/marf-read-cache-rollback-wrapper/cold-first-touch/bench-run.json), [501](../optimize/marf-read-cache-rollback-wrapper/warm-steady/bench-run.json) |  |
 | [clarity-cost-recalibration](../optimize/clarity-cost-recalibration/) | Consensus PoC PR | [PoC landed](../optimize/clarity-cost-recalibration/implementation.md) | — | — | breakage class: Clarity cost weight |
 | [marf-layout-redesign](../optimize/marf-layout-redesign/) | Consensus issue | [Routed to issue](../optimize/marf-layout-redesign/consensus-issue.md) | — | — | breakage class: MARF layout |
 

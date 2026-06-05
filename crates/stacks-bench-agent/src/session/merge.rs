@@ -86,7 +86,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // Empty-input shortcut: emit valid empty targets, skip LLM, validate.
     if accepted_count == 0 {
         let empty = OptimizationTargets {
-            schema_version: crate::models::common::SchemaVersionV2,
+            schema_version: crate::models::common::SchemaVersionV3,
             session_id: candidates.session_id.clone(),
             baseline_run_id: candidates.baseline_run_id,
             baseline_rerun_id: candidates.baseline_rerun_id,
@@ -529,9 +529,9 @@ mod tests {
         targets: Vec<AnalyzerTarget>,
     ) -> AcceptedAnalysis {
         use crate::models::analyze::{AcceptedStatusTag, LensDisposition};
-        use crate::models::common::{LensDispositionStatus, SchemaVersionV2, SelectionLens};
+        use crate::models::common::{LensDispositionStatus, SchemaVersionV3, SelectionLens};
         AcceptedAnalysis {
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             family_id: family_id.to_owned(),
             status: AcceptedStatusTag::Accepted,
             selection_lens: SelectionLens::TxLatency,
@@ -542,6 +542,34 @@ mod tests {
             },
             targets,
             global_materiality_note: None,
+        }
+    }
+
+    fn default_vr() -> crate::models::common::VerificationReplay {
+        use crate::models::common::{
+            BenchInvocation, BenchSamples, ExpectedSignal, ProfilerMode, SelectionLens,
+            SignalDirection, VerificationReplay,
+        };
+        VerificationReplay {
+            rationale: "test".into(),
+            invocations: vec![BenchInvocation {
+                id: "warm-steady".into(),
+                label: "warm".into(),
+                purpose: "smoke".into(),
+                samples: BenchSamples::Blocks {
+                    blocks: vec![format!("0x{}", "a".repeat(64))],
+                },
+                warmup: 10,
+                repetitions: 20,
+                profiler: ProfilerMode::Rich,
+                expected_signal: ExpectedSignal {
+                    axis: SelectionLens::TxLatency,
+                    direction: SignalDirection::Improves,
+                    estimate_pct: Some(4.0),
+                    tolerance_pct: Some(2.0),
+                },
+            }],
+            suspected_spans: None,
         }
     }
 
@@ -574,7 +602,7 @@ mod tests {
             },
             risk: Risk::Low,
             verification_plan: "v".to_owned(),
-            verification_replay: None,
+            verification_replay: if consensus_breaking { None } else { Some(default_vr()) },
             consensus_breaking,
             breakage_class,
             poc_implementable: None,
@@ -625,7 +653,7 @@ mod tests {
             },
             risk: Risk::Low,
             verification_plan: "v".to_owned(),
-            verification_replay: None,
+            verification_replay: if consensus_breaking { None } else { Some(default_vr()) },
             merge_notes: None,
             contributor_differences: None,
             consensus_breaking,
@@ -639,10 +667,10 @@ mod tests {
     }
 
     fn make_targets_doc(targets: Vec<crate::models::targets::MergedTarget>) -> OptimizationTargets {
-        use crate::models::common::SchemaVersionV2;
+        use crate::models::common::SchemaVersionV3;
         use crate::models::targets::MergeMethod;
         OptimizationTargets {
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             session_id: "x".to_owned(),
             baseline_run_id: 100,
             baseline_rerun_id: 101,
