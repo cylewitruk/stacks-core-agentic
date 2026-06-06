@@ -13,7 +13,7 @@ Do NOT create the PR yourself. Do NOT use GitHub tools. Only write the two files
 
 Your delivery mode for this target is `{{ delivery_mode }}`. Two PR shapes:
 
-- **`normal_pr`** — a standard performance optimization. The optimizer ran the full nextest suite and the coordinator measured a real improvement above the noise floor. The PR is a regular draft (or non-draft per operator preference) seeking review and merge in the usual way.
+- **`normal_pr`** — a standard performance optimization. The optimizer ran the full nextest suite; the Phase 3.5 results-analyzer judged measured vs the analyzer's `expected_signal` per invocation and committed an `accepted` or `mixed` verdict with `confidence >= results_analysis.confidence_floor`. The verdict's `pr_body_summary` is the canonical Result-section prose (read it verbatim from `{{ results_analysis_json }}`). The PR is a regular draft (or non-draft per operator preference) seeking review and merge in the usual way.
 
 - **`consensus_poc_pr`** — a deliberate consensus-breaking change shipped as a PoC. The optimizer ran nextest filtered to `poc_test_scope` ONLY; the full suite is not the acceptance gate and may encode old consensus expectations that the change deliberately invalidates. **No benchmark ran** — the bench harness encodes pre-change consensus rules and would either crash or produce meaningless numbers. The PR is ALWAYS a draft and the publisher applies safety labels (`consensus-change`, `needs-HIP`, `do-not-merge`) to prevent accidental merging. The PR is the entry point for HIP-style discussion of the consensus change.
 

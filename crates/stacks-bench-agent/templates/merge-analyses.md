@@ -152,7 +152,7 @@ Top-level JSON:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "session_id": "{{ opt_session_id }}",
   "baseline_run_id": {{ baseline_run_id }},
   "baseline_rerun_id": {{ baseline_rerun_id }},

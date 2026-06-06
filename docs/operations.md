@@ -114,7 +114,7 @@ phase to re-run:
 | `analysis/<family-id>/analysis.json` | `sbagent session analysis run` |
 | `merge/optimization-targets.json` or `merge/final-message.md` | `sbagent session analysis merge` |
 | `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the calibration step is inlined). |
-| `optimize/<target-id>/{implementation,abort,consensus-issue}.md` | `sbagent session optimize run` |
+| `optimize/<target-id>/optimizer-report.json` (the typed authoritative report — coordinator-rendered `implementation.md` / `abort.md` companions derive from it; `consensus-issue.md` is the coordinator-written marker for `consensus_issue` targets where the optimizer is skipped) | `sbagent session optimize run` |
 | `optimize/<target-id>/candidate-run-ids.json` or `optimize/<target-id>/<invocation-id>/bench-run.json` | `sbagent session bench run` |
 | `analyze/<target-id>/results-analysis.json` | `sbagent session analyze-results run` |
 | `finalize/summary.json` | `sbagent session finalize run` |

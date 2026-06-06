@@ -1,5 +1,32 @@
 # Baseline calibration + verification agent — execution spec
 
+> **Historical design doc — superseded by Pass 1c (2026-06).**
+>
+> This was the working spec from the Pass 1a / Pass 1b / Pass 1c
+> design window. **Pass 1c shipped a materially different shape than
+> what's described below**, and several of the planned constructs
+> (Phase 1.9 verification-agent fanout, `verification_floor` /
+> budget-cap routing, full-range fallback for targets without
+> `verification_replay`, pooled-mean finalize logic, txid/block-shaped
+> baseline IDs) **never landed and are not in the current code**.
+>
+> The current canonical contract is documented in:
+>
+> - [`roadmap.md` §"Pass 1c — analyzer-defined invocations + post-bench
+>   results-analyzer"](roadmap.md) — section status block lists Pass 1c
+>   as complete and names what shipped vs what was deferred.
+> - [`docs/architecture.md`](docs/architecture.md) — current phase
+>   list, agent tiers (now seven), and per-tier exposed variables.
+> - [`docs/workflow.md`](docs/workflow.md) — current phase table with
+>   the post-Pass-1c paths (`verify/<target>/<invocation-id>/...`,
+>   `analyze/<target>/results-analysis.json`, etc.).
+>
+> Keep this doc as a snapshot of design intent at the start of Pass
+> 1a; it remains useful for reading the in-code rustdoc references
+> against (sub-step labels still anchor in-file). Do **not** treat
+> any "Pass 1c is now" / "Pass 2 lands ..." commitment below as
+> current — those plans were superseded by what actually shipped.
+
 **Status:** Pass 1a SHIPPED at the wiring level — code complete, structurally
 validated end-to-end against session `20260521-051649` (Phase 0a → 0b → 1.8
 → 2 → 3 → 4). Quantitative validation deferred to Pass 1c: independent

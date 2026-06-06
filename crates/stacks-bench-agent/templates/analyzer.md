@@ -246,8 +246,11 @@ Rules:
   invocation — that's the flag-symmetry invariant.
 - `expected_signal` is the analyzer's prediction the results-analyzer
   (Phase 3.5) checks against:
-  - `direction`: `improves` (cold→warm latency drop), `neutral` (no change
-    expected — useful as a baseline check), or `regresses` (rare).
+  - `direction`: `improves` (this invocation should measure faster on
+    the chosen `axis` than baseline), `neutral` (no movement expected
+    — useful as a control invocation that pins the mechanism), or
+    `regresses` (rare; this invocation is expected to look worse,
+    e.g. when the fix trades cold-path cost for warm-path gain).
   - `estimate_pct` + `tolerance_pct` are optional; provide them when you
     can defend a number. Magnitude mismatch beyond tolerance demotes the
     verdict toward `mixed`.
@@ -327,7 +330,7 @@ For accepted analyses:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "family_id": "{{ family_id }}",
   "selection_lens": "...",
   "status": "accepted",
@@ -340,7 +343,7 @@ For rejected analyses:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "family_id": "{{ family_id }}",
   "selection_lens": "...",
   "status": "rejected",
