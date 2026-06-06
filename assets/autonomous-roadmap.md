@@ -1,5 +1,13 @@
 # Autonomous closed-loop roadmap
 
+> **Historical source.** This document has been consolidated into the canonical
+> repo-local planning system under [`planning/`](../planning/). Current selected
+> work lives in [`planning/iterations/`](../planning/iterations/) and unscheduled
+> items live in [`planning/backlog.md`](../planning/backlog.md); detailed
+> autonomous-loop items imported from here are numbered `0030`-`0037` with matching docs under
+> [`planning/design/`](../planning/design/). Keep this file for archaeology,
+> not as the source of truth.
+
 > **Maintenance contract for agents working on this roadmap:**
 > After every iteration that touches an item below, the agent MUST:
 >
@@ -7,7 +15,8 @@
 > 2. Append an entry to the **Change log** at the bottom of this document recording: what was completed, what deviated from the plan and why, and any follow-up items that surfaced.
 > 3. If an item is being broken up, restructured, or descoped, edit the item body — don't silently let the plan drift out of sync with reality.
 >
-> This document is the source of truth for "where are we going." Memory entries about specific implementation details should reference this file by section rather than duplicate its contents.
+> Historical note: this was the source of truth before the `planning/`
+> restructure. New work should reference the numbered planning items instead.
 
 ---
 
@@ -40,7 +49,8 @@ Reference: this is event-sourcing + GitOps + per-target PR-branches, adapted for
 
 **Status:** Decided 2026-05-12 — split taken. Tool: [`cylewitruk/stacks-bench-agent`](https://github.com/cylewitruk/stacks-bench-agent). Operator: this repo, [`cylewitruk/stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator).
 
-> This document is the authoritative roadmap across both repos. The tool repo retains a short stub linking back here.
+> Historical note: this split decision is retained here as source context. The
+> current backlog/iteration entries are in `planning/`.
 
 The current proposal puts the autonomous lifecycle (events, schedule, secrets, target submodule, operator config) in *this* repo (`stacks-bench-agent`). Industry pattern for long-lived autonomous services (Renovate, Dependabot, Atlantis, Flux/ArgoCD) consistently separates **tool** (versioned releases, no state) from **operator** (state, schedule, config, audit log). The autoresearch repo is itself an operator, not a tool — it does not generalize across multiple training setups.
 

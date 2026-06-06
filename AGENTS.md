@@ -18,7 +18,10 @@ Key paths:
   `docs/configuration.md`, `docs/workflow.md`, `docs/operations.md`, and
   `docs/architecture.md`.
 - `assets/example.config.toml` — annotated config template for operators.
-- `roadmap.md` — active follow-up items and deferred design work.
+- `planning/` — canonical planning system:
+  `planning/iterations/` for current deliverables, `planning/backlog.md` for
+  unscheduled items, `planning/design/` for optional item designs, and
+  `planning/archive/` for completed/rejected/superseded work.
 
 The operator deployment is separate from this tool repo. Runtime config normally
 lives at `~/.config/sbagent/config.toml`; mutable session scratch should live

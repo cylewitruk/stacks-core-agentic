@@ -11,11 +11,11 @@
 //!   (whether fresh baseline or imported).
 //! - [`run`] → Phase 0b. One `stacks-bench bench run` invocation against the
 //!   archived binary, then the rerun id is aliased to the run id (no second
-//!   `bench` invocation under Pass 1a — see
-//!   [baseline-verification-agent-plan.md](../../../../
-//!   baseline-verification-agent-plan.md) Sub-step B). The noise floor falls
-//!   back to `settings.triage.single_run_noise_floor_pct`. Serialized via
-//!   BENCH_LOCK, then captures bench-list + profiler hotspots metadata.
+//!   `bench` invocation under Pass 1a — see the superseded Pass 1a plan under
+//!   `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step
+//!   B). The noise floor falls back to
+//!   `settings.triage.single_run_noise_floor_pct`. Serialized via BENCH_LOCK,
+//!   then captures bench-list + profiler hotspots metadata.
 //! - [`import`] → `scripts/import-baseline.sh` — reconstructs the baseline
 //!   artifact set from existing run ids in the persistent stacks-bench db.
 //!   Phase 0a still runs (Phase 1.8 needs the archived binary regardless of how
@@ -57,8 +57,7 @@ pub struct ArchiveBinaryOutputs {
 /// Phase 0a: build + archive the `stacks-bench` binary that the rest
 /// of the session uses as the deterministic baseline reference. Runs
 /// BEFORE Phase 0b's first bench invocation. See
-/// [`baseline-verification-agent-plan.md`](../../../../
-/// baseline-verification-agent-plan.md) (Pass 1a, Sub-step A).
+/// `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step A.
 ///
 /// Steps:
 ///

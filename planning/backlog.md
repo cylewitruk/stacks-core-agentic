@@ -1,0 +1,337 @@
+# Backlog
+
+Items here are recoverable but not currently assigned to an iteration.
+
+## Candidate Items
+
+<a id="0019-prompt-hardening-live-smoke"></a>
+
+### Prompt Hardening From Live Smoke
+
+- **id:** `0019-prompt-hardening-live-smoke`
+- **status:** `backlog`
+- **priority:** `medium`
+
+**Problem:** Prompt lint verifies rendering, but not judgment quality. The
+results-analyzer prompt in particular needs live proof against real
+`bench-run.json` shapes.
+
+**Scope:** Patch only prompt text and prompt-facing examples exposed by the
+smoke run.
+
+**Acceptance:** The next smoke produces less operator correction, with no schema
+or handoff regressions.
+
+<a id="0020-migration-leftovers"></a>
+
+### Migration Leftover Cleanup
+
+- **id:** `0020-migration-leftovers`
+- **status:** `backlog`
+- **priority:** `medium`
+
+**Problem:** Some cleanup commands and prompt lint surfaces are still weaker
+than the current artifact model.
+
+**Scope:** Finish `triage clean`, `optimize clean`, and any prompt-lint gaps
+that still only render synthetic inputs rather than checking schema examples.
+
+**Acceptance:** `sbagent check` and phase clean commands reflect the current
+Pass 1c artifact tree.
+
+<a id="0021-preflight-v2"></a>
+
+### Preflight V2
+
+- **id:** `0021-preflight-v2`
+- **status:** `backlog`
+- **priority:** `medium`
+- **design:** [design/0021-preflight-v2.md](design/0021-preflight-v2.md)
+
+**Problem:** Session-start preflight catches several drift classes but still
+misses branch-ref divergence and network-fetch freshness.
+
+**Scope:** Add targeted preflight checks, unless the ephemeral source clone
+redesign makes them obsolete first.
+
+**Acceptance:** A stale local branch ref or unfetched upstream state fails
+before expensive session phases.
+
+<a id="0022-ephemeral-source-clone"></a>
+
+### Per-Session Ephemeral Source Clone
+
+- **id:** `0022-ephemeral-source-clone`
+- **status:** `backlog`
+- **priority:** `low`
+- **source:** [Decision 0003 draft](decisions/0003-ephemeral-source-clone.md)
+- **design:** [design/0022-ephemeral-source-clone.md](design/0022-ephemeral-source-clone.md)
+
+**Problem:** The shared operator submodule is the source of several drift modes:
+SHA staleness, detached-HEAD/branch-ref divergence, and cross-session
+interference.
+
+**Scope:** Materialize a per-session source checkout under
+`agent_workspace_root`, backed by a shared bare cache, and record explicit
+source provenance in session artifacts.
+
+**Acceptance:** A session id is sufficient to identify source URL, branch, SHA,
+and fetch time without consulting operator git history.
+
+<a id="0023-workspace-cleanup"></a>
+
+### Workspace Cleanup
+
+- **id:** `0023-workspace-cleanup`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0023-workspace-cleanup.md](design/0023-workspace-cleanup.md)
+
+**Problem:** Per-target clones and old session workspaces can consume large
+amounts of disk.
+
+**Scope:** Add per-target clone cleanup, old-session pruning, and a preflight
+disk-space check.
+
+**Acceptance:** Session peak disk use is bounded and stale workspaces are easy
+to prune.
+
+<a id="0024-archive-audit-fields"></a>
+
+### Archive Ledger Audit Fields
+
+- **id:** `0024-archive-audit-fields`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0024-archive-audit-fields.md](design/0024-archive-audit-fields.md)
+
+**Problem:** `head_sha` is archived, but `pr_url` and bench wall-clock totals
+remain unset or incomplete.
+
+**Scope:** Wire publish feedback and bench wall-clock fields into
+`SessionRecord.targets[]`.
+
+**Acceptance:** Archived target records include PR URL when published and useful
+per-target bench timing metadata.
+
+<a id="0025-named-phases"></a>
+
+### Named Phases Over Numbered Phases
+
+- **id:** `0025-named-phases`
+- **status:** `backlog`
+- **priority:** `low`
+
+**Problem:** Phase labels like `1.8` and `3.5` are precise but hard for new
+operators and agents to reason about.
+
+**Scope:** Rename phase references in docs, CLI help, artifacts where useful,
+and prompt prose to descriptive names.
+
+**Acceptance:** Current workflow can be understood without knowing phase
+numbering history.
+
+**Deferred / non-goals:** Do not change artifact paths unless paired with a
+separate migration.
+
+<a id="0026-phase-timing"></a>
+
+### Phase Timing Instrumentation
+
+- **id:** `0026-phase-timing`
+- **status:** `backlog`
+- **priority:** `low`
+
+**Problem:** `SessionRecord.phase_durations_secs` is empty, so session runtime
+analysis is manual.
+
+**Scope:** Add durable phase start/stop timing and populate the archive ledger.
+
+**Acceptance:** Archived sessions include per-phase wall-clock durations.
+
+<a id="0027-maintain-ledger"></a>
+
+### Maintain Ledger
+
+- **id:** `0027-maintain-ledger`
+- **status:** `backlog`
+- **priority:** `low`
+
+**Problem:** Future maintenance observations need an append-only home that does
+not mutate write-once session branches.
+
+**Scope:** Add a `maintain.jsonl` sibling to `sessions.jsonl`.
+
+**Acceptance:** Maintenance records can reference a session id without touching
+that session's archive branch.
+
+<a id="0028-optimizer-memory"></a>
+
+### Cross-Session Optimizer Memory
+
+- **id:** `0028-optimizer-memory`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0028-optimizer-memory.md](design/0028-optimizer-memory.md)
+
+**Problem:** Optimizers start cold and can rediscover fixes or dead ends from
+prior sessions.
+
+**Scope:** Surface remembered prior attempts/rejections to triage, analyzer, or
+optimizer agents once enough session history exists.
+
+**Acceptance:** A new session can avoid at least one previously rejected or
+already-attempted target through durable memory.
+
+<a id="0029-sync-commit-push"></a>
+
+### Sync Commit / Push Convenience
+
+- **id:** `0029-sync-commit-push`
+- **status:** `backlog`
+- **priority:** `low`
+
+**Problem:** Operator bundle sync and committing pushed operator changes are
+still separate manual steps.
+
+**Scope:** Add ergonomic `sbagent sync --commit/--push` behavior if it stays
+useful after live sessions.
+
+**Acceptance:** Operator bundle updates can be synced and shipped with one
+explicit command.
+
+## Autonomous Closed-Loop Items
+
+Imported from [assets/autonomous-roadmap.md](../assets/autonomous-roadmap.md).
+These are not near-term until live manual sessions prove the core loop.
+
+<a id="0030-event-log-skeleton"></a>
+
+### Event Log Skeleton
+
+- **id:** `0030-event-log-skeleton`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0030-event-log-skeleton.md](design/0030-event-log-skeleton.md)
+
+**Problem:** Closed-loop autonomy needs durable event history across sessions.
+
+**Scope:** Add append-only event JSONL plus a disposable SQLite projection.
+
+**Acceptance:** `sbagent history show` can render replayed session/target state.
+
+<a id="0031-triage-merge-dedup-filter"></a>
+
+### Triage / Merge Dedup Filter
+
+- **id:** `0031-triage-merge-dedup-filter`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0031-triage-merge-dedup-filter.md](design/0031-triage-merge-dedup-filter.md)
+
+**Problem:** New sessions can re-propose targets already tried, open, merged, or
+repeatedly rejected.
+
+**Scope:** Use event-history projection to skip duplicate fix signatures.
+
+**Acceptance:** Merge emits skip events for deduped targets and does not send
+them to optimizer.
+
+<a id="0032-per-session-commit-push"></a>
+
+### Per-Session Commit And Push
+
+- **id:** `0032-per-session-commit-push`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0032-per-session-commit-push.md](design/0032-per-session-commit-push.md)
+
+**Problem:** Manual sessions need a durable operator-git audit step.
+
+**Scope:** Commit summary artifacts and event logs at session end.
+
+**Acceptance:** A completed session creates a readable operator commit without
+committing raw scratch artifacts.
+
+<a id="0033-maintain-command"></a>
+
+### Maintain Command
+
+- **id:** `0033-maintain-command`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0033-maintain-command.md](design/0033-maintain-command.md)
+
+**Problem:** Autonomous operation needs PR lifecycle reconciliation.
+
+**Scope:** Add `sbagent maintain` to observe GitHub state and emit maintenance
+events.
+
+**Acceptance:** Merged, closed, stale, and failed-open PR states are reflected in
+the event log.
+
+<a id="0034-github-actions-wiring"></a>
+
+### GitHub Actions Wiring
+
+- **id:** `0034-github-actions-wiring`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0034-github-actions-wiring.md](design/0034-github-actions-wiring.md)
+
+**Problem:** Closed-loop operation needs scheduled session and maintenance runs.
+
+**Scope:** Add cron workflows with concurrency guards and bot identity.
+
+**Acceptance:** Scheduled jobs run without racing each other or recursively
+triggering from bot commits.
+
+<a id="0035-autonomy-hygiene"></a>
+
+### Autonomy Hygiene
+
+- **id:** `0035-autonomy-hygiene`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0035-autonomy-hygiene.md](design/0035-autonomy-hygiene.md)
+
+**Problem:** Scheduled autonomy needs pause, rate limits, circuit breakers, and
+event-version safeguards.
+
+**Scope:** Add fail-closed safety controls before scheduled cron is enabled.
+
+**Acceptance:** Operator-free runs cannot exceed configured PR, cadence, or
+failure thresholds.
+
+<a id="0036-observability-surface"></a>
+
+### Observability Surface
+
+- **id:** `0036-observability-surface`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0036-observability-surface.md](design/0036-observability-surface.md)
+
+**Problem:** Operators need a compact dashboard once sessions become regular.
+
+**Scope:** Add history/report rendering and optional weekly reports.
+
+**Acceptance:** A markdown report summarizes sessions, PRs, outcomes, and time
+to merge.
+
+<a id="0037-triage-anchor-benchmarks"></a>
+
+### Triage Anchor Benchmarks
+
+- **id:** `0037-triage-anchor-benchmarks`
+- **status:** `backlog`
+- **priority:** `low`
+- **design:** [design/0037-triage-anchor-benchmarks.md](design/0037-triage-anchor-benchmarks.md)
+
+**Problem:** If inner-loop signal remains noisy, triage may need to anchor
+baseline measurements for every promoted representative.
+
+**Scope:** Let triage run and persist anchor benchmark IDs for downstream reuse.
+
+**Acceptance:** Analyzer, optimizer, and verification can compare against the
+same anchor recipe and cache regime.

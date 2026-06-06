@@ -136,9 +136,9 @@ impl SessionLayout {
 
     /// `results/baseline/bin/` — directory holding the archived
     /// `stacks-bench` binary used by Phase 0b baseline, Phase 1.8
-    /// calibration, and Phase 3 full-range fallback. See Phase 0a in
-    /// [`baseline-verification-agent-plan.md`](../../../../
-    /// baseline-verification-agent-plan.md).
+    /// calibration. See Phase 0a in
+    /// `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step
+    /// A.
     pub fn baseline_bin_dir(&self) -> PathBuf {
         self.baseline_dir()
             .join("bin")

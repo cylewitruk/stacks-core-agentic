@@ -355,5 +355,6 @@ Not urgent for pilot — at session-end, the operator can run `sbagent session o
 | Operator's stacks-core submodule | `<operator>/repos/stacks-core/` |
 | Per-target agent clones (mutable) | `/private/tmp/sbagent-workspaces/optimizers/<sid>/<target>/` |
 | Per-session durable artifacts | `<operator>/sessions/<sid>/results/` |
-| Roadmap | `<operator>/autonomous-roadmap.md` |
+| Current planning docs | `<tool-repo>/planning/` |
+| Historical autonomous roadmap | `<tool-repo>/assets/autonomous-roadmap.md` |
 | This document | `<operator>/gh-setup.md` |
