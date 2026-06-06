@@ -1,9 +1,9 @@
 # Design: Workspace Cleanup
 
 - **id:** `0023-workspace-cleanup`
-- **status:** `backlog`
+- **status:** `planned`
 - **priority:** `low`
-- **backlog:** [0023-workspace-cleanup](../backlog.md#0023-workspace-cleanup)
+- **iteration:** [v2-cleanup-and-workspace-hygiene](../iterations/v2-cleanup-and-workspace-hygiene.md)
 
 ## Problem
 
@@ -16,20 +16,37 @@
 
 ## Scope
 
-1. Drop or clean the previous target checkout before cloning the next target
-   when optimizer parallelism is effectively serial.
-2. Prune old session workspaces by age or archive status.
-3. Add a preflight disk-space check with an actionable prune command.
+1. Lock in the existing per-worktree `cargo clean` reclamation that already
+   runs between binary copy and bench invocations
+   ([bench_experiments.rs:161-167](../../crates/stacks-bench-agent/src/session/bench_experiments.rs#L161-L167)):
+   add regression-fencing tests and operations-docs coverage so the contract
+   cannot drift unnoticed. Do NOT remove the per-target checkout itself —
+   Phase 5 publish needs the worktree
+   ([publish.rs:264-267](../../crates/stacks-bench-agent/src/session/publish.rs#L264-L267),
+   [publish.rs:983-989](../../crates/stacks-bench-agent/src/session/publish.rs#L983-L989)).
+2. Prune old session workspaces by age + archive-ledger status via a new
+   `sbagent workspace prune` command. Use the durable signals that exist
+   today (`sessions.jsonl` for terminal state, a best-effort `.run.pid` file
+   for live-session refusal) — no new on-disk session-state file.
+3. Add a preflight disk-space check with an actionable prune command, opt-in
+   via `preflight.min_free_gib` (default `None`/warn-only until live
+   operation validates a sane floor).
 
 ## Constraints
 
 - Do not delete active session workspaces.
 - Do not remove durable session artifacts under the operator archive.
+- Do not remove per-target optimizer checkouts before Phase 5 publish.
 - Make destructive cleanup explicit unless it is limited to coordinator-owned
   scratch for the current session.
 
 ## Acceptance
 
-- Peak disk use is bounded for serial optimizer runs.
-- Operators can prune stale workspaces with one command.
-- Session startup fails early when free space is obviously insufficient.
+- The per-target `cargo clean` reclamation contract is locked in by tests and
+  named in the operations docs alongside its `--skip-cargo-clean` escape
+  hatch.
+- Operators can prune stale workspaces with one command, and that command
+  refuses to touch a session whose `.run.pid` matches a live process.
+- Session startup warns (or fails, when `preflight.min_free_gib` is set) when
+  free space is obviously insufficient, with the exact prune invocation in
+  the error body.

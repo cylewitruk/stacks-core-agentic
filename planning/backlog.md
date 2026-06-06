@@ -22,23 +22,6 @@ smoke run.
 **Acceptance:** The next smoke produces less operator correction, with no schema
 or handoff regressions.
 
-<a id="0020-migration-leftovers"></a>
-
-### Migration Leftover Cleanup
-
-- **id:** `0020-migration-leftovers`
-- **status:** `backlog`
-- **priority:** `medium`
-
-**Problem:** Some cleanup commands and prompt lint surfaces are still weaker
-than the current artifact model.
-
-**Scope:** Finish `triage clean`, `optimize clean`, and any prompt-lint gaps
-that still only render synthetic inputs rather than checking schema examples.
-
-**Acceptance:** `sbagent check` and phase clean commands reflect the current
-Pass 1c artifact tree.
-
 <a id="0021-preflight-v2"></a>
 
 ### Preflight V2
@@ -77,24 +60,6 @@ source provenance in session artifacts.
 
 **Acceptance:** A session id is sufficient to identify source URL, branch, SHA,
 and fetch time without consulting operator git history.
-
-<a id="0023-workspace-cleanup"></a>
-
-### Workspace Cleanup
-
-- **id:** `0023-workspace-cleanup`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0023-workspace-cleanup.md](design/0023-workspace-cleanup.md)
-
-**Problem:** Per-target clones and old session workspaces can consume large
-amounts of disk.
-
-**Scope:** Add per-target clone cleanup, old-session pruning, and a preflight
-disk-space check.
-
-**Acceptance:** Session peak disk use is bounded and stale workspaces are easy
-to prune.
 
 <a id="0024-archive-audit-fields"></a>
 
