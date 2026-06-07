@@ -268,6 +268,26 @@ branch_prefix = "agentic"
 
 
 # ---------------------------------------------------------------------------
+# [preflight] — session-start safety floors.
+# ---------------------------------------------------------------------------
+
+# [preflight]
+# Minimum free disk space (gibibytes) on the filesystem holding
+# `layout.agent_workspace_root` before a session may start. When set,
+# the preflight emits a hard FAIL if available space is below the
+# threshold and surfaces the exact `sbagent workspace prune
+# --older-than 7d --archived-only` invocation as the remediation.
+#
+# When unset (default), the preflight emits a WARN only below a
+# conservative 10 GiB floor — pick a real value once you've measured
+# a session's peak per-target disk usage.
+#
+# Skipped entirely when `layout.agent_workspace_root` isn't configured
+# (operator deployments that pin everything inline).
+# min_free_gib = 40
+
+
+# ---------------------------------------------------------------------------
 # [git] — commit identity + PAT-via-extraheader auth.
 # ---------------------------------------------------------------------------
 

@@ -26,6 +26,9 @@ use stacks_bench_agent::session::cargo::CargoRunner;
 use stacks_bench_agent::types::SessionId;
 
 /// Fake cargo: writes empty stdout/stderr logs and creates a stub binary.
+/// `clean()` recursively removes `<worktree>/target/` so tests that exercise
+/// the default cargo-clean path can assert real disk reclamation, not just
+/// log-file presence.
 struct StubCargo;
 
 impl CargoRunner for StubCargo {
@@ -47,9 +50,13 @@ impl CargoRunner for StubCargo {
         }
         Ok(())
     }
-    fn clean(&self, _worktree: &Path, stdout: &Path, stderr: &Path) -> anyhow::Result<()> {
+    fn clean(&self, worktree: &Path, stdout: &Path, stderr: &Path) -> anyhow::Result<()> {
         std::fs::write(stdout, b"")?;
         std::fs::write(stderr, b"")?;
+        let target_dir = worktree.join("target");
+        if target_dir.exists() {
+            std::fs::remove_dir_all(&target_dir)?;
+        }
         Ok(())
     }
 }
@@ -694,4 +701,147 @@ fn bench_experiments_emits_shadow_dir_root_when_set() {
             .unwrap_or_else(|| panic!("--shadow-dir-root missing in {call:?}"));
         assert_eq!(call[idx + 1], shadow_str, "--shadow-dir-root value mismatch in {call:?}");
     }
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Phase 3 of v2-cleanup-and-workspace-hygiene: pin the existing
+// per-worktree `cargo clean` reclamation contract so it cannot
+// regress unnoticed. The clean runs in `build_one` between binary
+// copy and bench invocations — bench invocations use the copied
+// binary at `exp_dir/bin/stacks-bench`, so the worktree's `target/`
+// is genuinely disposable from that point onward.
+// ───────────────────────────────────────────────────────────────────
+
+/// Default path: `skip_cargo_clean = false` → `target/` is reclaimed in
+/// each per-target worktree, and the `cargo-clean.log` /
+/// `cargo-clean.stderr.log` fingerprint lands under
+/// `optimize/<target>/`. The copied binary at `optimize/<target>/bin/`
+/// must survive (the bench step depends on it).
+#[test]
+fn bench_experiments_reclaims_target_dir_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let layout = make_layout(&tmp);
+    let worktrees_root = tmp.path().join("worktrees");
+    let worktree = worktrees_root.join("target-a");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_implemented_report(&layout, "target-a");
+
+    let targets_doc =
+        make_targets(vec![target("target-a", DeliveryMode::NormalPr, Some(default_vr()))]);
+    let bench = RecordingBench::new(2000);
+    let bench_for_target =
+        |_: &Path| -> Box<dyn BenchClient> { Box::new(SharedBenchHandle(&bench)) };
+    let bench_for_target_ref: &dyn Fn(&Path) -> Box<dyn BenchClient> = &bench_for_target;
+    let bench_lock = tmp
+        .path()
+        .join("benchmark.lock");
+
+    bench_experiments::run(&Inputs {
+        layout: &layout,
+        worktrees_root: &worktrees_root,
+        targets: &targets_doc,
+        env: BenchEnv {
+            source_dir: &PathBuf::from("/mnt/chainstate"),
+            network: "mainnet",
+            shadow_dir_root: None,
+        },
+        bench_lock: &bench_lock,
+        skip_cargo_clean: false,
+        cargo: &StubCargo,
+        bench_for_target: bench_for_target_ref,
+    })
+    .expect("bench_experiments::run");
+
+    // `target/` is gone — `cargo clean` ran.
+    assert!(
+        !worktree
+            .join("target")
+            .exists(),
+        "worktree's target/ must be reclaimed by default",
+    );
+
+    // Fingerprint logs exist under optimize/<target>/.
+    let exp = layout.experiment_dir("target-a");
+    assert!(
+        exp.join("cargo-clean.log")
+            .exists(),
+        "cargo-clean.log must be written when clean runs",
+    );
+    assert!(
+        exp.join("cargo-clean.stderr.log")
+            .exists(),
+        "cargo-clean.stderr.log must be written when clean runs",
+    );
+
+    // Copied binary survives — bench invocations point at this.
+    assert!(
+        exp.join("bin")
+            .join("stacks-bench")
+            .is_file(),
+        "copied stacks-bench binary must survive cargo clean (lives outside the worktree's \
+         target/)",
+    );
+}
+
+/// Opt-out path: `skip_cargo_clean = true` → worktree's `target/`
+/// survives in full, and the `cargo-clean.log` fingerprint is absent
+/// (proves the gate is honored, not a silent log-without-clean).
+#[test]
+fn bench_experiments_skip_cargo_clean_preserves_target_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let layout = make_layout(&tmp);
+    let worktrees_root = tmp.path().join("worktrees");
+    let worktree = worktrees_root.join("target-a");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_implemented_report(&layout, "target-a");
+
+    let targets_doc =
+        make_targets(vec![target("target-a", DeliveryMode::NormalPr, Some(default_vr()))]);
+    let bench = RecordingBench::new(3000);
+    let bench_for_target =
+        |_: &Path| -> Box<dyn BenchClient> { Box::new(SharedBenchHandle(&bench)) };
+    let bench_for_target_ref: &dyn Fn(&Path) -> Box<dyn BenchClient> = &bench_for_target;
+    let bench_lock = tmp
+        .path()
+        .join("benchmark.lock");
+
+    bench_experiments::run(&Inputs {
+        layout: &layout,
+        worktrees_root: &worktrees_root,
+        targets: &targets_doc,
+        env: BenchEnv {
+            source_dir: &PathBuf::from("/mnt/chainstate"),
+            network: "mainnet",
+            shadow_dir_root: None,
+        },
+        bench_lock: &bench_lock,
+        skip_cargo_clean: true,
+        cargo: &StubCargo,
+        bench_for_target: bench_for_target_ref,
+    })
+    .expect("bench_experiments::run");
+
+    // `target/` survives — `cargo clean` was suppressed.
+    assert!(
+        worktree
+            .join("target")
+            .join("release")
+            .join("stacks-bench")
+            .exists(),
+        "worktree's target/release/stacks-bench must survive --skip-cargo-clean",
+    );
+
+    // No cargo-clean fingerprint under optimize/<target>/ — the gate
+    // suppressed the call entirely, not just the disk wipe.
+    let exp = layout.experiment_dir("target-a");
+    assert!(
+        !exp.join("cargo-clean.log")
+            .exists(),
+        "cargo-clean.log must NOT exist when --skip-cargo-clean is set",
+    );
+    assert!(
+        !exp.join("cargo-clean.stderr.log")
+            .exists(),
+        "cargo-clean.stderr.log must NOT exist when --skip-cargo-clean is set",
+    );
 }

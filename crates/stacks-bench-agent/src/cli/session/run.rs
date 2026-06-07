@@ -189,6 +189,15 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
             .display()
     );
 
+    // Drop guard for `.run.pid`: written after preflight passes (so a
+    // failing preflight never leaves a marker behind), cleared on
+    // every exit path the runtime unwinds through — normal return,
+    // `?` bail, and unwinding panics. SIGINT/SIGKILL terminate
+    // without unwinding and leave the file behind; `workspace prune`'s
+    // liveness check handles that stale-PID case.
+    let _pid_guard = crate::session::run_pid::RunPidGuard::install(env.layout.session_dir())
+        .context(".run.pid install")?;
+
     // When Phase 5 is requested, validate publish wiring NOW — before
     // Phases 0-4 burn an hour of compute. Catches an unreadable/empty
     // token file and an unauthorized or wrong `publish.base_repo`.

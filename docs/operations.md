@@ -113,7 +113,7 @@ phase to re-run:
 | `triage/candidates.json` or `triage/final-message.md` | `sbagent session triage run` |
 | `analysis/<family-id>/analysis.json` | `sbagent session analysis run` |
 | `merge/optimization-targets.json` or `merge/final-message.md` | `sbagent session analysis merge` |
-| `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the calibration step is inlined). |
+| `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the calibration step is inlined). To force a fresh calibration, `sbagent session bench clean` drops both the Phase 1.8 baseline and the paired Phase 3 candidate side. |
 | `optimize/<target-id>/optimizer-report.json` (the typed authoritative report — coordinator-rendered `implementation.md` / `abort.md` companions derive from it; `consensus-issue.md` is the coordinator-written marker for `consensus_issue` targets where the optimizer is skipped) | `sbagent session optimize run` |
 | `optimize/<target-id>/candidate-run-ids.json` or `optimize/<target-id>/<invocation-id>/bench-run.json` | `sbagent session bench run` |
 | `analyze/<target-id>/results-analysis.json` | `sbagent session analyze-results run` |
@@ -131,6 +131,89 @@ To wipe a phase's artifacts before re-running, use the matching
 (`session baseline clean`, `session triage clean`, `session analysis
 clean`, `session optimize clean`, `session bench clean`, `session
 analyze-results clean`, `session finalize clean`, `publish clean`).
+`session bench clean` is paired: it drops both the Phase 3 candidate
+side under `optimize/<target>/` and the Phase 1.8 baseline-calibration
+side under `verify/<target>/`, since the two phases share one
+invocation-id set per target.
+
+### Per-worktree `cargo clean` reclamation
+
+Each per-target optimizer worktree under
+`<layout.agent_workspace_root>/sessions/<id>/optimizer-checkouts/<target>/`
+runs `cargo clean` immediately after building the release binary —
+between the binary copy to `optimize/<target>/bin/stacks-bench` and the
+bench invocations. The bench invocations point at the copied binary,
+so the worktree's `target/` directory is genuinely disposable from
+that moment. Reclamation bounds peak per-target disk during a long
+Phase 3 sweep without touching the worktree itself, which Phase 5
+publish still needs for PR-writer context + `git push`.
+
+Logs land at `optimize/<target>/cargo-clean.log` and
+`optimize/<target>/cargo-clean.stderr.log`. Absence of those files
+under `optimize/<target>/` means the operator ran with
+`--skip-cargo-clean` (the explicit opt-out on `session run` and
+`session bench run`, used during hand-debugging when an operator wants
+to re-bench without a rebuild). Use the opt-out sparingly — it
+preserves the build cache for every per-target worktree across the
+entire session.
+
+## Workspace hygiene: `sbagent workspace prune`
+
+`sbagent workspace prune` removes stale per-session scratch under
+`<layout.agent_workspace_root>/sessions/`. The command is safe by
+default and refuses to remove anything without an explicit filter.
+
+```bash
+# Inspect every candidate (implicit dry-run — no filters set).
+sbagent workspace prune
+
+# Remove only sessions present in operator-main sessions.jsonl
+# (archived/terminal state).
+sbagent workspace prune --archived-only
+
+# Remove archived sessions older than a week.
+sbagent workspace prune --archived-only --older-than 7d
+
+# Dry-run an explicit recipe before applying.
+sbagent workspace prune --archived-only --older-than 7d --dry-run
+```
+
+`--older-than` accepts single-unit durations: `30s`, `15m`, `4h`, `7d`,
+`2w`. Multi-unit strings (`1d12h`) aren't supported — pick one unit.
+
+Two safety signals prevent accidental loss:
+
+1. **Live-session refusal.** Each running `sbagent session run` writes
+   `<session_dir>/.run.pid` after preflight passes and clears it on
+   normal exit. `workspace prune` reads each candidate's `.run.pid`
+   and refuses removal when the recorded PID is live (POSIX `kill -0`).
+   Stale PID files (process gone, e.g. after a SIGKILL) fall through
+   to the normal age + archive filters — they cannot make a workspace
+   immortal.
+2. **`sessions.jsonl` cross-reference.** With `--archived-only`, prune
+   only considers sessions whose id is present in the operator-main
+   `sessions.jsonl` ledger. A session that hasn't reached Phase 6
+   archive is never prunable under that flag.
+
+The command prints a per-candidate decision (PRUNED / KEPT with a
+reason) and a totals footer listing freed bytes. In dry-run mode the
+footer reports the would-be-freed figure so an operator can size up
+recovery before committing.
+
+## Session-start disk preflight
+
+The session-start preflight includes a `free-disk` check probing
+the filesystem holding `layout.agent_workspace_root`:
+
+- `preflight.min_free_gib` **unset**: low free space emits a `Warn`
+  only (below 10 GiB; the conservative warn floor).
+- `preflight.min_free_gib = n`: free space below `n` GiB emits a
+  hard `Fail` with the exact `sbagent workspace prune --older-than 7d
+  --archived-only` invocation in the remediation field.
+
+The check is skipped when `layout.agent_workspace_root` isn't
+configured (operator deployments that pin everything inline). See
+[configuration.md](configuration.md) for the config knob.
 
 ## No targets remaining: recovery flow
 

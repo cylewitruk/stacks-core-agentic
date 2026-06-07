@@ -80,10 +80,27 @@ pub struct Settings {
     #[serde(default)]
     pub publish: PublishSettings,
 
+    /// Session-start preflight knobs (free-disk floor).
+    #[serde(default)]
+    pub preflight: PreflightSettings,
+
     /// Git identity + PAT-via-extraheader auth used by `init` (push /
     /// seed) and by every agent-side commit (optimizer worktrees).
     #[serde(default)]
     pub git: GitSettings,
+}
+
+/// `[preflight]` — session-start safety floors.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreflightSettings {
+    /// Minimum free disk space (gibibytes) on the filesystem holding
+    /// `layout.agent_workspace_root` before a session may start. When
+    /// set, the check is a hard `Fail`; when `None` (default), low
+    /// space produces a `Warn` only — pick a real value once a
+    /// production session has shown peak per-session usage.
+    #[serde(default)]
+    pub min_free_gib: Option<u64>,
 }
 
 /// `[dev]` — framework-internal knobs.

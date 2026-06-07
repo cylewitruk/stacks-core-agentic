@@ -21,6 +21,7 @@ pub mod rejections;
 pub mod schema;
 pub mod session;
 pub mod sync;
+pub mod workspace;
 
 /// Primary CLI entry point for the stacks-bench-agent, responsible for parsing
 /// command-line arguments and initializing the CLI context.
@@ -80,6 +81,9 @@ pub enum Command {
     /// `--keep-tunables` to preserve operator-edited prompts +
     /// context docs (still refreshes schemas + queries).
     Sync(sync::SyncArgs),
+
+    /// Workspace hygiene — prune stale per-session scratch.
+    Workspace(workspace::WorkspaceArgs),
 }
 
 /// Context for the CLI; passed through various CLI commands and subcommands to
@@ -262,5 +266,6 @@ pub async fn dispatch(args: CliArgs) -> Result<()> {
         Command::Schema(a) => schema::run(a, &ctx).await,
         Command::Session(a) => session::run(a, &ctx).await,
         Command::Sync(a) => sync::run(a, &ctx).await,
+        Command::Workspace(a) => workspace::run(a, &ctx).await,
     }
 }

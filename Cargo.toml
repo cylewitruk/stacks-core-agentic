@@ -9,8 +9,10 @@ minijinja = { version = "2.19.0", default-features = false, features = ["builtin
 clap = { version = "4.6.1", features = ["derive", "env"] }
 config = { version = "0.15.22", default-features =  false, features = ["toml"] }
 fd-lock = "4.0.4"
+fs4 = "1.0.1"
 insta = { version = "1.47.2", default-features = false, features = ["glob", "colors", "json", "filters"] }
 jsonschema = { version = "0.39.0", default-features = false }
+libc = "0.2"
 octocrab = "0.50.0"
 parking_lot = "0.12.5"
 pretty_assertions = { version = "1.4.1", default-features = false, features = ["std"] }

@@ -217,6 +217,8 @@ non-target wrapper.
 
 `{{ opt_session_dir }}/triage/candidates.json` must include:
 
+<!-- lint:example schema="candidates" -->
+
 ```json
 {
   "schema_version": 2,

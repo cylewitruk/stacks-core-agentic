@@ -21,8 +21,10 @@ pub mod preflight;
 pub mod publish;
 pub mod render;
 pub mod results_analyzer;
+pub mod run_pid;
 pub mod triage;
 pub mod triage_queries;
 pub mod validate;
+pub mod workspace;
 
 pub use layout::SessionLayout;

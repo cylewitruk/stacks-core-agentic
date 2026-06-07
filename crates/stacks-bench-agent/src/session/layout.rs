@@ -81,6 +81,16 @@ impl SessionLayout {
         Self::new(&layout.sessions_root, id)
     }
 
+    /// `<sessions_root>/<id>/` — the session's top-level dir
+    /// (parent of `results/` and `worktrees/`). Used for cross-cutting
+    /// markers like `.run.pid` that don't belong inside `results/`.
+    pub fn session_dir(&self) -> PathBuf {
+        self.results_dir
+            .parent()
+            .expect("results_dir always has a parent (<sessions_root>/<id>/)")
+            .to_path_buf()
+    }
+
     // ── Phase 0: baseline ────────────────────────────────────────────
 
     /// `results/baseline/`.

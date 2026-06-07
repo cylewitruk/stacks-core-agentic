@@ -70,7 +70,145 @@ pub fn collect_findings(ctx: &CliContext) -> Result<Vec<Finding>> {
     check_installed_binary_drift(ctx, &mut findings)?;
     check_critical_prompt_drift(ctx, &mut findings)?;
     check_submodule_reachable(ctx, &mut findings)?;
+    check_free_disk(ctx, &mut findings, &Fs4Disk)?;
     Ok(findings)
+}
+
+/// Backing source for free-disk lookups. Real runs use [`Fs4Disk`];
+/// tests inject a stub returning whatever byte count they want to
+/// assert against, so the warn/fail boundary is testable without
+/// allocating gibibytes of real disk.
+pub trait DiskInfo {
+    /// Bytes currently free on the filesystem holding `path`. Errors
+    /// (`path` doesn't exist, EACCES on the parent) propagate so the
+    /// preflight can surface them as a `Warn` rather than silently
+    /// claim disk is fine.
+    fn available_bytes(&self, path: &Path) -> Result<u64>;
+}
+
+/// Production [`DiskInfo`] backed by [`fs4::available_space`].
+pub struct Fs4Disk;
+
+impl DiskInfo for Fs4Disk {
+    fn available_bytes(&self, path: &Path) -> Result<u64> {
+        fs4::available_space(path)
+            .with_context(|| format!("querying free disk for {}", path.display()))
+    }
+}
+
+/// One gibibyte in bytes — used both to render the human-readable
+/// findings and to compute the warn-threshold default.
+const GIB: u64 = 1024 * 1024 * 1024;
+
+/// Conservative warn threshold when `preflight.min_free_gib` is unset:
+/// 10 GiB. Below this the preflight emits a `Warn` (operator can still
+/// run); when the config is set, that value drives the `Fail`
+/// boundary instead.
+const DEFAULT_WARN_FLOOR_GIB: u64 = 10;
+
+/// Check free disk on the filesystem holding
+/// `layout.agent_workspace_root`. Behavior:
+///
+/// - `preflight.min_free_gib = Some(n)` and `available < n GiB` → `Fail`. Error
+///   body suggests the exact `sbagent workspace prune` invocation.
+/// - `preflight.min_free_gib = None` and `available < DEFAULT_WARN_FLOOR_GIB` →
+///   `Warn`. The operator hasn't picked a floor; we still flag obvious
+///   tight-disk situations.
+/// - Otherwise no finding.
+///
+/// Skipped entirely when `layout.agent_workspace_root` isn't
+/// resolvable (operator deployments that pin everything inline).
+pub fn check_free_disk(
+    ctx: &CliContext,
+    findings: &mut Vec<Finding>,
+    disk: &dyn DiskInfo,
+) -> Result<()> {
+    const CHECK: &str = "free-disk";
+
+    let workspace_root = match ctx
+        .settings
+        .layout
+        .agent_workspace_root
+        .as_deref()
+    {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    // The probe needs an existing path. Fall back to the nearest
+    // ancestor that does exist — a fresh operator may not have
+    // materialized the workspace dir yet on the very first run.
+    let probe_path: &Path = {
+        let mut p = workspace_root;
+        loop {
+            if p.exists() {
+                break p;
+            }
+            match p.parent() {
+                Some(parent) => p = parent,
+                None => return Ok(()),
+            }
+        }
+    };
+
+    let available = match disk.available_bytes(probe_path) {
+        Ok(b) => b,
+        Err(e) => {
+            findings.push(Finding {
+                severity: Severity::Warn,
+                check: CHECK,
+                message: format!("free-disk probe failed: {e:#}"),
+                remediation: format!(
+                    "ensure {} (or its first existing ancestor) is readable; preflight cannot \
+                     confirm available disk space",
+                    workspace_root.display(),
+                ),
+            });
+            return Ok(());
+        }
+    };
+
+    let available_gib = available / GIB;
+    let configured_min_gib = ctx
+        .settings
+        .preflight
+        .min_free_gib;
+
+    match configured_min_gib {
+        Some(min_gib) if available_gib < min_gib => {
+            findings.push(Finding {
+                severity: Severity::Fail,
+                check: CHECK,
+                message: format!(
+                    "free disk on {} is {} GiB; preflight.min_free_gib requires {} GiB",
+                    workspace_root.display(),
+                    available_gib,
+                    min_gib,
+                ),
+                remediation: "free space (e.g. `sbagent workspace prune --older-than 7d \
+                              --archived-only`) or lower `preflight.min_free_gib` in config.toml"
+                    .to_owned(),
+            });
+        }
+        None if available_gib < DEFAULT_WARN_FLOOR_GIB => {
+            findings.push(Finding {
+                severity: Severity::Warn,
+                check: CHECK,
+                message: format!(
+                    "free disk on {} is {} GiB (no `preflight.min_free_gib` configured; warning \
+                     below {} GiB)",
+                    workspace_root.display(),
+                    available_gib,
+                    DEFAULT_WARN_FLOOR_GIB,
+                ),
+                remediation: "set `preflight.min_free_gib` in config.toml once you know a \
+                              session's peak per-target disk, or run `sbagent workspace prune \
+                              --older-than 7d --archived-only` to reclaim space"
+                    .to_owned(),
+            });
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// True iff any finding is a hard failure. Used by session-start to
@@ -377,5 +515,138 @@ mod tests {
             remediation: "z".into(),
         }];
         report(&findings).expect("warns alone don't fail");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Phase 4 of v2-cleanup-and-workspace-hygiene: check_free_disk
+    // ─────────────────────────────────────────────────────────────
+
+    use crate::layout::Layout;
+    use crate::settings::{LayoutSettings, PreflightSettings, Settings};
+
+    /// Stub `DiskInfo` returning a configured byte count.
+    struct StubDisk(u64);
+    impl DiskInfo for StubDisk {
+        fn available_bytes(&self, _path: &Path) -> Result<u64> {
+            Ok(self.0)
+        }
+    }
+
+    /// `DiskInfo` that always errors.
+    struct ErrDisk;
+    impl DiskInfo for ErrDisk {
+        fn available_bytes(&self, _path: &Path) -> Result<u64> {
+            anyhow::bail!("simulated EACCES")
+        }
+    }
+
+    fn ctx_with_workspace(tmp: &std::path::Path, min_free_gib: Option<u64>) -> CliContext {
+        let settings = Settings {
+            layout: LayoutSettings {
+                agent_workspace_root: Some(tmp.to_path_buf()),
+                ..LayoutSettings::default()
+            },
+            preflight: PreflightSettings { min_free_gib },
+            ..Settings::default()
+        };
+        // Bypass the normal Layout::from_settings — it requires more
+        // wiring than this test needs. Construct a minimal layout
+        // pointing at the same tmp dir.
+        let layout = Layout::from_settings(&settings).expect("layout");
+        CliContext { settings, layout }
+    }
+
+    #[test]
+    fn check_free_disk_no_finding_when_above_warn_floor_and_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_workspace(tmp.path(), None);
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &StubDisk((DEFAULT_WARN_FLOOR_GIB + 1) * GIB))
+            .unwrap();
+        assert!(findings.is_empty(), "well above floor → no finding: {findings:?}");
+    }
+
+    #[test]
+    fn check_free_disk_warns_below_default_floor_when_unconfigured() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_workspace(tmp.path(), None);
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &StubDisk(GIB)).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Warn);
+        assert!(
+            findings[0]
+                .message
+                .contains("1 GiB"),
+            "{}",
+            findings[0].message
+        );
+        assert!(
+            findings[0]
+                .remediation
+                .contains("workspace prune")
+        );
+    }
+
+    #[test]
+    fn check_free_disk_fails_below_configured_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_workspace(tmp.path(), Some(50));
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &StubDisk(20 * GIB)).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Fail);
+        assert!(
+            findings[0]
+                .message
+                .contains("requires 50 GiB"),
+            "{}",
+            findings[0].message
+        );
+        assert!(
+            findings[0]
+                .remediation
+                .contains("workspace prune"),
+            "{}",
+            findings[0].remediation
+        );
+    }
+
+    #[test]
+    fn check_free_disk_passes_above_configured_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_workspace(tmp.path(), Some(10));
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &StubDisk(100 * GIB)).unwrap();
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn check_free_disk_warns_on_probe_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_workspace(tmp.path(), Some(10));
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &ErrDisk).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Warn);
+        assert!(
+            findings[0]
+                .message
+                .contains("probe failed"),
+            "{}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn check_free_disk_skipped_when_workspace_root_unset() {
+        // No layout.agent_workspace_root — the check should no-op,
+        // not panic.
+        let settings = Settings::default();
+        let layout = Layout::from_settings(&settings).expect("layout");
+        let ctx = CliContext { settings, layout };
+        let mut findings = Vec::new();
+        check_free_disk(&ctx, &mut findings, &StubDisk(0)).unwrap();
+        assert!(findings.is_empty());
     }
 }

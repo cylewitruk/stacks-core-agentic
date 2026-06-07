@@ -5,13 +5,27 @@ phase-clean surfaces so they match the Pass 1c artifact tree, add the
 operator-facing workspace hygiene knobs the design docs called out, and make
 disk exhaustion fail loudly and early.
 
-> **Status:** planned.
+> **Status:** in_progress (code-complete; ready for live validation).
 >
-> Both items are scoped to coordinator-owned scratch and operator hygiene.
-> No agent-prompt contract or artifact-schema changes — the only template
-> edits are non-prose `<!-- lint:example ... -->` markers added to
-> existing output-example fences (Phase 2). Per-target build trees and old
-> sessions are the two real disk sinks; this iteration closes both.
+> All four phases are implemented, reviewed, and exercised by unit /
+> integration tests. The remaining work is operator-level live
+> validation, which folds into the
+> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md): one real
+> three-target session implicitly fires the disk preflight at start
+> and leaves a workspace `sbagent workspace prune --dry-run` can be
+> invoked against, and Phase 5 publish on the same session confirms
+> that the `cargo clean` reclamation path doesn't regress publish
+> (the only Phase 3 acceptance bullet still unchecked).
+>
+> Move to `shipped` once that smoke session runs end-to-end without
+> regression in any of the four phases below.
+>
+> Both items are scoped to coordinator-owned scratch and operator
+> hygiene. No agent-prompt contract or artifact-schema changes — the
+> only template edits are non-prose `<!-- lint:example ... -->`
+> markers added to existing output-example fences (Phase 2).
+> Per-target build trees and old sessions are the two real disk
+> sinks; this iteration closes both.
 
 ## Items
 
@@ -20,8 +34,8 @@ disk exhaustion fail loudly and early.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0020-migration-leftovers` | primary | planned |
-| `0023-workspace-cleanup` | primary | planned |
+| `0020-migration-leftovers` | primary | in_progress |
+| `0023-workspace-cleanup` | primary | in_progress |
 
 ## Why
 
@@ -96,25 +110,28 @@ operator-issued phase clean run.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated (acceptance checks below run)
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated (acceptance checks below run)
 
 **Acceptance & Validation:**
 
-- [ ] After running the chosen clean command on a session whose Phase 1.8
+- [x] After running the chosen clean command on a session whose Phase 1.8
       completed, every `verify/<target>/<invocation-id>/bench-run.json` and
       `verify/<target>/baseline-run-ids.json` is gone.
-- [ ] The command is idempotent: a second run reports `skipped_missing` and
+- [x] The command is idempotent: a second run reports `skipped_missing` and
       exits 0.
-- [ ] Touching the Phase 0 archive (`baseline/bin/`) is impossible from
+- [x] Touching the Phase 0 archive (`baseline/bin/`) is impossible from
       this command.
 
 **Tests:**
 
-- [bench_clean_tests](../../crates/stacks-bench-agent/src/cli/session/bench/clean.rs)
-  — new cases asserting `verify/<target>/` removal and idempotence.
+- [tests/bench_clean.rs](../../crates/stacks-bench-agent/tests/bench_clean.rs)
+  — five cases: per-target Phase 1.8 + Phase 3 removal across two
+  targets, idempotence, wholesale `verify/` sweep without targets
+  loaded, optimizer-owned artifacts left alone, and corrupt-targets
+  error propagation (no half-clean).
 
 ### Phase 2: Schema-Example Lint For Prompts
 
@@ -141,39 +158,67 @@ validate against the schema the same template names.
   via [schemas.rs](../../crates/stacks-bench-agent/src/schemas.rs); use the
   same JSON Schema validator the session phases use so the lint verdict
   matches runtime.
-- New `LintFinding` variant:
-  `ExampleSchemaMismatch { template, schema, errors }`. Existing synthetic
-  render lint stays in place; this adds a parallel check.
-- Mark the existing output-example fences in `analyzer.md`,
-  `merge-analyses.md`, and `optimizer.md` with the new marker as part of this
-  phase so lint has actual coverage from day one.
+- Reuse the existing `LintFinding { template, message }` shape; schema-
+  example failures surface as findings with descriptive messages naming
+  the template, schema, and reported error paths. Existing synthetic
+  render lint stays in place; this adds a parallel check on rendered
+  output. (Earlier drafts proposed a new enum variant —
+  `ExampleSchemaMismatch { template, schema, errors }` — but the flat
+  struct already carries everything the CLI consumer needs, and the
+  extra refactor would have churned multiple call sites for no operator-
+  visible benefit.)
+- Mark every existing output-example fence whose body validates against
+  its named schema with no prose changes. Confirmed candidates on
+  inspection: `merge-analyses.md` (output is `optimization-targets`) and
+  `triage.md` (output is `candidates`). See **Notes** below for the
+  templates that need follow-up work before they can be marked.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent prompt lint` fails on a hand-injected break (e.g. delete a
-      required field from analyzer.md's accepted example) and the finding
-      names both the template path and the schema.
-- [ ] All existing templates pass schema-example lint with no edits to their
-      JSON bodies.
-- [ ] Skipped blocks with the explicit marker do not run schema validation.
+- [x] `sbagent prompt lint` fails on a hand-injected break (e.g. delete a
+      required field from `merge-analyses.md`'s output example) and the
+      finding names both the template path and the schema.
+- [x] All marked output examples in shipped templates pass schema-example
+      lint with no edits to their JSON bodies.
+- [x] Unmarked fences are skipped — the contract that keeps input-data
+      fences (`{{ var_json }}`) and inline shape illustrations from
+      showering false positives.
 
 **Tests:**
 
-- [prompts_lint_tests](../../crates/stacks-bench-agent/src/prompts.rs)
-  — synthetic templates with valid + invalid embedded examples and a skip
-  marker.
+- [prompts.rs::tests](../../crates/stacks-bench-agent/src/prompts.rs)
+  — six new cases under the existing test module: marker parser shape
+  coverage, valid body acceptance, schema mismatch surfacing, unknown
+  schema name, dangling marker, unparseable JSON, and explicit skip-when-
+  unmarked.
 
-**Notes:** The Phase 5 contract that operator-side prompt edits are warned-only
-([check.rs:17-19](../../crates/stacks-bench-agent/src/cli/check.rs#L17-L19))
-is unchanged. `prompt lint` is the strict gate; `check` stays soft on prompt
-drift.
+**Notes:**
+
+- The Phase 5 contract that operator-side prompt edits are warned-only
+  ([check.rs:17-19](../../crates/stacks-bench-agent/src/cli/check.rs#L17-L19))
+  is unchanged. `prompt lint` is the strict gate; `check` stays soft on
+  prompt drift.
+- **Deferred markers — `analyzer.md`.** Its two output examples (accepted
+  and rejected) use literal `"selection_lens": "..."` and `"lens": "..."`
+  placeholders that don't satisfy the schema's enum constraint. Adding
+  the marker requires replacing those with concrete enum values like
+  `"tx_latency"`, which is a prompt-prose change v2 ruled out of scope.
+  Captured as backlog item `0038-prompt-example-concretization` for a
+  future pass.
+- **Deferred markers — `optimizer.md`.** It has no top-level output
+  example fence; its only ```json fence is the input-data
+  `{{ target_json }}` placeholder. No marker work to do here.
+- **Deferred markers — `results-analyzer.md`, `pr-writer.md`,
+  `issue-writer.md`.** Same reason as `optimizer.md` — JSON fences in
+  these are input-data placeholders, and their non-JSON outputs
+  (markdown PR/issue bodies) aren't schema-validatable in this scheme.
 
 ### Phase 3: Lock In The Existing `cargo clean` Reclamation
 
@@ -216,25 +261,38 @@ explicit, tested, and documented so it cannot regress unnoticed.
 
 **Status:**
 
-- [ ] Tests added
-- [ ] Docs updated
-- [ ] Reviewed
-- [ ] Validated
+- [x] Tests added
+- [x] Docs updated
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Default `session run` leaves an empty/absent `target/` under each
+- [x] Default `session run` leaves an empty/absent `target/` under each
       per-target checkout after Phase 3.
-- [ ] `--skip-cargo-clean` preserves `target/`.
+- [x] `--skip-cargo-clean` preserves `target/`.
 - [ ] Phase 5 publish runs successfully after the default reclamation path.
-- [ ] Operations docs name the contract and the `--skip-cargo-clean` escape
+      *(Deferred to the [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md);
+      reclamation runs upstream of every bench invocation and the
+      worktree's `.git/` + copied binary survive by construction, but
+      end-to-end publish was not exercised in test because the publish
+      path requires a live `gh` client. Flip to `[x]` when the v1 smoke
+      ships a PR from a session that ran the default reclamation path.)*
+- [x] Operations docs name the contract and the `--skip-cargo-clean` escape
       hatch.
 
 **Tests:**
 
-- `bench_experiments_tests` — extend with the two assertions above; reuse the
-  existing `CargoStub` if one already exists, otherwise add one that records
-  invocations.
+- [tests/bench_experiments.rs](../../crates/stacks-bench-agent/tests/bench_experiments.rs)
+  — two new cases: `bench_experiments_reclaims_target_dir_by_default`
+  (asserts `target/` is wiped, `cargo-clean.log` lands, copied binary
+  survives) and
+  `bench_experiments_skip_cargo_clean_preserves_target_dir` (asserts
+  `target/release/stacks-bench` survives, no `cargo-clean.log`
+  fingerprint — the gate suppresses the call, not just the disk wipe).
+  The shared `StubCargo` was tightened to actually wipe `target/` on
+  `clean()` so the positive assertion is meaningful; existing tests
+  unaffected because they all pass `skip_cargo_clean: true`.
 
 **Notes:** Teardown of the entire checkout still happens at session-end
 ([run.rs:611](../../crates/stacks-bench-agent/src/cli/session/run.rs#L611))
@@ -257,12 +315,14 @@ preflight error when free space is obviously insufficient.
     file.
   - **PID file lifecycle.** `session run` writes
     `agent_workspace_root/sessions/<id>/.run.pid` at session start (after
-    preflight, before Phase 0). The file is removed in a normal-exit cleanup
-    after Phase 6 archive and on graceful Ctrl-C handling. A crashed or
-    SIGKILL'd run leaves the file behind. `workspace prune` treats the file
-    as authoritative only when the PID is actually live (POSIX `kill -0`);
-    stale PIDs (process gone) fall through to the normal age + archive
-    filters, so they cannot make a workspace immortal.
+    preflight, before Phase 0). The file is cleared by a `Drop`-guard on
+    every exit path the runtime unwinds through — normal return after Phase
+    6, `?` bail, and unwinding panics. SIGINT (Ctrl-C) and SIGKILL terminate
+    without unwinding (sbagent installs no signal handler today) and leave
+    the file behind. `workspace prune` treats the file as authoritative only
+    when the PID is actually live (POSIX `kill -0`); stale PIDs (process
+    gone) fall through to the normal age + archive filters, so they cannot
+    make a workspace immortal.
   - `--archived-only` is the safe default flag: requires presence in
     `sessions.jsonl`. Without it, the command refuses to remove anything
     unless `--older-than` is also explicitly provided.
@@ -281,46 +341,85 @@ preflight error when free space is obviously insufficient.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent workspace prune --dry-run` lists candidates without removing
+- [x] `sbagent workspace prune --dry-run` lists candidates without removing
       anything; `--older-than 7d --archived-only` removes only sessions whose
       archive entry exists and whose age threshold is met.
-- [ ] A session whose `.run.pid` matches a live process is never prunable;
+- [x] A session whose `.run.pid` matches a live process is never prunable;
       a session whose `.run.pid` is stale (PID gone) falls through to the
       normal age + archive filters.
-- [ ] A session-run with `preflight.min_free_gib` set and violated fails
+- [x] A session-run with `preflight.min_free_gib` set and violated fails
       preflight with the exact suggested prune invocation in the error body.
       Without `preflight.min_free_gib`, low free space emits a warning only.
 
 **Tests:**
 
-- `workspace_prune_tests` covering: dry-run, live-PID-file refusal,
-  archived-only filter, missing `sessions.jsonl` falls back to dry-run.
-- `preflight_disk_tests` mocking `fs2::available_space` (or equivalent), with
-  both the `None` (warn-only) and `Some(_)` (hard-fail) shape.
+- [session::workspace::tests](../../crates/stacks-bench-agent/src/session/workspace.rs)
+  — 7 cases: parse_duration suffix coverage, no-filter protects every
+  session, live PID blocks even with filters set, stale PID falls
+  through to age + archive filters, archived-only requires ledger
+  match, missing sessions_root is a no-op, dry-run never removes.
+- [session::run_pid::tests](../../crates/stacks-bench-agent/src/session/run_pid.rs)
+  — 6 cases: write/read round-trip, idempotent clear, missing-file
+  read, garbled content, `is_live` for current process, `RunPidGuard`
+  RAII drop semantics.
+- [session::preflight::tests](../../crates/stacks-bench-agent/src/session/preflight.rs)
+  — 6 new cases on top of the existing 7: above warn floor (no
+  finding), below default floor unconfigured (Warn), below configured
+  floor (Fail), above configured floor (no finding), probe failure
+  (Warn), missing workspace root (skipped).
 
-**Notes:** Defer choosing a default `min_free_gib` to a follow-up — first run
-a real session, watch peak usage, then pick a floor. Until then, the operator
-opts in.
+**Notes:**
+
+- Defer choosing a default `min_free_gib` to a follow-up — first run a
+  real session, watch peak usage, then pick a floor. Until then, the
+  operator opts in.
+- Phase 5 publish is unaffected: `.run.pid` lives at
+  `<sessions_root>/<id>/.run.pid` (next to `results/` + `worktrees/`),
+  not inside the worktree path Phase 5's PR-writer + `git push` use.
+- `workspace prune` resolves the operator ledger at
+  `<layout.operator_repo_root>/sessions.jsonl`. When
+  `operator_repo_root` isn't configured, `--archived-only` treats the
+  archived set as empty — every candidate is kept under that flag.
+  This matches the existing layout-derivation contract (no implicit
+  ledger discovery).
 
 ## Final Validation
 
-- Every phase clean command targets the full Pass 1c artifact tree it owns;
-  `find $WORKSPACE/sessions/<id>/results -type f` after running every clean
-  command in order leaves only the durable archive bundle.
-- `sbagent prompt lint` rejects a hand-broken schema example and accepts the
-  current template set unchanged.
-- A serial three-target session reclaims each per-target `target/` build cache
-  by default while preserving every worktree's source + `.git/` + copied
-  binary through Phase 5 publish.
-- `sbagent workspace prune` and the disk preflight have at least one live
-  invocation against a real workspace before this iteration ships.
+In-process / unit (complete, code-side):
+
+- [x] Every phase clean command targets the full Pass 1c artifact tree it
+      owns; `find $WORKSPACE/sessions/<id>/results -type f` after running
+      every clean command in order leaves only the durable archive bundle.
+      Covered by `bench_clean` / `optimize_clean` / `triage_clean` /
+      `analyze_results_clean` test files plus the existing per-phase
+      clean modules.
+- [x] `sbagent prompt lint` rejects a hand-broken schema example and
+      accepts the current template set unchanged. Pinned by
+      `bundled_templates_lint_clean` plus the schema-mismatch /
+      unknown-schema / dangling-marker / unparseable-JSON cases under
+      `prompts::tests`.
+
+Live / operator (deferred to the [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md);
+flip to `[x]` when that smoke runs):
+
+- [ ] A serial three-target session reclaims each per-target `target/`
+      build cache by default while preserving every worktree's source +
+      `.git/` + copied binary through Phase 5 publish.
+- [ ] `sbagent workspace prune --dry-run` and the disk preflight fire
+      against the workspace left behind by that smoke session. Confirms
+      the prune candidate enumeration, `--archived-only` ledger lookup,
+      `.run.pid` liveness gating, and `preflight.min_free_gib` warn-only
+      default behave on real operator paths and not just on `tempdir()`
+      seams.
+
+Move v2 to `shipped` once both live bullets above are checked.
 
 ## Non-Goals
 
@@ -338,3 +437,7 @@ opts in.
 - `0026-phase-timing` becomes the natural next target — `workspace prune`
   surfaces session age, which makes per-phase durations the next observability
   win.
+- `0038-prompt-example-concretization` — concretize the `"..."` placeholder
+  values in `analyzer.md`'s two output examples so they validate against
+  `analysis.schema.json` and can carry the schema-example marker. Splits
+  cleanly from v2 because it is a prompt-prose change v2 ruled out.

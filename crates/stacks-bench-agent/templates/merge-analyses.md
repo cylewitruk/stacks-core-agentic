@@ -150,6 +150,8 @@ Before writing JSON, verify:
 
 Top-level JSON:
 
+<!-- lint:example schema="optimization-targets" -->
+
 ```json
 {
   "schema_version": 3,

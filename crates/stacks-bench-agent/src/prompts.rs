@@ -205,12 +205,19 @@ pub struct LintFinding {
 
 /// Validate every renderable template under `dir` by parsing it with
 /// MiniJinja and dry-rendering against a field-complete synthetic context.
+/// When the dry-render succeeds, also walk the rendered output for
+/// `<!-- lint:example schema="<name>" -->` markers above ```json fences
+/// and validate each marked body against the bundled JSON Schema. See
+/// [`check_example_fences`] for the marker contract.
+///
 /// Returns one [`LintFinding`] per detected issue; an empty vector means
 /// lint passed. Reference docs are not in this bundle — see
 /// [`crate::context::lint_bundle`] for their validation.
 pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
     let mut findings = Vec::new();
-    // Renderable templates: parse + dry-render against the matching struct.
+    // Renderable templates: parse + dry-render against the matching struct,
+    // then schema-validate any marker-tagged output examples in the rendered
+    // text. Render failures skip example linting (no rendered text to walk).
     macro_rules! check {
         ($t:ty) => {{
             let path = dir.join(<$t>::FILE_NAME);
@@ -218,14 +225,18 @@ pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
                 Ok(src) => {
                     let mut env = minijinja::Environment::new();
                     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+                    env.set_keep_trailing_newline(true);
                     match env.template_from_str(&src) {
                         Ok(tmpl) => {
                             let synthetic = <$t>::synthetic_for_lint();
-                            if let Err(e) = tmpl.render(&synthetic) {
-                                findings.push(LintFinding {
+                            match tmpl.render(&synthetic) {
+                                Ok(rendered) => {
+                                    check_example_fences(<$t>::FILE_NAME, &rendered, &mut findings);
+                                }
+                                Err(e) => findings.push(LintFinding {
                                     template: <$t>::FILE_NAME,
                                     message: format!("dry-render failed: {e:#}"),
-                                });
+                                }),
                             }
                         }
                         Err(e) => findings.push(LintFinding {
@@ -257,6 +268,179 @@ pub fn lint(dir: &Path) -> Result<Vec<LintFinding>> {
     check!(IssueWriterPrompt);
 
     Ok(findings)
+}
+
+/// Walk `rendered` for output-example fences explicitly opted into
+/// schema validation via an HTML-comment marker.
+///
+/// Marker contract:
+///
+/// ```text
+/// <!-- lint:example schema="<short-name>" -->
+/// ```json
+/// { ... }
+/// ```
+/// ```
+///
+/// - The marker must appear on its own line. Optional blank lines may sit
+///   between the marker and the fence opener.
+/// - `<short-name>` resolves to `<short-name>.schema.json` in the bundled
+///   schema table ([`crate::schemas::BUNDLED_SCHEMAS`]).
+/// - Unmarked fences are skipped — opt-in, not opt-out. This avoids false
+///   positives on input-data fences (`{{ var_json }}` blobs) and on inline
+///   shape illustrations that don't represent a whole-doc schema.
+///
+/// Per-fence failure modes surface as separate [`LintFinding`] entries
+/// so an operator can fix several at once:
+///
+/// - **unknown schema**: `lint:example schema="<x>"` names a schema that
+///   doesn't exist in the bundle.
+/// - **parse failed**: marker present and fence found but the JSON body doesn't
+///   parse (likely a leftover MiniJinja placeholder that isn't quote-safe).
+/// - **schema mismatch**: parsed body fails JSON Schema validation; the message
+///   names every reported error path.
+/// - **dangling marker**: marker line followed by something that isn't a
+///   ```json fence within a few blank lines.
+fn check_example_fences(template: &'static str, rendered: &str, findings: &mut Vec<LintFinding>) {
+    use crate::schemas::BUNDLED_SCHEMAS;
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i].trim();
+        if let Some(schema_name) = parse_example_marker(line) {
+            // Marker found. Skip ahead over blank lines to the fence
+            // opener.
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim().is_empty() {
+                j += 1;
+            }
+            if j >= lines.len() || lines[j].trim() != "```json" {
+                findings.push(LintFinding {
+                    template,
+                    message: format!(
+                        "lint:example marker on line {} (schema=\"{schema_name}\") is not \
+                         immediately followed by a ```json fence",
+                        i + 1,
+                    ),
+                });
+                i = j;
+                continue;
+            }
+            // Collect fence body until the closing ``` on its own line.
+            let body_start = j + 1;
+            let mut body_end = body_start;
+            while body_end < lines.len() && lines[body_end].trim() != "```" {
+                body_end += 1;
+            }
+            if body_end >= lines.len() {
+                findings.push(LintFinding {
+                    template,
+                    message: format!(
+                        "lint:example fence opened on line {} (schema=\"{schema_name}\") never \
+                         closes",
+                        j + 1,
+                    ),
+                });
+                i = lines.len();
+                continue;
+            }
+            let body = lines[body_start..body_end].join("\n");
+
+            // Resolve <name>.schema.json in the bundled set.
+            let schema_filename = format!("{schema_name}.schema.json");
+            let Some(schema_src) = BUNDLED_SCHEMAS
+                .iter()
+                .find(|(n, _)| *n == schema_filename)
+                .map(|(_, src)| *src)
+            else {
+                findings.push(LintFinding {
+                    template,
+                    message: format!(
+                        "lint:example schema=\"{schema_name}\" on line {} does not match any \
+                         bundled schema",
+                        i + 1,
+                    ),
+                });
+                i = body_end + 1;
+                continue;
+            };
+
+            // Parse + validate.
+            match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(value) => match parse_and_compile_schema(schema_src) {
+                    Ok(validator) => {
+                        let errs: Vec<String> = validator
+                            .iter_errors(&value)
+                            .map(|e| format!("{e}"))
+                            .collect();
+                        if !errs.is_empty() {
+                            findings.push(LintFinding {
+                                template,
+                                message: format!(
+                                    "lint:example schema=\"{schema_name}\" (line {}) failed \
+                                     validation: {}",
+                                    j + 1,
+                                    errs.join("; "),
+                                ),
+                            });
+                        }
+                    }
+                    Err(e) => findings.push(LintFinding {
+                        template,
+                        message: format!(
+                            "lint:example schema=\"{schema_name}\" failed to compile bundled \
+                             schema: {e}",
+                        ),
+                    }),
+                },
+                Err(e) => findings.push(LintFinding {
+                    template,
+                    message: format!(
+                        "lint:example fence on line {} (schema=\"{schema_name}\") is not \
+                         parseable JSON: {e}",
+                        j + 1,
+                    ),
+                }),
+            }
+            i = body_end + 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Parse `<!-- lint:example schema="<name>" -->` and return `<name>`.
+/// Returns `None` if the line isn't a recognised marker. Tolerant of
+/// surrounding whitespace and double or single quotes around the name.
+fn parse_example_marker(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let inner = trimmed
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))?
+        .trim();
+    let after_keyword = inner
+        .strip_prefix("lint:example")?
+        .trim_start();
+    let rest = after_keyword
+        .strip_prefix("schema=")?
+        .trim_start();
+    let (quote, body) = if let Some(b) = rest.strip_prefix('"') {
+        ('"', b)
+    } else if let Some(b) = rest.strip_prefix('\'') {
+        ('\'', b)
+    } else {
+        return None;
+    };
+    let end = body.find(quote)?;
+    Some(&body[..end])
+}
+
+/// Compile a bundled schema source string into a [`jsonschema::Validator`].
+fn parse_and_compile_schema(src: &str) -> Result<jsonschema::Validator, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(src).map_err(|e| format!("schema parse: {e}"))?;
+    jsonschema::Validator::new(&value).map_err(|e| format!("schema compile: {e}"))
 }
 
 // ---------- Bundled template registry ----------
@@ -845,5 +1029,179 @@ mod tests {
                 f
             );
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Schema-example lint (Phase 2 of v2-cleanup-and-workspace-hygiene)
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Marker parser accepts double + single quotes and surrounding
+    /// whitespace; rejects unrelated comments.
+    #[test]
+    fn parse_example_marker_recognises_supported_shapes() {
+        assert_eq!(
+            super::parse_example_marker(r#"<!-- lint:example schema="analysis" -->"#),
+            Some("analysis"),
+        );
+        assert_eq!(
+            super::parse_example_marker(r#"  <!-- lint:example schema='candidates' -->  "#),
+            Some("candidates"),
+        );
+        assert_eq!(super::parse_example_marker("<!-- some other comment -->"), None);
+        assert_eq!(super::parse_example_marker("not a comment at all"), None);
+        // Missing closing quote → fail-closed.
+        assert_eq!(super::parse_example_marker(r#"<!-- lint:example schema="oops -->"#), None,);
+    }
+
+    /// Marker on a fence whose body validates → no finding.
+    #[test]
+    fn check_example_fences_accepts_valid_body() {
+        let rendered = "\
+intro prose
+
+<!-- lint:example schema=\"candidates\" -->
+
+```json
+{
+  \"schema_version\": 2,
+  \"session_id\": \"20260101-000000\",
+  \"baseline_run_id\": 0,
+  \"baseline_rerun_id\": 1,
+  \"noise_floor_pct\": 0.0,
+  \"candidates\": [],
+  \"rejected_families\": [],
+  \"lens_coverage\": {
+    \"tx_latency\": 0,
+    \"tenure_throughput\": 0,
+    \"commit_time\": 0,
+    \"weights_applied\": \"1,1,1\"
+  }
+}
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("triage.md", rendered, &mut findings);
+        assert!(findings.is_empty(), "expected clean lint: {findings:#?}");
+    }
+
+    /// Marker on a fence whose body fails schema validation → one
+    /// `failed validation` finding naming both the template and schema.
+    #[test]
+    fn check_example_fences_surfaces_schema_mismatch() {
+        // Missing required field `session_id`.
+        let rendered = "\
+<!-- lint:example schema=\"candidates\" -->
+
+```json
+{
+  \"schema_version\": 2,
+  \"baseline_run_id\": 0,
+  \"baseline_rerun_id\": 1,
+  \"noise_floor_pct\": 0.0,
+  \"candidates\": [],
+  \"rejected_families\": [],
+  \"lens_coverage\": {
+    \"tx_latency\": 0,
+    \"tenure_throughput\": 0,
+    \"commit_time\": 0,
+    \"weights_applied\": \"1,1,1\"
+  }
+}
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("triage.md", rendered, &mut findings);
+        assert_eq!(findings.len(), 1, "expected one finding: {findings:#?}");
+        let msg = &findings[0].message;
+        assert!(msg.contains("candidates"), "schema name in message: {msg}");
+        assert!(msg.contains("failed validation"), "verdict word in message: {msg}");
+        assert_eq!(findings[0].template, "triage.md");
+    }
+
+    /// Unknown schema name → fail-loud finding rather than silent skip.
+    #[test]
+    fn check_example_fences_surfaces_unknown_schema() {
+        let rendered = "\
+<!-- lint:example schema=\"nonexistent\" -->
+
+```json
+{}
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("anywhere.md", rendered, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .message
+                .contains("does not match any bundled schema"),
+            "expected unknown-schema message: {}",
+            findings[0].message,
+        );
+    }
+
+    /// Marker followed by something that isn't a json fence → dangling
+    /// marker finding (catches operator typos like `<!-- ... -->` then
+    /// ` ```text ` ).
+    #[test]
+    fn check_example_fences_surfaces_dangling_marker() {
+        let rendered = "\
+<!-- lint:example schema=\"candidates\" -->
+
+```text
+not a json fence
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("anywhere.md", rendered, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .message
+                .contains("not immediately followed by a ```json fence"),
+            "expected dangling-marker message: {}",
+            findings[0].message,
+        );
+    }
+
+    /// Unmarked fences are skipped entirely — this is the contract that
+    /// keeps input-data fences (`{{ var_json }}`) and inline shape
+    /// illustrations from showering false positives.
+    #[test]
+    fn check_example_fences_skips_unmarked_fences() {
+        let rendered = "\
+no marker above the fence below — totally unrelated to lint:example
+
+```json
+{ \"this\": \"would never validate against any schema\" }
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("anywhere.md", rendered, &mut findings);
+        assert!(findings.is_empty(), "unmarked fences must be skipped: {findings:#?}");
+    }
+
+    /// Marker on a fence whose body isn't parseable JSON → fail-loud
+    /// (catches a partial MiniJinja interpolation that left a stray
+    /// `{{ }}`).
+    #[test]
+    fn check_example_fences_surfaces_unparseable_json() {
+        let rendered = "\
+<!-- lint:example schema=\"candidates\" -->
+
+```json
+{ this is not JSON
+```
+";
+        let mut findings = Vec::new();
+        super::check_example_fences("anywhere.md", rendered, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .message
+                .contains("not parseable JSON"),
+            "expected JSON parse error: {}",
+            findings[0].message,
+        );
     }
 }

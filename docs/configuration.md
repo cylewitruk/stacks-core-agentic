@@ -22,8 +22,8 @@ The annotated template is checked in at
 to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
 stanzas (`[layout]`, `[stacks_core]`, `[stacks_bench]`, `[triage]`,
 `[analyzer]`, `[optimizer]`, `[results_analysis]`, `[codex]`,
-`[publish]`, `[git]`); each stanza's fields are documented inline in
-that file. Notable Pass 1c knobs:
+`[publish]`, `[preflight]`, `[git]`); each stanza's fields are
+documented inline in that file. Notable Pass 1c knobs:
 
 - `analyzer.max_invocations_per_target` (default `8`, schema hard max
   `16`) — operator cap on `verification_replay.invocations[]` length
@@ -33,6 +33,15 @@ that file. Notable Pass 1c knobs:
   `"high" | "medium" | "low"`) — minimum confidence required for a
   `normal_pr` target to publish in Phase 5. Verdicts below the floor
   hold for operator review.
+- `preflight.min_free_gib` (default unset / `None`) — session-start
+  free-disk floor on the filesystem holding
+  `layout.agent_workspace_root`. When set, the preflight emits a hard
+  `Fail` if available space is below the threshold and surfaces the
+  exact `sbagent workspace prune` invocation in the error body. When
+  unset, the preflight emits a `Warn` only below the conservative
+  10 GiB warn floor — pick a real value once you've measured a
+  session's peak per-target disk. See [operations.md](operations.md)
+  for the `workspace prune` recipe.
 
 Prefer `--count` on `session baseline run` for bounded demo runs.
 Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is
