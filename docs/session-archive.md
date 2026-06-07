@@ -70,24 +70,15 @@ coordination.
 ## Layout: workspace-based session bulk
 
 Session evidence bundles live **outside** the operator git repo, in a
-workspace dir. Today: `<layout.agent_workspace_root>/sessions/<id>/`. This
-keeps the operator's main worktree pristine — the archive branch
-holds `sessions/<id>/` paths in its git tree, but those paths exist
-on disk only inside a temporary worktree the archive flow creates
-during its run. The operator's primary checkout never sees them, so
-branch switches can't accidentally wipe them.
-
-The legacy layout (bulk at `<operator>/sessions/<id>/`) is still
-supported for non-archive operations (baseline, triage, optimize,
-bench, finalize) — set `layout.sessions_root` explicitly to opt in.
-**However, archive itself requires `layout.agent_workspace_root` to point
-OUTSIDE the operator repo**, since the archive worktree must live
-outside the operator to avoid the branch-switch wipe hazard. An
-operator on the legacy layout who wants to archive must set
-`layout.agent_workspace_root` to a separate path; archive will surface a
-clear error otherwise. New deployments should just accept the
-default workspace-based layout (set `layout.agent_workspace_root` and let
-`layout.sessions_root` derive from it).
+workspace dir under `<layout.agent_workspace_root>/sessions/<id>/`. The
+archive flow copies (not moves) the bulk into a transient worktree
+when authoring the `session/<id>` branch — the operator's primary
+checkout never sees `sessions/<id>/` on disk. See
+[git-topology.md](git-topology.md) §5b for the full set of paths and
+pushes; the legacy `<operator>/sessions/<id>/` layout is still
+supported for non-archive operations but archive itself requires
+`layout.agent_workspace_root` to be set outside the operator repo
+(the worktree must live there).
 
 ## Configuration
 

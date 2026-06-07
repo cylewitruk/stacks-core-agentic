@@ -28,7 +28,9 @@ target's `delivery_mode`:
 Phase 5 runs entirely in-process under the agent user. There is no
 sudo, no separate publisher account, and no `gh` CLI dependency. PRs
 and issues are created via the GitHub REST API (`octocrab`); the
-worktree → branch → push hop still shells `git`.
+worktree → branch → push hop still shells `git`. See
+[git-topology.md](git-topology.md) §5a for the per-target clone /
+branch / push lifecycle in context.
 
 | Subcommand | What it does |
 | ---------- | ------------ |

@@ -258,6 +258,11 @@ these the operator should try next.
 
 ## Expected artifact tree
 
+See [git-topology.md](git-topology.md) for the full lifecycle
+walkthrough — what each dir is, when it's written, and what git
+operations touch it. This section is the per-file enumeration of the
+results tree as a quick lookup.
+
 Each phase writes into its own subdir under `results/`. The
 `optimize/<target-id>/` dir is shared across Phase 2 (optimizer agent),
 Phase 3 (per-invocation `<invocation-id>/bench-run.json` benchmark

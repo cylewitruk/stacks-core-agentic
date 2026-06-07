@@ -60,53 +60,14 @@ idempotently. Use it when re-running a phase from scratch.
 
 ## Filesystem & git layout
 
-Three sets of paths matter at runtime. Each lives outside the others
-on purpose: the operator repo's **primary worktree** never holds
-session bulk, the bulk lives in scratch space outside any tracked git
-repo, and the per-target optimizer clones are stand-alone git
-checkouts. Phase 6 archive creates a separate transient operator
-worktree that DOES hold the bulk — but only inside that transient
-checkout, never in the primary one.
-
-### Paths derived from config
-
-| Where | Default | What it holds |
-| --- | --- | --- |
-| **Session bulk** | `<layout.sessions_root>/<id>/results/`, where `layout.sessions_root` defaults to `<layout.agent_workspace_root>/sessions/` (so the bulk dir is `<layout.agent_workspace_root>/sessions/<id>/results/`) | All phase outputs (baseline, triage, analyses, merge, optimize, finalize). The audit trail. |
-| **Per-target optimizer clones** | `<layout.agent_workspace_root>/optimizers/<id>/<target-id>/` | Stand-alone git clones of the operator's `repos/stacks-core` submodule (`git clone --reference --branch --local`, sharing the base's object store), one per merged target. Each holds an `agentic/<id>/<target-id>` branch. |
-| **Archive worktree (transient)** | `<layout.agent_workspace_root>/archive-worktrees/<id>/` | Created during Phase 6 as a `git worktree add` of the operator repo, torn down at the end. The only place `sessions/<id>/` ever appears tracked in an operator-repo working tree. |
-| **Persistent stacks-bench app data** | `<stacks_bench.data_dir>/appdata/stacks-bench.db` | Indexed chainstate + cross-session `benchmark_run` rows. Never per-session. |
-| **Coordination lockfiles** | `<lock_dir>/{benchmark.lock,test.lock}` | `fd-lock`-held during bench runs (cross-process) and optimizer `cargo nextest` (cross-clone). |
-| **Operator git repo** | `<layout.operator_repo_root>/` (no default; explicit setting required for archive) | Primary worktree holds `sessions.jsonl` ledger on `main` + serves as the source for `session/<id>` archive branches. Never holds session bulk in its **primary** working tree (the transient archive worktree above is the exception). |
-
-`<layout.agent_workspace_root>` should be a path OUTSIDE the operator repo
-(e.g. `/private/tmp/sbagent-workspaces/`). Anchoring session bulk
-outside the operator repo avoids the "branch switch wipes
-tracked-on-source-not-on-dest-but-ignored files" hazard the archive
-flow's worktree-based design exists to prevent.
-
-### Per-phase git activity
-
-Most phases are pure file I/O against the session-bulk dir. Three
-phases produce git effects:
-
-| Phase | Git ops |
-| --- | --- |
-| **2 (optimize)** | For each merged target, `git clone --reference <base> --branch <base_branch> --local <base> <checkout>` into `<workspace>/optimizers/<id>/<target>/` (shares the base's object store, fresh refs), then `git switch -c agentic/<id>/<target>`. The optimizer agent edits files inside the clone but does NOT commit — the coordinator runs `coordinator_commit_if_kept` AFTER validating `optimizer-report.json`, and only then stages + commits the change authored as `Stacks BenchBot`. This sandbox/coordinator boundary keeps a misbehaving agent from producing arbitrary commits. Aborted targets' clones are pruned at session end; accepted ones stay until manually cleaned. |
-| **5 (publish)**, when run with PAT | Per accepted normal-PR / consensus-PoC-PR target, `git push -u <publish.remote> agentic/<id>/<target>` from inside the optimizer clone. PAT travels via `http.<prefix>.extraheader` env override — never argv, never `.git/config`. Then octocrab opens the PR / issue against `publish.base_repo` (defaults: `cylewitruk/stacks-core`). |
-| **6 (archive)** | `git worktree add <workspace>/archive-worktrees/<id>` against the operator repo, branched as `session/<id>`. Bulk is COPIED (not moved) into the worktree's `sessions/<id>/`, force-added, committed as `Stacks BenchBot` (no GPG signing). Worktree pushed to operator's `origin`. Worktree torn down. Then on the operator's main worktree: pull-rebase, append one line to `sessions.jsonl`, commit, push with retry on race. |
-
-`agentic/<id>/<target-id>` branches stay in their per-target clones —
-they are never pushed to the operator repo. They reach GitHub only
-via Phase 5 publish, which pushes them directly to the
-upstream `stacks-core` fork (e.g. `cylewitruk/stacks-core`).
-
-`session/<id>` branches DO get pushed to the operator's own fork
-(e.g. `stacks-bench-bot/stacks-core-autopilot`). They are
-**write-once after archive** — never re-pushed, never edited. The
-`SessionRecord`'s `artifact_sha` field is the permanent anchor; if
-anyone moves the branch after archive, that field becomes a lie.
-See [session-archive.md](session-archive.md) for the full contract.
+See [git-topology.md](git-topology.md) for the canonical lifecycle
+walkthrough — every directory, every branch, every push, ordered by
+when in a session they happen (install → session start → optimize →
+publish → archive → maintain). The summary tables below are
+phase-indexed cross-references; consult `git-topology.md` for the
+full "where does X live?" lookup, the cast of characters
+(`<operator>` / `<workspace>` / `<base>` / `<stacks-core fork>`), and
+the per-phase mechanics.
 
 ### Side effects, by destination
 
