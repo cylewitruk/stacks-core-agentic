@@ -610,28 +610,6 @@ pub fn clone_with_reference(base: &Path, branch: &str, dest: &Path) -> Result<()
     Ok(())
 }
 
-/// `git clone --bare --branch <branch> <source_url> <dest>` — used
-/// by `sbagent init --push --seed-from` to materialize a bare-clone
-/// "staging area" before pushing to the operator's fork.
-pub fn clone_bare_branch(source_url: &str, branch: &str, dest: &Path) -> Result<()> {
-    let status = std::process::Command::new("git")
-        .arg("clone")
-        .arg("--bare")
-        .arg("--branch")
-        .arg(branch)
-        .arg(source_url)
-        .arg(dest)
-        .status()
-        .with_context(|| format!("spawn git clone --bare --branch {branch} {source_url}"))?;
-    if !status.success() {
-        bail!(
-            "git clone --bare --branch {branch} {source_url} exited {status}; verify the URL is \
-             reachable and carries {branch}",
-        );
-    }
-    Ok(())
-}
-
 /// `git switch -c <branch>` — create + check out `branch` from
 /// HEAD. Used by per-target clones to land on an
 /// `agent/<session>/<target>` branch.

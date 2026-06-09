@@ -19,4 +19,5 @@ pub mod schema_export;
 pub mod schemas;
 pub mod session;
 pub mod settings;
+pub mod source;
 pub mod types;

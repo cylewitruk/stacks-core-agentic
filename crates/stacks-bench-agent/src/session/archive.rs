@@ -38,13 +38,13 @@ use crate::analyzed_rejections::now_utc_iso8601;
 use crate::build_info::{SBAGENT_VERSION, sbagent_git_sha};
 use crate::git;
 use crate::layout::Layout;
+use crate::models::ToJson;
 use crate::models::common::DeliveryMode;
 use crate::models::session_record::{
     SessionRange, SessionRecord, SessionRecordKind, SessionStatus, TargetBench, TargetRecord,
     TargetStatus, TargetStatusStage,
 };
 use crate::models::summary::{Experiment, ExperimentStatus, Summary};
-use crate::models::{FromJson, ToJson};
 use crate::session::{SessionLayout, loader};
 use crate::settings::Settings;
 
@@ -508,7 +508,11 @@ fn ledger_contains_id(path: &Path, id: &str) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        let Ok(rec) = SessionRecord::from_json(line) else {
+        // `from_ledger_line` accepts both v1 (pre-v3-cutover; no
+        // source_* fields) and v2 records, so an archive idempotency
+        // check on a long-running operator-main `sessions.jsonl`
+        // doesn't silently skip every legacy line.
+        let Ok(rec) = SessionRecord::from_ledger_line(line) else {
             continue;
         };
         if rec.id == id {
@@ -591,18 +595,33 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
             .to_owned(),
     };
 
-    let stacks_core_base_sha = inputs
-        .framework
-        .base
-        .as_deref()
-        .and_then(|base| git::run_git_output(base, &["rev-parse", "HEAD"]).ok());
+    // Pre-v3 the operator submodule HEAD was the canonical "source
+    // SHA" recorded here. Post-cutover the per-session `source.json`
+    // (populated below) carries the same information under
+    // `source_sha`; this field stays `None` on new sessions and is
+    // retained on `SessionRecord` only for read-compatibility with
+    // archived pre-cutover entries.
+    let stacks_core_base_sha = None;
 
     let targets = build_target_records(inputs.layout, summary.as_ref(), targets_doc.as_ref())
         .unwrap_or_default();
 
+    // v3 Phase 3 cutover: populate source-provenance fields from
+    // `<session>/results/source.json` when it exists. Pre-cutover
+    // sessions have no source.json — leave fields `None` in that
+    // case so legacy archives continue to flow through.
+    let source_path = inputs.layout.source_json();
+    let (source_url, source_branch, source_sha, source_fetched_at) = if source_path.exists() {
+        let s = crate::models::source::SourceJson::read(&source_path)
+            .with_context(|| format!("loading source.json at {}", source_path.display()))?;
+        (Some(s.url), Some(s.branch), Some(s.sha), Some(s.fetched_at))
+    } else {
+        (None, None, None, None)
+    };
+
     Ok(SessionRecord {
         kind: SessionRecordKind::SessionCompleted,
-        schema_version: crate::models::common::SchemaVersionV1,
+        schema_version: crate::models::common::SchemaVersionV2,
         id: session_id_str,
         artifact_branch: branch.to_owned(),
         artifact_sha: String::new(), // filled in after the commit lands
@@ -619,6 +638,10 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
         baseline_run_ids,
         phase_durations_secs: BTreeMap::new(),
         targets,
+        source_url,
+        source_branch,
+        source_sha,
+        source_fetched_at,
     })
 }
 
@@ -1043,7 +1066,7 @@ mod tests {
         writeln!(f, "{{}}").unwrap();
         let rec = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: crate::models::common::SchemaVersionV1,
+            schema_version: crate::models::common::SchemaVersionV2,
             id: "20260518-190321".to_owned(),
             artifact_branch: "session/20260518-190321".to_owned(),
             artifact_sha: "abc".to_owned(),
@@ -1066,6 +1089,10 @@ mod tests {
             baseline_run_ids: vec![],
             phase_durations_secs: BTreeMap::new(),
             targets: vec![],
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
         };
         let line = rec.to_json().unwrap();
         writeln!(f, "{line}").unwrap();

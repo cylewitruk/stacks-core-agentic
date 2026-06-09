@@ -10,10 +10,6 @@
 //!   typed-model-vs-committed-schema drift gate). Operator deployments don't
 //!   need it — schemas are bundled into the binary and seeded into
 //!   [`Layout::schemas_dir`] under the operator's `.sbagent/schemas/`.
-//! - [`Layout::base`] — the operator-provided stacks-core checkout used to
-//!   build the `stacks-bench` binary and source per-target worktrees from.
-//!   **Required**; no default. Typically a submodule at
-//!   `<operator_root>/repos/stacks-core/`.
 //! - [`Layout::sessions_root`] — writable sessions tree. Equivalent to
 //!   `OPT_SESSIONS_ROOT`. Defaults to `<framework>/sessions`.
 //! - [`Layout::stacks_bench_data_dir`] — persistent stacks-bench app-data dir
@@ -38,8 +34,9 @@ use crate::settings::Settings;
 use crate::types::SessionId;
 
 /// Read-only framework checkout root: where the tool's bundled prompts,
-/// queries, and schemas live. Does NOT contain the stacks-core target —
-/// that's operator-owned and exposed via [`Layout::base`].
+/// queries, and schemas live. Does NOT contain any session-specific
+/// source checkout — per-session source clones materialize separately
+/// under `<agent_workspace_root>/sessions/<id>/repos/<cache_id>/`.
 #[derive(Debug, Clone)]
 pub struct FrameworkDir(PathBuf);
 
@@ -165,12 +162,6 @@ pub struct Layout {
     /// subagents to serialize `cargo nextest` runs across parallel
     /// worktrees.
     pub test_lock: PathBuf,
-    /// `BASE` — the operator-provided `stacks-core` checkout that builds the
-    /// `stacks-bench` binary and is the source of per-target worktrees.
-    /// `None` here is *not* an error at startup (so unrelated commands like
-    /// `sbagent prompt lint` can run without a fully-resolved target);
-    /// callers that need it call [`Layout::require_base`].
-    pub base: Option<PathBuf>,
     /// Optional `--shadow-dir-root <DIR>` passed to `stacks-bench bench
     /// run`. See [`crate::settings::StacksBenchSettings::shadow_dir`].
     /// Always absolutized at Layout construction; `None` means stacks-bench
@@ -186,15 +177,19 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Resolve [`Layout::base`] or return a clear error pointing the
-    /// operator at the right config field. Use this at every callsite that
-    /// builds a worktree, runs a cargo command, or shells out to
-    /// `stacks-bench`.
-    pub fn require_base(&self) -> Result<&Path> {
-        self.base.as_deref().context(
-            "`base` (stacks-core checkout path) not set in settings; required for this command. \
-             Populate `base` in config.toml — typically `<operator-repo>/repos/stacks-core/`.",
-        )
+    /// Resolve [`Layout::agent_workspace_root`] or return a clear error.
+    /// Required post-v3-cutover by every phase that consumes the
+    /// per-session source checkout (Phase 0a baseline build, Phase 2
+    /// optimizer fan-out, Phase 3 candidate bench cargo cwd) — those
+    /// callsites compute paths under `<agent_workspace_root>/sessions/<id>/`.
+    pub fn require_agent_workspace_root(&self) -> Result<&Path> {
+        self.agent_workspace_root
+            .as_deref()
+            .context(
+                "`layout.agent_workspace_root` not set in settings; required post-v3-cutover for \
+                 the per-session source checkout. Set it to a path OUTSIDE the operator repo \
+                 (e.g. `/private/tmp/sbagent-workspaces`) and re-run.",
+            )
     }
 
     /// Resolve [`Layout::operator_repo_root`] or return a clear error.
@@ -343,15 +338,6 @@ impl Layout {
         )?;
         let bench_lock = lock_dir.join("benchmark.lock");
         let test_lock = lock_dir.join("test.lock");
-        // `base` may legitimately be `None` here — unrelated commands
-        // (e.g. `sbagent prompt lint`) don't need a stacks-core checkout.
-        // Callers that DO need it use `Layout::require_base`.
-        let base = absolutize_opt(
-            settings
-                .stacks_core
-                .base
-                .clone(),
-        )?;
         let stacks_bench_shadow_dir = absolutize_opt(
             settings
                 .stacks_bench
@@ -448,7 +434,6 @@ impl Layout {
             stacks_bench_data_dir,
             bench_lock,
             test_lock,
-            base,
             stacks_bench_shadow_dir,
             agent_workspace_root,
             operator_repo_root,
@@ -514,12 +499,11 @@ impl Layout {
 /// ran `sbagent`). Does NOT require the path to exist — `git worktree
 /// add` and the optimizer materialize their destination dirs.
 ///
-/// Why this matters: relative paths in `config.toml` (e.g. `base =
-/// "repos/stacks-core"`, `sessions_root = "sessions"`) get passed
-/// downstream both to `git -C <base> worktree add <wt>` (which resolves
-/// <wt> *under base*) and to `codex exec --cd <wt>` (which resolves it
-/// against codex's CWD). Absolutizing once at the Layout boundary makes
-/// every consumer agree.
+/// Why this matters: relative paths in `config.toml` (e.g.
+/// `sessions_root = "sessions"`) get passed downstream both to
+/// `codex exec --cd <wt>` (which resolves it against codex's CWD) and
+/// to per-target git clone parents. Absolutizing once at the Layout
+/// boundary makes every consumer agree.
 fn absolutize(p: PathBuf) -> Result<PathBuf> {
     if p.is_absolute() {
         return Ok(p);
@@ -820,7 +804,6 @@ mod tests {
             stacks_bench_data_dir: PathBuf::from("/x"),
             bench_lock: PathBuf::from("/x"),
             test_lock: PathBuf::from("/x"),
-            base: None,
             stacks_bench_shadow_dir: None,
             agent_workspace_root: None,
             operator_repo_root: None,

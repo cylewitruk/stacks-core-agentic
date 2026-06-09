@@ -391,10 +391,6 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
     // startup check (added in Codex-review pass) fails when these are
     // missing from disk.
     stacks_bench_agent::context::seed_to(&framework.join("context")).unwrap();
-    let base = framework
-        .join("repos")
-        .join("stacks-core");
-    std::fs::create_dir_all(&base).unwrap();
 
     let layout = Layout {
         framework: Some(FrameworkDir::new(framework.clone())),
@@ -406,7 +402,6 @@ fn stage(tmp: &tempfile::TempDir) -> (Layout, SessionLayout) {
         stacks_bench_data_dir: tmp.path().join("data"),
         bench_lock: tmp.path().join("bench.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -439,6 +434,7 @@ async fn post_merge_chain_optimizers_finalize_publish() {
         harness: harness.clone(),
         git: Arc::new(ChainGit),
         resume: false,
+        source_checkout: std::path::PathBuf::from("/tmp/test-source-checkout"),
     })
     .await
     .expect("optimizers::run");

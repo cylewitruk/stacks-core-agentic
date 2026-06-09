@@ -25,7 +25,7 @@ use std::fs;
 
 use anyhow::{Context as _, Result};
 
-use crate::models::common::{DeliveryMode, SchemaVersionV3};
+use crate::models::common::{DeliveryMode, SchemaVersionV4};
 use crate::models::optimizer_report::OptimizerReport;
 use crate::models::summary::{
     ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
@@ -148,8 +148,22 @@ pub fn compute_summary(
     let outcome_counts = aggregate_counts(&experiments);
     let next_targets_hint = compute_hint(&experiments);
 
+    // v3 Phase 3 cutover: populate source-provenance fields from
+    // `<session>/results/source.json` when it exists (every
+    // post-cutover session writes it at session start). Sessions that
+    // ran pre-cutover may have no source.json — leave fields `None`
+    // in that case so legacy artifacts continue to finalize cleanly.
+    let source_path = inputs.layout.source_json();
+    let (source_url, source_branch, source_sha, source_fetched_at) = if source_path.exists() {
+        let s = crate::models::source::SourceJson::read(&source_path)
+            .with_context(|| format!("loading source.json at {}", source_path.display()))?;
+        (Some(s.url), Some(s.branch), Some(s.sha), Some(s.fetched_at))
+    } else {
+        (None, None, None, None)
+    };
+
     Ok(Summary {
-        schema_version: SchemaVersionV3,
+        schema_version: SchemaVersionV4,
         session_id: targets.session_id.clone(),
         baseline_run_id: targets.baseline_run_id,
         baseline_rerun_id: targets.baseline_rerun_id,
@@ -160,6 +174,10 @@ pub fn compute_summary(
             .lens_dispositions
             .clone(),
         next_targets_hint: Some(next_targets_hint),
+        source_url,
+        source_branch,
+        source_sha,
+        source_fetched_at,
     })
 }
 

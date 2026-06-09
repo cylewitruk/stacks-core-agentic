@@ -32,6 +32,10 @@ pub struct Inputs<H: AgentHarness + 'static> {
     pub parallel: Option<usize>,
     /// Agent harness, shared across spawned tasks via `Arc`.
     pub harness: Arc<H>,
+    /// **v3 Phase 3 cutover**: per-session source checkout passed to
+    /// every analyzer prompt as `base` and granted to Codex via
+    /// `add_dirs`. Replaces the pre-cutover `framework.require_base()`.
+    pub source_checkout: std::path::PathBuf,
 }
 
 /// Outputs of an analyzer fan-out.
@@ -99,6 +103,7 @@ where
                 .clone(),
             sem: semaphore.clone(),
             harness: inputs.harness.clone(),
+            source_checkout: inputs.source_checkout.clone(),
         };
         set.spawn(run_one(task_inputs));
     }
@@ -151,6 +156,11 @@ struct AnalyzerTaskInputs<H: AgentHarness + 'static> {
     session_results_dir: PathBuf,
     sem: Arc<Semaphore>,
     harness: Arc<H>,
+    /// v3 Phase 3 cutover: per-session source checkout (carried from
+    /// [`Inputs::source_checkout`]). Used as the analyzer prompt's
+    /// `base` field + as an `add_dirs` entry granting the agent read
+    /// access to the source.
+    source_checkout: PathBuf,
 }
 
 async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Result<()> {
@@ -200,9 +210,10 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             output_dir: out_dir
                 .to_string_lossy()
                 .into_owned(),
+            // v3 Phase 3 cutover: prompt `base` = per-session source
+            // checkout, not the operator's submodule.
             base: state
-                .framework
-                .require_base()?
+                .source_checkout
                 .to_string_lossy()
                 .into_owned(),
             stacks_bench_data_dir: state
@@ -262,10 +273,9 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         .dangerously_bypass_sandbox
         .unwrap_or(false);
     let mut add_dirs: Vec<PathBuf> = vec![
-        state
-            .framework
-            .require_base()?
-            .to_path_buf(),
+        // v3 Phase 3 cutover: grant the per-session source checkout,
+        // not the operator's submodule.
+        state.source_checkout.clone(),
         state
             .framework
             .stacks_bench_data_dir
@@ -487,11 +497,10 @@ fn maybe_append_rejection<H: AgentHarness + 'static>(
         return Ok(());
     }
 
-    let stacks_core_sha = state
-        .framework
-        .require_base()
-        .ok()
-        .and_then(crate::git::rev_parse_head_optional);
+    // v3 Phase 3 cutover: rev-parse the per-session source checkout
+    // (matches source.json.sha exactly) instead of the operator
+    // submodule.
+    let stacks_core_sha = crate::git::rev_parse_head_optional(&state.source_checkout);
 
     let fingerprint = compute_fingerprint(&FingerprintInputs {
         lens,

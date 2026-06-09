@@ -3,7 +3,9 @@
 //! Three entry points:
 //!
 //! - [`archive_baseline_binary`] → Phase 0a (Pass 1a). Build the `stacks-bench`
-//!   binary from `repos/stacks-core` HEAD, copy it to
+//!   binary from the per-session source checkout at
+//!   `<workspace>/sessions/<id>/repos/<cache_id>/` (materialized at session
+//!   start from `[source]`), copy it to
 //!   `<session>/results/baseline/bin/stacks-bench`, and write a manifest
 //!   carrying source sha + dirty-worktree flag + build metadata. Downstream
 //!   baseline / calibration / full-range fallback paths all read from this
@@ -37,8 +39,11 @@ use crate::settings::Settings;
 /// Inputs to [`archive_baseline_binary`] (Phase 0a).
 pub struct ArchiveBinaryInputs<'a> {
     pub layout: &'a SessionLayout,
-    /// Operator's `repos/stacks-core` checkout (where `cargo build`
-    /// runs). The submodule HEAD sha is captured into the manifest.
+    /// Per-session source checkout at
+    /// `<workspace>/sessions/<id>/repos/<cache_id>/` where `cargo
+    /// build --release -p stacks-bench` runs. The checkout's HEAD
+    /// SHA is captured into the manifest (mirrors
+    /// `results/source.json.sha`).
     pub stacks_core_base: &'a Path,
 }
 
@@ -50,7 +55,8 @@ pub struct ArchiveBinaryOutputs {
     /// path every downstream "use the baseline binary" code path
     /// reads from.
     pub archived_path: PathBuf,
-    /// `repos/stacks-core` submodule HEAD sha at archive time.
+    /// Per-session source checkout HEAD sha at archive time (matches
+    /// the SHA written to `results/source.json` at materialization).
     pub source_sha: String,
 }
 

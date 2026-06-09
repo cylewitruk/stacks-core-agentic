@@ -23,6 +23,7 @@ pub mod coordinator_provenance;
 pub mod optimizer_report;
 pub mod results_analysis;
 pub mod session_record;
+pub mod source;
 pub mod summary;
 pub mod targets;
 

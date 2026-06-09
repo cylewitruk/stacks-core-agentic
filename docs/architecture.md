@@ -34,12 +34,13 @@ Persistent benchmark data
 ## Source layout
 
 This repo is the **tool**: prompts, schemas, models, and agent code
-ship together as a versioned binary release. The target codebase
-(stacks-core) and all per-session state live in the operator repo
-[`stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator).
-`sbagent` reads the target path from config (`base`); no submodule is
-pinned tool-side. See [setup.md](setup.md) for the
-operator-aware setup flow.
+ship together as a versioned binary release. Operator state
+(configuration, session ledger, bundle mirror) lives in the operator
+repo [`stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator);
+the target codebase (`stacks-core`) is materialized per-session into
+`<workspace>/sessions/<id>/repos/<cache_id>/` from `[source]` config — neither
+side pins the source repo. See [setup.md](setup.md) and
+[git-topology.md](git-topology.md) for the layout.
 
 ## Family-first agent architecture (schema v3)
 

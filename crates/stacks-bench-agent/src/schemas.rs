@@ -53,6 +53,7 @@ pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
     ("summary.schema.json", include_str!("../../../schemas/summary.schema.json")),
     ("session-record.schema.json", include_str!("../../../schemas/session-record.schema.json")),
     ("results-analysis.schema.json", include_str!("../../../schemas/results-analysis.schema.json")),
+    ("source.schema.json", include_str!("../../../schemas/source.schema.json")),
 ];
 
 /// Result of a [`seed_to`] call. Same shape as

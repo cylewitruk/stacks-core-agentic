@@ -1213,7 +1213,7 @@ mod tests {
     use crate::models::analyze::Analysis;
     use crate::models::common::{
         BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, LensDispositionEntry,
-        LensDispositionStatus, Risk, SchemaVersionV3, SelectionLens,
+        LensDispositionStatus, Risk, SchemaVersionV3, SchemaVersionV4, SelectionLens,
     };
     use crate::models::summary::{
         ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
@@ -1354,7 +1354,7 @@ mod tests {
 
     fn fixture_summary() -> Summary {
         Summary {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             session_id: "20260511-063216".into(),
             baseline_run_id: 4,
             baseline_rerun_id: 4,
@@ -1401,6 +1401,10 @@ mod tests {
                 reason: Some("Write budget bound to deployed contract".into()),
             }],
             next_targets_hint: Some("1 PR(s) + 1 PoC PR(s) + 0 issue(s) of 2 target(s)".into()),
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
         }
     }
 

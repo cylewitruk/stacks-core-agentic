@@ -72,19 +72,40 @@ prompt_overrides_dir = ".sbagent/prompts"
 
 
 # ---------------------------------------------------------------------------
-# [stacks_core] — the stacks-core checkout that ships `stacks-bench`.
+# [source] — source repo to optimize.
 # ---------------------------------------------------------------------------
+# Per-session source clones are materialized at session start from this
+# stanza into a bare object cache under `<agent_workspace_root>/cache/`,
+# then into a per-session checkout under
+# `<agent_workspace_root>/sessions/<id>/repos/<cache_id>/` (`sbagent
+# source cache-id` prints the id). See `docs/git-topology.md`.
+#
+# IMPORTANT: when `--publish-accepted-prs` is in play, `[source].url`
+# MUST be a writable fork (the bot's PAT in `publish.token_file` must
+# have Contents:write on it). Phase 5 pushes `agentic/<id>/<target>`
+# branches via `git push origin <branch>` in per-target clones, whose
+# `origin` resolves to `[source].url` — there is no separate publish
+# remote. The fork's `[source].branch` must stay in sync with the
+# branch the bot's PRs target (`publish.base_branch`); operators keep
+# this current out-of-band via `git fetch upstream && git push origin`.
 
-[stacks_core]
-# Required. The operator-provided stacks-core checkout. Typical layout:
-# `<operator>/repos/stacks-core/`. For a sibling clone during dev:
-# `/absolute/path/to/stacks-bench-agentic-operator/repos/stacks-core`.
-base = "repos/stacks-core"
+[source]
+# Required. Clone URL for the source repo (HTTPS or SSH). For publish
+# sessions, point at the bot's writable fork, e.g.
+#   https://github.com/<bot>/stacks-core.git
+# For read-only experimentation (no `--publish-accepted-prs`), the
+# canonical upstream works too.
+url = "https://github.com/<bot>/stacks-core.git"
 
-# Clone URL for the stacks-core submodule. Required by `sbagent init`
-# when bootstrapping a fresh operator dir. Once `base` exists locally
-# this field is unused at runtime.
-# base_repo_url = "https://github.com/stacks-bench-bot/stacks-core.git"
+# Required. Branch sessions fetch + clone. Should match
+# `publish.base_branch` for publish sessions.
+branch = "feat/stacks-bench"
+
+# Optional. Stable id for the bare cache dir name. When unset, sbagent
+# derives a deterministic `<canonical-url-slug>-<sha256-prefix>` id at
+# runtime. Set this only when you want a human-readable cache path.
+# Must match `^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$`.
+# id = "stacks-core-upstream"
 
 
 # ---------------------------------------------------------------------------
@@ -297,15 +318,16 @@ branch_prefix = "agentic"
 # author_name  = "stacks-bench-bot"
 # author_email = "283996447+stacks-bench-bot@users.noreply.github.com"
 
-# PAT-via-extraheader auth used by `init --push` / `--seed-from`.
-# Defaults below match GitHub fine-grained PATs; override per forge:
+# PAT-via-extraheader auth used by `init --push` and by every
+# agent-side push (Phase 5 publish). Defaults below match GitHub
+# fine-grained PATs; override per forge:
 #   - GitHub (any PAT):           auth_username = "x-access-token"  (default)
 #   - GitLab PATs / project tokens: auth_username = "oauth2"
 #   - Bitbucket Cloud app pwds:   auth_username = "<bitbucket-username>"
 #   - Self-hosted Gitea/Forgejo:  auth_username = "git" or bot account
 #
-# `auth_url_prefix` is also the validation gate for `--push` origin and
-# `--seed-from` base_repo_url. Trailing slash normalized internally.
+# `auth_url_prefix` is also the validation gate for `--push` origin.
+# Trailing slash normalized internally.
 # Empty string ("") is expert mode (token attached unqualified — only
 # safe when every HTTPS remote git contacts is audited).
 # auth_username   = "x-access-token"

@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
-use crate::models::common::{DeliveryMode, KEBAB_PATTERN, SchemaVersionV1};
+use crate::models::common::{DeliveryMode, KEBAB_PATTERN, SchemaVersionV2};
 
 /// Discriminator for ledger lines. Single variant today; left open so
 /// future event kinds (e.g. post-completion observations from a future
@@ -93,8 +93,11 @@ pub enum TargetStatusStage {
 pub struct SessionRecord {
     /// Discriminator — currently always `session_completed`.
     pub kind: SessionRecordKind,
-    /// Constant: 1.
-    pub schema_version: SchemaVersionV1,
+    /// Constant: 2 (v3 iteration bump — adds the `source_*` fields).
+    /// Records emitted before the v3 cutover carry `1` and lack source
+    /// fields; [`SessionRecord::from_ledger_line`] is the
+    /// backwards-compat reader.
+    pub schema_version: SchemaVersionV2,
     /// Session id (e.g. `20260518-190321-nextest-flags-smoke`).
     pub id: String,
     /// Name of the write-once branch holding the full bulk:
@@ -155,6 +158,65 @@ pub struct SessionRecord {
     pub phase_durations_secs: BTreeMap<String, f64>,
     /// One row per target the session touched. Ordered by target id.
     pub targets: Vec<TargetRecord>,
+    /// Source-provenance fields copied from
+    /// `<session>/results/source.json` at archive time. Populated only
+    /// on post-v3-cutover sessions; absent on legacy paths.
+    /// [`SessionRecord::from_ledger_line`] promotes v1 records (which
+    /// lack these fields entirely) to `None` for compatibility. See
+    /// [`crate::models::source::SourceJson`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// See [`SessionRecord::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_branch: Option<String>,
+    /// See [`SessionRecord::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha: Option<String>,
+    /// See [`SessionRecord::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fetched_at: Option<String>,
+}
+
+impl SessionRecord {
+    /// Read one line of `sessions.jsonl` in a backwards-compatible
+    /// way: accept both pre-v3-cutover (`schema_version=1`, no
+    /// `source_*` fields) and post-v3 (`schema_version=2`) records.
+    /// v1 lines are promoted in-place to the v2 in-memory shape with
+    /// `source_*` fields set to `None`.
+    ///
+    /// Use this on every `sessions.jsonl` read site to avoid silently
+    /// skipping legacy records (the unparseable-line fall-through in
+    /// callers like `ledger_contains_id` and `read_archived_ids`).
+    pub fn from_ledger_line(line: &str) -> Result<Self> {
+        let mut value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| anyhow::anyhow!("ledger line is not valid JSON: {e}"))?;
+        let v = value
+            .get("schema_version")
+            .and_then(|s| s.as_u64())
+            .unwrap_or(1);
+        match v {
+            1 => {
+                // Bump in-place so the v2 deserializer accepts the
+                // shape. v1 records have no `source_*` fields; the v2
+                // struct's `#[serde(default)]` on those Options fills
+                // them in as `None`.
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("schema_version".to_owned(), serde_json::json!(2));
+                }
+                let rec: Self = serde_json::from_value(value)
+                    .map_err(|e| anyhow::anyhow!("v1 ledger line failed v2 promotion: {e}"))?;
+                Ok(rec)
+            }
+            2 => {
+                let rec: Self = serde_json::from_value(value)
+                    .map_err(|e| anyhow::anyhow!("v2 ledger line: {e}"))?;
+                Ok(rec)
+            }
+            other => {
+                bail!("unsupported sessions.jsonl schema_version {other}; expected 1 or 2");
+            }
+        }
+    }
 }
 
 /// Range arguments passed to `stacks-bench bench run` (baseline + every
@@ -345,7 +407,7 @@ mod tests {
     fn record_round_trips_through_json() {
         let r = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: SchemaVersionV1,
+            schema_version: SchemaVersionV2,
             id: "20260518-190321-test".to_owned(),
             artifact_branch: "session/20260518-190321-test".to_owned(),
             artifact_sha: "deadbeef".repeat(5),
@@ -373,6 +435,10 @@ mod tests {
                 ("optimize".to_owned(), 1200.0),
             ]),
             targets: vec![make_target("ex-target", TargetStatus::Accepted, None)],
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: SessionRecord = serde_json::from_str(&s).unwrap();
@@ -383,5 +449,97 @@ mod tests {
         // None fields round-trip as absent, not null.
         assert!(!s.contains("\"failure_phase\""));
         assert!(!s.contains("\"failure_reason\""));
+        assert!(!s.contains("\"source_url\""));
+    }
+
+    /// v3 Phase 2 — backwards-compat reader accepts both pre-cutover
+    /// v1 (no source fields) and post-cutover v2 records.
+    #[test]
+    fn from_ledger_line_accepts_legacy_v1_records() {
+        // Hand-rolled v1 line (no source_* fields, schema_version=1).
+        let v1 = r#"{
+            "kind":"session_completed","schema_version":1,
+            "id":"20260518-190321-legacy",
+            "artifact_branch":"session/20260518-190321-legacy",
+            "artifact_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "started_at":"2026-05-18T19:03:21Z",
+            "finished_at":"2026-05-18T19:11:42Z",
+            "status":"succeeded",
+            "sbagent_version":"0.1.0",
+            "range":{"network":"mainnet"},
+            "baseline_run_ids":[],
+            "phase_durations_secs":{},
+            "targets":[]
+        }"#;
+        let rec = SessionRecord::from_ledger_line(v1).expect("v1 line should promote to v2");
+        assert_eq!(rec.id, "20260518-190321-legacy");
+        // v1 records get all source_* fields as None.
+        assert!(rec.source_url.is_none());
+        assert!(rec.source_branch.is_none());
+        assert!(rec.source_sha.is_none());
+        assert!(
+            rec.source_fetched_at
+                .is_none()
+        );
+        // schema_version is now V2 in-memory (the on-disk record stays
+        // v1; `from_ledger_line` doesn't mutate the file).
+        assert_eq!(rec.schema_version.get(), 2);
+    }
+
+    #[test]
+    fn from_ledger_line_accepts_native_v2_records() {
+        let v2 = r#"{
+            "kind":"session_completed","schema_version":2,
+            "id":"20260607-104400",
+            "artifact_branch":"session/20260607-104400",
+            "artifact_sha":"abcabcabcabcabcabcabcabcabcabcabcabcabca",
+            "started_at":"2026-06-07T10:44:00Z",
+            "finished_at":"2026-06-07T11:00:00Z",
+            "status":"succeeded",
+            "sbagent_version":"0.2.0",
+            "range":{"network":"mainnet"},
+            "baseline_run_ids":[42],
+            "phase_durations_secs":{"baseline":300.0},
+            "targets":[],
+            "source_url":"https://github.com/stacks-network/stacks-core.git",
+            "source_branch":"feat/stacks-bench",
+            "source_sha":"0ad33704c259da4102b5f195617760003ac89c18",
+            "source_fetched_at":"2026-06-07T10:43:59Z"
+        }"#;
+        let rec = SessionRecord::from_ledger_line(v2).expect("v2 line should parse");
+        assert_eq!(rec.id, "20260607-104400");
+        assert_eq!(
+            rec.source_url.as_deref(),
+            Some("https://github.com/stacks-network/stacks-core.git"),
+        );
+        assert_eq!(rec.source_branch.as_deref(), Some("feat/stacks-bench"));
+        assert_eq!(rec.source_sha.as_deref(), Some("0ad33704c259da4102b5f195617760003ac89c18"),);
+        assert_eq!(
+            rec.source_fetched_at
+                .as_deref(),
+            Some("2026-06-07T10:43:59Z")
+        );
+    }
+
+    #[test]
+    fn from_ledger_line_rejects_unsupported_schema_version() {
+        let v99 = r#"{
+            "kind":"session_completed","schema_version":99,
+            "id":"x","artifact_branch":"x","artifact_sha":"x",
+            "started_at":"x","finished_at":"x","status":"succeeded",
+            "sbagent_version":"x","range":{"network":"mainnet"},
+            "baseline_run_ids":[],"phase_durations_secs":{},"targets":[]
+        }"#;
+        let err = SessionRecord::from_ledger_line(v99).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("unsupported sessions.jsonl schema_version 99"),
+            "{err:#}",
+        );
+    }
+
+    #[test]
+    fn from_ledger_line_rejects_garbage() {
+        let err = SessionRecord::from_ledger_line("not json").unwrap_err();
+        assert!(format!("{err:#}").contains("not valid JSON"), "{err:#}");
     }
 }

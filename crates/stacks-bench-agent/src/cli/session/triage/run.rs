@@ -1,12 +1,13 @@
 //! `sbagent session triage run` — port of `scripts/run-triage.sh`.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
 use crate::harnesses::codex::CodexHarness;
 use crate::session::SessionLayout;
 use crate::session::triage::{self, Inputs};
+use crate::source::read_session_source;
 use crate::types::SessionId;
 
 /// Args for `sbagent session triage run`.
@@ -34,12 +35,22 @@ pub async fn run(args: TriageRunArgs, ctx: &CliContext, session_id: &SessionId) 
                 .to_owned()
         });
 
+    // v3 Phase 3: standalone triage reads source.json (must already
+    // exist from `session run`) to derive the per-session source
+    // checkout that the agent prompt + add_dirs reference.
+    let workspace_root = ctx
+        .layout
+        .require_agent_workspace_root()?;
+    let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
+        .context("v3 Phase 3: per-session source.json required")?;
+
     let outputs = triage::run(&Inputs {
         layout: &layout,
         framework: &ctx.layout,
         settings: &ctx.settings,
         axis_weights: &axis_weights,
         harness: &harness,
+        source_checkout: &resolved.session_checkout,
     })
     .await?;
 

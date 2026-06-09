@@ -20,8 +20,8 @@
         }
       ]
     },
-    "SchemaVersionV1": {
-      "const": 1,
+    "SchemaVersionV2": {
+      "const": 2,
       "type": "integer"
     },
     "SessionRange": {
@@ -361,8 +361,36 @@
       "type": "string"
     },
     "schema_version": {
-      "$ref": "#/$defs/SchemaVersionV1",
-      "description": "Constant: 1."
+      "$ref": "#/$defs/SchemaVersionV2",
+      "description": "Constant: 2 (v3 iteration bump — adds the `source_*` fields).\nRecords emitted before the v3 cutover carry `1` and lack source\nfields; [`SessionRecord::from_ledger_line`] is the\nbackwards-compat reader."
+    },
+    "source_branch": {
+      "description": "See [`SessionRecord::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_fetched_at": {
+      "description": "See [`SessionRecord::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_sha": {
+      "description": "See [`SessionRecord::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "description": "Source-provenance fields copied from\n`<session>/results/source.json` at archive time. Populated only\non post-v3-cutover sessions; absent on legacy paths.\n[`SessionRecord::from_ledger_line`] promotes v1 records (which\nlack these fields entirely) to `None` for compatibility. See\n[`crate::models::source::SourceJson`].",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "stacks_core_base_sha": {
       "description": "HEAD sha of the stacks-core base checkout at session start.\n`None` only if the session ran without a configured base\n(which today is a configuration error for any phase past\nbaseline, but the schema allows it for future read-only\nsession kinds).",

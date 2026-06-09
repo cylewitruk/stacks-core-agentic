@@ -260,11 +260,6 @@ fn stage_framework_and_session(
             .path()
             .join("benchmark.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(
-            framework
-                .join("repos")
-                .join("stacks-core"),
-        ),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -428,6 +423,7 @@ async fn optimizers_routes_three_delivery_modes() {
         harness: harness.clone(),
         git: Arc::new(FakeGit),
         resume: false,
+        source_checkout: std::path::PathBuf::from("/tmp/test-source-checkout"),
     })
     .await
     .expect("optimizers::run");
@@ -520,6 +516,7 @@ async fn optimizers_aborts_clear_implementation_marker() {
         harness,
         git: Arc::new(FakeGit),
         resume: false,
+        source_checkout: std::path::PathBuf::from("/tmp/test-source-checkout"),
     })
     .await
     .unwrap();

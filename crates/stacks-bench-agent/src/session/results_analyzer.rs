@@ -48,6 +48,11 @@ pub struct Inputs<H: AgentHarness + 'static> {
     pub parallel: Option<usize>,
     /// Agent harness, shared across spawned tasks via `Arc`.
     pub harness: Arc<H>,
+    /// **v3 Phase 3 cutover**: per-session source checkout passed to
+    /// every results-analyzer prompt as `base` and granted to Codex
+    /// via `add_dirs`. Replaces the pre-cutover
+    /// `framework.require_base()`.
+    pub source_checkout: std::path::PathBuf,
 }
 
 /// Per-target outcome of [`run`].
@@ -153,6 +158,7 @@ where
             settings: inputs.settings.clone(),
             sem: semaphore.clone(),
             harness: inputs.harness.clone(),
+            source_checkout: inputs.source_checkout.clone(),
         };
         let target_id = task_inputs.target.id.clone();
         set.spawn(async move {
@@ -224,6 +230,9 @@ struct TaskInputs<H: AgentHarness + 'static> {
     settings: Settings,
     sem: Arc<Semaphore>,
     harness: Arc<H>,
+    /// v3 Phase 3 cutover: per-session source checkout (carried from
+    /// [`Inputs::source_checkout`]).
+    source_checkout: std::path::PathBuf,
 }
 
 /// Eligibility verdict for one target. Eligible targets get an agent
@@ -322,9 +331,10 @@ async fn run_one<H: AgentHarness + 'static>(state: &TaskInputs<H>) -> Result<Res
             output_dir: out_dir
                 .to_string_lossy()
                 .into_owned(),
+            // v3 Phase 3 cutover: prompt `base` = per-session source
+            // checkout.
             base: state
-                .framework
-                .require_base()?
+                .source_checkout
                 .to_string_lossy()
                 .into_owned(),
             stacks_bench_data_dir: state
@@ -406,10 +416,9 @@ async fn run_one<H: AgentHarness + 'static>(state: &TaskInputs<H>) -> Result<Res
         state
             .layout
             .experiment_dir(target_id),
-        state
-            .framework
-            .require_base()?
-            .to_path_buf(),
+        // v3 Phase 3 cutover: grant the per-session source checkout,
+        // not the operator's submodule.
+        state.source_checkout.clone(),
         state
             .framework
             .stacks_bench_data_dir

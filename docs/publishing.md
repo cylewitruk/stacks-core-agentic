@@ -150,14 +150,26 @@ Probes (all in-process):
 - `octocrab.repos(owner, repo).get()` succeeds against
   `publish.base_repo` with that token (catches a wrong repo or an
   unauthorized token before any PR is opened).
-- `git -C <base> remote get-url <publish.remote>` succeeds and
-  resolves to a github.com URL (catches a missing/typoed remote
-  before Phase 5 attempts to push).
-- `git -C <base> ls-remote <publish.remote>` succeeds with
-  `GIT_TERMINAL_PROMPT=0` and `GIT_SSH_COMMAND="ssh -oBatchMode=yes"`
-  — validates the SSH key / HTTPS credentials the eventual `git push`
-  will use, without prompting (a missing credential, unknown SSH
-  host, or passphrase-protected key fails loudly instead of hanging).
+- `publish.head_owner` is set explicitly, AND its value matches the
+  owner segment of `[source].url`. Per-session source checkouts
+  rewrite `origin` to `[source].url` at materialization; per-target
+  clones inherit only that one remote; Phase 5 runs `git push origin
+  <branch>`. So for publish sessions `[source].url` MUST be the
+  writable bot fork — `https://github.com/<publish.head_owner>/...`.
+  The preflight emits a `Fail` when the URL's owner segment doesn't
+  match `publish.head_owner` (defense in depth against an operator
+  configuring the canonical upstream as `[source].url` and silently
+  pushing to the wrong place). Operators on the legacy pre-v3 layout
+  (operator submodule + `[stacks_core]` config) had `head_owner`
+  derived from the submodule's `git remote get-url` output and a
+  separate `bot` remote replicated into per-target clones; the v3
+  cutover removed both, in favor of the single-`origin` model.
+  `publish.remote` is therefore constrained to `"origin"` (the
+  default); preflight emits a `Fail` for any other value because no
+  other remote exists in the per-target clone for Phase 5 to push
+  to. A future tunable hook may let operators install an additional
+  remote URL into per-target clones; until that ships, non-`origin`
+  values are unsupported.
 
 `sbagent session run --publish-accepted-prs` runs the same probes
 upfront, so a misconfigured Phase 5 fails before Phases 0-4 burn

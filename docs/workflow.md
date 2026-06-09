@@ -41,7 +41,7 @@ benchmark, and publish artifacts for that target.
 
 | Phase | Command | Reads | Writes (in `<session>/results`) |
 | --- | --- | --- | --- |
-| 0a | (runs at session start; no standalone command) | `repos/stacks-core` HEAD | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent baseline / calibration / candidate invocation uses this archived path; no silent rebuild fallback. |
+| 0a | (runs at session start; no standalone command) | per-session source checkout at `<workspace>/sessions/<id>/repos/<cache_id>/` (materialized from `[source]` + the shared bare cache), HEAD pinned in `results/source.json` | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent baseline / calibration / candidate invocation uses this archived path; no silent rebuild fallback. |
 | 0b | `sbagent session baseline run` OR `sbagent session baseline import` | `config.toml` (range fields), or existing run id(s) in stacks-bench DB | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}`. Single `bench run` invocation; rerun id aliased to run id; `noise-floor-pct` sources from `triage.single_run_noise_floor_pct` (default 1%). |
 | 1 | `sbagent session triage run` | baseline artifacts | `triage/{candidates.json, candidates.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id, queries/, drilldowns/}` |
 | 1.5 | `sbagent session analysis run` | `triage/candidates.json` | `analysis/<family-id>/{analysis.json, analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
@@ -164,9 +164,11 @@ The first session should:
    dir (indexed chainstate persists across sessions).
 3. Set benchmark parameters explicitly on the CLI (or in
    `config.toml`); reuse them for the baseline + every experiment.
-4. Archive the baseline `stacks-bench` binary built from
-   `repos/stacks-core` HEAD → `baseline/bin/{stacks-bench, manifest.json}`
-   (Phase 0a).
+4. Materialize the per-session source checkout from `[source]` (the
+   shared bare cache makes this fast) → write `results/source.json`
+   pinning the resolved SHA. Archive the baseline `stacks-bench`
+   binary built from that checkout → `baseline/bin/{stacks-bench,
+   manifest.json}` (Phase 0a).
 5. Run the baseline benchmark (single invocation; rerun id aliased)
    (Phase 0b).
 6. Run the triage agent → `triage/candidates.json` (Phase 1).

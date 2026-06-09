@@ -169,11 +169,6 @@ fn stage_framework(tmp: &tempfile::TempDir) -> Layout {
             .path()
             .join("benchmark.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(
-            framework
-                .join("repos")
-                .join("stacks-core"),
-        ),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -210,12 +205,14 @@ async fn triage_renders_prompt_and_records_candidates_count() {
         },
         ..Settings::default()
     };
+    let test_source_checkout = std::path::PathBuf::from("/tmp/test-source-checkout");
     let outputs = triage::run(&Inputs {
         layout: &session,
         framework: &layout,
         settings: &settings,
         axis_weights: "0.4,0.4,0.2",
         harness: &harness,
+        source_checkout: &test_source_checkout,
     })
     .await
     .expect("triage::run");
@@ -249,15 +246,13 @@ async fn triage_renders_prompt_and_records_candidates_count() {
             .any(|p| p == &layout.stacks_bench_data_dir),
         "stacks_bench_data_dir must be in add_dirs; got: {add_dirs:?}",
     );
-    let layout_base = layout
-        .base
-        .as_ref()
-        .expect("test layout has base set");
+    // v3 Phase 3 cutover: triage now grants the per-session source
+    // checkout (not the operator submodule) via add_dirs.
     assert!(
         add_dirs
             .iter()
-            .any(|p| p == layout_base),
-        "base must be in add_dirs; got: {add_dirs:?}",
+            .any(|p| p == &test_source_checkout),
+        "source_checkout must be in add_dirs; got: {add_dirs:?}",
     );
     assert!(
         add_dirs
@@ -345,12 +340,14 @@ async fn triage_fails_when_candidates_missing() {
         },
         ..Settings::default()
     };
+    let test_source_checkout = std::path::PathBuf::from("/tmp/test-source-checkout");
     let err = triage::run(&Inputs {
         layout: &session,
         framework: &layout,
         settings: &settings,
         axis_weights: "0.4,0.4,0.2",
         harness: &EmptyHarness,
+        source_checkout: &test_source_checkout,
     })
     .await
     .expect_err("expected missing-candidates error");

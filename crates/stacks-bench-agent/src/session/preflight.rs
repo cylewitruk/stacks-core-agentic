@@ -69,9 +69,84 @@ pub fn collect_findings(ctx: &CliContext) -> Result<Vec<Finding>> {
     let mut findings = Vec::new();
     check_installed_binary_drift(ctx, &mut findings)?;
     check_critical_prompt_drift(ctx, &mut findings)?;
-    check_submodule_reachable(ctx, &mut findings)?;
     check_free_disk(ctx, &mut findings, &Fs4Disk)?;
+    check_source_config(ctx, &mut findings);
     Ok(findings)
+}
+
+/// v3 Phase 3 cutover: every `session run` materializes a per-session
+/// source checkout under
+/// `<agent_workspace_root>/sessions/<id>/repos/<cache_id>/`. That requires
+/// three config invariants:
+///
+/// 1. `[source].url` must be set.
+/// 2. `[source].branch` must be set.
+/// 3. `[source].id` (when set) must validate against the slug regex — settings
+///    parsing already enforces this, but preflight re-validates as
+///    defense-in-depth so a runtime-constructed settings value can't slip past.
+/// 4. `layout.agent_workspace_root` must be set (the cache + session checkout
+///    both live under it).
+///
+/// All four are `Fail` severity — without them, session start cannot
+/// materialize the source checkout and every downstream phase that
+/// previously consumed `<operator>/repos/<base>/` would crash.
+/// Remediation pointers cite `docs/setup.md`'s migration recipe.
+pub fn check_source_config(ctx: &CliContext, findings: &mut Vec<Finding>) {
+    const CHECK: &str = "source-config";
+    let source = &ctx.settings.source;
+
+    if source.url.is_none() {
+        findings.push(Finding {
+            severity: Severity::Fail,
+            check: CHECK,
+            message: "`[source].url` is not set; required post-v3-cutover for the per-session \
+                      source checkout"
+                .to_owned(),
+            remediation: "add a `[source]` stanza to config.toml with `url = \"...\"` and `branch \
+                          = \"...\"` — see docs/setup.md for the migration recipe"
+                .to_owned(),
+        });
+    }
+    if source.branch.is_none() {
+        findings.push(Finding {
+            severity: Severity::Fail,
+            check: CHECK,
+            message: "`[source].branch` is not set; required post-v3-cutover".to_owned(),
+            remediation: "set `branch = \"...\"` under `[source]` in config.toml — see \
+                          docs/setup.md"
+                .to_owned(),
+        });
+    }
+    if let Some(id) = source.id.as_deref()
+        && let Err(reason) = crate::settings::validate_source_id(id)
+    {
+        findings.push(Finding {
+            severity: Severity::Fail,
+            check: CHECK,
+            message: format!("`[source].id` (`{id}`) failed validation: {reason}"),
+            remediation: "set `id` to a lowercase ASCII slug matching \
+                          `^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$`, or omit `id` to let sbagent \
+                          derive one from `source.url`"
+                .to_owned(),
+        });
+    }
+    if ctx
+        .settings
+        .layout
+        .agent_workspace_root
+        .is_none()
+    {
+        findings.push(Finding {
+            severity: Severity::Fail,
+            check: CHECK,
+            message: "`layout.agent_workspace_root` is not set; the v3 per-session source \
+                      checkout + bare cache both live under it"
+                .to_owned(),
+            remediation: "set `agent_workspace_root` under `[layout]` in config.toml to a path \
+                          OUTSIDE the operator repo (e.g. `/private/tmp/sbagent-workspaces`)"
+                .to_owned(),
+        });
+    }
 }
 
 /// Backing source for free-disk lookups. Real runs use [`Fs4Disk`];
@@ -361,80 +436,6 @@ fn check_critical_prompt_drift(ctx: &CliContext, findings: &mut Vec<Finding>) ->
     Ok(())
 }
 
-/// Verify the operator's `repos/<base>` submodule HEAD is reachable
-/// from the local `refs/remotes/origin/<publish_base_branch>` ref.
-/// No network fetch — catches "operator checked out a non-publish
-/// branch by accident" and "submodule moved past the local
-/// origin-tracking ref"; does NOT catch "operator hasn't fetched
-/// recently." A future strict-network variant could add the fetch.
-fn check_submodule_reachable(ctx: &CliContext, findings: &mut Vec<Finding>) -> Result<()> {
-    const CHECK: &str = "submodule-reachability";
-
-    // Read the resolved `base` off `ctx.layout`, not `ctx.settings` —
-    // Layout already ran the canonical `absolutize(...)` step that the
-    // session phases use, so this preflight validates exactly the
-    // checkout the optimizer / Phase 0a / Phase 1.8 will read from.
-    // Re-resolving from `ctx.settings.base` here would risk validating
-    // a different path than the phases (e.g. `<operator>/repos/...`
-    // vs `<cwd>/repos/...`).
-    let base_abs = match ctx.layout.base.as_deref() {
-        Some(b) => b,
-        None => return Ok(()),
-    };
-    let branch = match ctx
-        .settings
-        .publish
-        .base_branch
-        .as_deref()
-    {
-        Some(b) => b,
-        None => return Ok(()),
-    };
-    if !base_abs.exists() {
-        return Ok(()); // operator hasn't bootstrapped yet — out of scope here
-    }
-    let head_sha = match crate::git::rev_parse_head(base_abs) {
-        Ok(s) => s,
-        Err(e) => {
-            findings.push(Finding {
-                severity: Severity::Warn,
-                check: CHECK,
-                message: format!(
-                    "could not resolve submodule HEAD at {}: {e:#}",
-                    base_abs.display()
-                ),
-                remediation: "ensure repos/<base> is a valid git checkout".to_owned(),
-            });
-            return Ok(());
-        }
-    };
-    let origin_ref = format!("refs/remotes/origin/{branch}");
-    if !is_reachable_from(base_abs, &head_sha, &origin_ref) {
-        findings.push(Finding {
-            severity: Severity::Fail,
-            check: CHECK,
-            message: format!(
-                "submodule HEAD {head_sha} at {} is not reachable from local {origin_ref} — the \
-                 per-target clones the optimizer creates will branch off the wrong source",
-                base_abs.display(),
-            ),
-            remediation: format!(
-                "in {}: `git fetch origin {branch} && git checkout origin/{branch}` (or `git \
-                 reset --hard origin/{branch}` if you have no local work to preserve)",
-                base_abs.display(),
-            ),
-        });
-    }
-    Ok(())
-}
-
-/// `git merge-base --is-ancestor <sha> <ref>` exits 0 if `sha` is on
-/// `ref`'s history, non-zero otherwise. We use it for the
-/// reachability check above.
-fn is_reachable_from(dir: &Path, sha: &str, target_ref: &str) -> bool {
-    crate::git::run_git_check(dir, &["merge-base", "--is-ancestor", sha, target_ref])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,5 +649,149 @@ mod tests {
         let mut findings = Vec::new();
         check_free_disk(&ctx, &mut findings, &StubDisk(0)).unwrap();
         assert!(findings.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // v3 Phase 3: check_source_config — settings-side preflight gate.
+    // ─────────────────────────────────────────────────────────────────
+
+    use crate::settings::SourceSettings;
+
+    fn ctx_with_source(workspace: Option<&Path>, source: SourceSettings) -> CliContext {
+        let settings = Settings {
+            layout: LayoutSettings {
+                agent_workspace_root: workspace.map(|p| p.to_path_buf()),
+                ..LayoutSettings::default()
+            },
+            source,
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        CliContext { settings, layout }
+    }
+
+    #[test]
+    fn check_source_config_passes_when_url_branch_and_workspace_all_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_source(
+            Some(tmp.path()),
+            SourceSettings {
+                url: Some("https://example.com/owner/repo.git".to_owned()),
+                branch: Some("main".to_owned()),
+                id: Some("test-cache".to_owned()),
+            },
+        );
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert!(findings.is_empty(), "valid config → no findings: {findings:?}");
+    }
+
+    #[test]
+    fn check_source_config_fails_when_url_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_source(
+            Some(tmp.path()),
+            SourceSettings {
+                url: None,
+                branch: Some("main".to_owned()),
+                id: None,
+            },
+        );
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Fail);
+        assert!(
+            findings[0]
+                .message
+                .contains("`[source].url`")
+        );
+        assert!(
+            findings[0]
+                .remediation
+                .contains("docs/setup.md"),
+            "remediation should point at the migration recipe",
+        );
+    }
+
+    #[test]
+    fn check_source_config_fails_when_branch_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_source(
+            Some(tmp.path()),
+            SourceSettings {
+                url: Some("https://example.com/x.git".to_owned()),
+                branch: None,
+                id: None,
+            },
+        );
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert!(
+            findings.iter().any(|f| f
+                .message
+                .contains("`[source].branch`")),
+            "{findings:?}",
+        );
+    }
+
+    #[test]
+    fn check_source_config_fails_on_invalid_source_id_defense_in_depth() {
+        // Settings parsing already rejects bad slugs, but preflight
+        // re-validates so a runtime-constructed Settings value can't
+        // slip past.
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_source(
+            Some(tmp.path()),
+            SourceSettings {
+                url: Some("https://example.com/x.git".to_owned()),
+                branch: Some("main".to_owned()),
+                id: Some("trailing-".to_owned()), // bad: trailing hyphen
+            },
+        );
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert!(
+            findings.iter().any(|f| f
+                .message
+                .contains("`[source].id`")
+                && f.message
+                    .contains("trailing-")),
+            "{findings:?}",
+        );
+    }
+
+    #[test]
+    fn check_source_config_fails_when_agent_workspace_root_unset() {
+        let ctx = ctx_with_source(
+            None,
+            SourceSettings {
+                url: Some("https://example.com/x.git".to_owned()),
+                branch: Some("main".to_owned()),
+                id: None,
+            },
+        );
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert!(
+            findings.iter().any(|f| f
+                .message
+                .contains("agent_workspace_root")),
+            "{findings:?}",
+        );
+    }
+
+    #[test]
+    fn check_source_config_reports_multiple_failures_in_one_pass() {
+        // No url, no branch, no workspace → 3 findings.
+        let ctx = ctx_with_source(None, SourceSettings::default());
+        let mut findings = Vec::new();
+        check_source_config(&ctx, &mut findings);
+        assert_eq!(findings.len(), 3, "{findings:?}");
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.severity == Severity::Fail)
+        );
     }
 }

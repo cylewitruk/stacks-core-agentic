@@ -220,8 +220,6 @@ fn stage(tmp: &tempfile::TempDir, id: &SessionId) -> (Layout, SessionLayout) {
     let framework = tmp.path().join("framework");
     std::fs::create_dir_all(framework.join("prompts")).unwrap();
     std::fs::create_dir_all(framework.join("schemas")).unwrap();
-    let base = tmp.path().join("base");
-    std::fs::create_dir_all(&base).unwrap();
     let layout = Layout {
         framework: Some(FrameworkDir::new(framework.clone())),
         schemas_dir: framework.join("schemas"),
@@ -232,7 +230,6 @@ fn stage(tmp: &tempfile::TempDir, id: &SessionId) -> (Layout, SessionLayout) {
         stacks_bench_data_dir: tmp.path().join("data"),
         bench_lock: tmp.path().join("bench.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -525,8 +522,6 @@ async fn push_resolves_checkouts_through_agent_workspace_root_when_set() {
     let framework = tmp.path().join("framework");
     std::fs::create_dir_all(framework.join("prompts")).unwrap();
     std::fs::create_dir_all(framework.join("schemas")).unwrap();
-    let base = tmp.path().join("base");
-    std::fs::create_dir_all(&base).unwrap();
     let layout = Layout {
         framework: Some(FrameworkDir::new(framework.clone())),
         schemas_dir: framework.join("schemas"),
@@ -537,7 +532,6 @@ async fn push_resolves_checkouts_through_agent_workspace_root_when_set() {
         stacks_bench_data_dir: tmp.path().join("data"),
         bench_lock: tmp.path().join("bench.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(base),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: Some(workspace_root.clone()),
         operator_repo_root: None,

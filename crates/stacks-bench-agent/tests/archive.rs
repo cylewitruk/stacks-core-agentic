@@ -75,7 +75,6 @@ fn build_layout(operator: &Path, workspace: &Path) -> Layout {
         stacks_bench_data_dir: operator.join("data"),
         bench_lock: operator.join(".lock-bench"),
         test_lock: operator.join(".lock-test"),
-        base: None,
         stacks_bench_shadow_dir: None,
         agent_workspace_root: Some(workspace.to_path_buf()),
         operator_repo_root: Some(operator.to_path_buf()),
@@ -132,7 +131,7 @@ fn archive_dry_run_creates_branch_and_ledger() {
     let v: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(v["id"], "20260518-190321-test");
     assert_eq!(v["kind"], "session_completed");
-    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["schema_version"], 2);
 }
 
 #[test]
@@ -309,7 +308,7 @@ fn archive_propagates_head_sha_into_target_record() {
         .join("finalize");
     std::fs::create_dir_all(&finalize_dir).unwrap();
     let summary = serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "session_id": id.as_str(),
         "baseline_run_id": 100,
         "baseline_rerun_id": 101,
@@ -548,7 +547,6 @@ fn archive_rejects_worktree_path_inside_operator() {
         stacks_bench_data_dir: operator.join("data"),
         bench_lock: operator.join(".lock-bench"),
         test_lock: operator.join(".lock-test"),
-        base: None,
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: Some(operator.to_path_buf()),
@@ -597,7 +595,6 @@ fn archive_requires_operator_repo_root() {
         stacks_bench_data_dir: operator.join("data"),
         bench_lock: operator.join(".lock-bench"),
         test_lock: operator.join(".lock-test"),
-        base: None,
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -613,5 +610,113 @@ fn archive_requires_operator_repo_root() {
     assert!(
         format!("{err:#}").contains("operator_repo_root"),
         "error must mention the missing setting: {err:#}"
+    );
+}
+
+/// v3 Phase 3 cutover: when `<session>/results/source.json` exists,
+/// archive copies its four fields into `SessionRecord.source_*` on
+/// the ledger line. The browsable URL + artifact_sha continue to
+/// thread through as before.
+#[test]
+fn archive_populates_session_record_source_fields_from_source_json() {
+    use stacks_bench_agent::models::common::SchemaVersionV1;
+    use stacks_bench_agent::models::source::SourceJson;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260607-104400-v3"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    let source = SourceJson {
+        schema_version: SchemaVersionV1,
+        url: "https://github.com/stacks-network/stacks-core.git".to_owned(),
+        branch: "feat/stacks-bench".to_owned(),
+        sha: "0ad33704c259da4102b5f195617760003ac89c18".to_owned(),
+        fetched_at: "2026-06-07T10:44:00Z".to_owned(),
+        cache_id: "stacks-core-feat-stacks-bench".to_owned(),
+    };
+    source
+        .write(&session_layout.source_json())
+        .expect("write source.json");
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260607-104400-v3\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    assert_eq!(v["schema_version"], 2);
+    assert_eq!(v["source_url"], "https://github.com/stacks-network/stacks-core.git",);
+    assert_eq!(v["source_branch"], "feat/stacks-bench");
+    assert_eq!(v["source_sha"], "0ad33704c259da4102b5f195617760003ac89c18");
+    assert_eq!(v["source_fetched_at"], "2026-06-07T10:44:00Z");
+}
+
+#[test]
+fn archive_leaves_session_record_source_fields_absent_when_source_json_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260607-104400-legacy"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // Confirm no source.json (pre-cutover shape).
+    assert!(
+        !session_layout
+            .source_json()
+            .exists()
+    );
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260607-104400-legacy\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    // Source fields absent from the JSON entirely (skip_serializing_if).
+    assert!(v.get("source_url").is_none(), "{v}");
+    assert!(
+        v.get("source_branch")
+            .is_none(),
+        "{v}"
+    );
+    assert!(v.get("source_sha").is_none(), "{v}");
+    assert!(
+        v.get("source_fetched_at")
+            .is_none(),
+        "{v}"
     );
 }

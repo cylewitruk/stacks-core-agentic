@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
 use crate::models::common::{
-    BreakageClass, DeliveryMode, KEBAB_PATTERN, LensDispositionEntry, SchemaVersionV3,
+    BreakageClass, DeliveryMode, KEBAB_PATTERN, LensDispositionEntry, SchemaVersionV4,
 };
 
 /// Top-level shape of `summary.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {
-    /// Constant: 3.
-    pub schema_version: SchemaVersionV3,
+    /// Constant: 4.
+    pub schema_version: SchemaVersionV4,
     /// Session this artifact belongs to.
     pub session_id: String,
     /// Baseline run id.
@@ -32,6 +32,21 @@ pub struct Summary {
     /// Operator-facing recommendation for the next session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_targets_hint: Option<String>,
+    /// Source-provenance fields copied from
+    /// `<session>/results/source.json` at finalize. Populated only on
+    /// post-v3-cutover sessions; absent on legacy paths. See
+    /// [`crate::models::source::SourceJson`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// See [`Summary::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_branch: Option<String>,
+    /// See [`Summary::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha: Option<String>,
+    /// See [`Summary::source_url`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fetched_at: Option<String>,
 }
 
 /// One experiment row.

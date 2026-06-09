@@ -7,8 +7,10 @@
 //!
 //! With Phase 5 now in-process (no sudo, no separate publisher user),
 //! the publish preflight checks the token file (location, readability),
-//! API access for `publish.base_repo`, and the git-side push path
-//! (remote configured, github.com URL, auth works via `ls-remote`).
+//! API access for `publish.base_repo`, and that `publish.head_owner`
+//! is set explicitly. `publish.remote` resolution moves to per-target
+//! worktree time (Phase 5), against worktrees that don't exist yet at
+//! preflight, so the legacy `<base>` git-side probes are gone.
 
 use anyhow::{Result, bail};
 
@@ -24,14 +26,7 @@ use crate::session::publish::{self, PublishConfig, StdGhClient};
 /// 3. `octocrab.repos(owner, repo).get()` succeeds against `publish.base_repo`
 ///    with the token (catches a wrong repo or an unauthorized token before any
 ///    PR is opened).
-/// 4. `git -C <base> remote get-url <publish.remote>` succeeds (catches a
-///    missing remote or a path-not-a-checkout case before Phase 5 attempts to
-///    push).
-/// 5. The remote URL parses to a github.com `owner/repo`.
-/// 6. `git -C <base> ls-remote <publish.remote>` succeeds — validates the SSH
-///    key / HTTPS credentials the eventual `git push` will use, so fresh VMs
-///    with a correctly-named remote but missing auth fail at preflight rather
-///    than late in Phase 5.
+/// 4. `publish.head_owner` is set.
 pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<String>) {
     let cfg = PublishConfig::from_settings(&ctx.settings);
 
@@ -87,55 +82,99 @@ pub async fn collect_publish_findings(ctx: &CliContext, findings: &mut Vec<Strin
         ));
     }
 
-    // git side: `publish push` shells `git push -u <remote> <branch>` and
-    // derives `head_owner` from `git remote get-url <remote>`. Probe
-    // both upfront so a fresh VM with a missing/typoed remote fails
-    // here, not after Phase 4.
-    let base = match ctx.layout.base.as_deref() {
-        Some(p) => p,
-        None => {
-            findings.push(
-                "`stacks_core.base` (stacks-core checkout path) not set in settings; cannot probe \
-                 git remote / ls-remote. Configure `stacks_core.base` in config.toml and re-run."
-                    .to_owned(),
-            );
-            return;
-        }
-    };
-    match crate::git::get_remote_url(base, &cfg.publish_remote) {
-        Err(e) => findings.push(format!(
-            "{e:#}; configure the remote or set `publish.remote` to the correct name",
-        )),
-        Ok(url) if !is_github_url(&url) => findings.push(format!(
-            "remote `{}` resolves to {url}, which is not a github.com URL; the publish path can \
-             only push to github.com",
-            cfg.publish_remote
-        )),
-        Ok(_) => {}
+    if let Some(msg) = check_publish_remote_is_origin(&cfg.publish_remote) {
+        findings.push(msg);
     }
 
-    // Validate that `git push` will actually authenticate. `ls-remote`
-    // hits the same auth path (SSH agent / HTTPS credential helper) as
-    // push but is read-only, so a misconfigured fresh VM fails here
-    // instead of after Phase 4. Force non-interactive: a missing
-    // credential / unknown SSH host / passphrase-protected key would
-    // otherwise prompt and block preflight forever.
-    //
-    // - `GIT_TERMINAL_PROMPT=0` disables git's own credential prompts.
-    // - `GIT_SSH_COMMAND=ssh -oBatchMode=yes` disables ssh's prompts (host trust,
-    //   passphrase, etc.) so failures surface immediately as non-zero exits.
-    if let Err(e) = crate::git::ls_remote_no_prompt(base, &cfg.publish_remote) {
-        findings.push(format!(
-            "{e:#}; verify the SSH key / HTTPS credentials this user has for `git push <remote>`",
-        ));
+    // `publish.head_owner` names the GitHub owner whose fork holds the
+    // bot's `agentic/<session>/<target>` branches. Required: per-session
+    // source checkouts inherit `origin` from `[source].url` (rewritten
+    // from the local cache path at materialization time), so there is no
+    // separate publish remote — Phase 5 pushes `agentic/...` directly to
+    // `[source].url`. The operator must set `publish.head_owner`
+    // explicitly so the PR head ref (`<head_owner>:<branch>`) matches
+    // the owner of the repo Phase 5 actually pushed to.
+    match cfg
+        .publish_head_owner
+        .as_deref()
+    {
+        None => findings.push(
+            "`publish.head_owner` is not set; required. Set it to the GitHub owner whose fork \
+             holds the bot's branches (typically the operator's bot account, e.g. `cylewitruk`)."
+                .to_owned(),
+        ),
+        Some(head_owner) => {
+            // Cross-check `[source].url` owner against `publish.head_owner`:
+            // Phase 5 pushes to `origin` in the per-target clone, which
+            // resolves to `[source].url`. If the URL's owner doesn't match
+            // `publish.head_owner`, the push will either land somewhere
+            // unexpected or fail with permission denied, and the PR head
+            // ref `<head_owner>:<branch>` won't resolve. Surface this at
+            // preflight rather than at Phase 5 after burning compute.
+            if let Some(url) = ctx
+                .settings
+                .source
+                .url
+                .as_deref()
+                && let Some(url_owner) = github_owner_from_url(url)
+                && !url_owner.eq_ignore_ascii_case(head_owner)
+            {
+                findings.push(format!(
+                    "`[source].url` owner `{url_owner}` does not match `publish.head_owner` \
+                     `{head_owner}`. Phase 5 pushes to `origin` in per-target clones, which \
+                     resolves to `[source].url`; the PR head ref `{head_owner}:<branch>` would \
+                     not find a branch at `{url_owner}/...`. Set `[source].url` to a writable \
+                     fork at `https://github.com/{head_owner}/...` (or update \
+                     `publish.head_owner` to `{url_owner}` if that's the right fork)."
+                ));
+            }
+        }
     }
 }
 
-/// True when `url` is one of the github.com URL forms `derive_head_owner`
-/// recognises (`git@github.com:owner/repo.git` /
-/// `https://github.com/owner/repo`).
-fn is_github_url(url: &str) -> bool {
-    url.starts_with("git@github.com:") || url.starts_with("https://github.com/")
+/// Reject any `publish.remote` other than `"origin"` post-v3.
+///
+/// Per-target clones have exactly one remote (`origin`, pointing at
+/// `[source].url`) because they replicate the per-session source
+/// checkout's remote map and that checkout has only `origin`. Phase 5
+/// runs `git push <publish.remote> <branch>`; with anything but
+/// `"origin"` configured the push would fail at Phase 5 with
+/// `fatal: '<name>' does not appear to be a git repository`. Reject
+/// upfront. A future tunable hook may install a separate publish
+/// remote URL into per-target clones; until then, `"origin"` is the
+/// only valid value.
+fn check_publish_remote_is_origin(remote: &str) -> Option<String> {
+    if remote == "origin" {
+        return None;
+    }
+    Some(format!(
+        "`publish.remote` = `{remote}` but post-v3-cutover only `origin` is installed in \
+         per-target clones (which inherit the single `origin = [source].url` remote from the \
+         per-session source checkout). Phase 5's `git push {remote} <branch>` would fail. Set \
+         `publish.remote = \"origin\"` (the default — drop the override) until the per-target \
+         remote-install hook ships."
+    ))
+}
+
+/// Best-effort extraction of the GitHub `<owner>` segment from a clone
+/// URL. Recognises the three forms `git remote get-url` typically
+/// emits:
+/// - `https://github.com/<owner>/<repo>(.git)?`
+/// - `git@github.com:<owner>/<repo>(.git)?`
+/// - `ssh://git@github.com/<owner>/<repo>(.git)?`
+///
+/// Returns `None` for non-github.com hosts or anything that doesn't
+/// parse — the caller treats that as "skip the cross-check" rather
+/// than a hard failure (forge-agnostic deployments shouldn't trip).
+fn github_owner_from_url(url: &str) -> Option<&str> {
+    let path = url
+        .trim()
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?;
+    let owner = path.split('/').next()?;
+    if owner.is_empty() { None } else { Some(owner) }
 }
 
 /// Run `collect_publish_findings` and bail with the aggregated list on
@@ -155,4 +194,65 @@ pub async fn ensure_publish_wiring(ctx: &CliContext) -> Result<()> {
          or omit `--publish-accepted-prs` to skip Phase 5",
         findings.len()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_owner_parses_https() {
+        assert_eq!(
+            github_owner_from_url("https://github.com/cylewitruk/stacks-core.git"),
+            Some("cylewitruk")
+        );
+        assert_eq!(
+            github_owner_from_url("https://github.com/cylewitruk/stacks-core"),
+            Some("cylewitruk")
+        );
+    }
+
+    #[test]
+    fn github_owner_parses_ssh_forms() {
+        assert_eq!(
+            github_owner_from_url("git@github.com:cylewitruk/stacks-core.git"),
+            Some("cylewitruk")
+        );
+        assert_eq!(
+            github_owner_from_url("ssh://git@github.com/cylewitruk/stacks-core.git"),
+            Some("cylewitruk")
+        );
+    }
+
+    #[test]
+    fn github_owner_returns_none_for_non_github_hosts() {
+        // Non-github URLs should not trip the cross-check (forge-agnostic).
+        assert_eq!(github_owner_from_url("https://gitlab.example.com/team/repo.git"), None);
+        assert_eq!(github_owner_from_url("https://gitea.example.com/owner/repo.git"), None);
+    }
+
+    #[test]
+    fn github_owner_returns_none_for_garbage() {
+        assert_eq!(github_owner_from_url(""), None);
+        assert_eq!(github_owner_from_url("not-a-url"), None);
+    }
+
+    #[test]
+    fn check_publish_remote_accepts_origin() {
+        assert!(check_publish_remote_is_origin("origin").is_none());
+    }
+
+    #[test]
+    fn check_publish_remote_rejects_legacy_bot_name() {
+        let msg = check_publish_remote_is_origin("bot")
+            .expect("non-origin remote should produce a finding");
+        assert!(msg.contains("`bot`"), "finding should quote the configured value: {msg}");
+        assert!(msg.contains("`origin`"), "finding should point at the fix: {msg}");
+    }
+
+    #[test]
+    fn check_publish_remote_rejects_arbitrary_name() {
+        assert!(check_publish_remote_is_origin("fork").is_some());
+        assert!(check_publish_remote_is_origin("").is_some());
+    }
 }

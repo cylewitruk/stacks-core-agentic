@@ -9,21 +9,25 @@ depth and link back here for "where does X live?" questions.
 
 ## Cast of characters
 
-Three on-disk repos and one workspace are involved:
+Two on-disk repos and one workspace are involved (post-v3-cutover —
+the operator submodule is gone; every session materializes its own
+source checkout into `<workspace>` from a shared bare cache):
 
 | Path variable | What it is | Why it exists where it is |
 | ------------- | ---------- | ------------------------- |
-| `<operator>` | Operator git repo (the dir `sbagent init` creates). Holds the `repos/stacks-core` submodule, the `.sbagent/` bundle, and the `sessions.jsonl` ledger on `main`. | Operator-owned source of truth for the *configuration* of an autonomous fleet. Lives where the operator chooses (e.g. a fork of [`stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator)). |
-| `<operator>/repos/stacks-core/` | Submodule of the **target** repo to optimize (default: a fork of `stacks/stacks-core` checked out at `feat/stacks-bench`). | The *base* every per-target optimizer clone forks from. Pinned at a specific sha so every session in a given operator-repo state starts from the same baseline. |
-| `<workspace>` | Mutable scratch root. `<layout.agent_workspace_root>` in config — **no Rust default**; set explicitly. Recommended value: `/private/tmp/sbagent-workspaces` (macOS) or `/var/tmp/sbagent-workspaces` (Linux). When unset, sbagent falls back to a legacy layout that anchors session bulk inside `<operator>` or the framework dir — discouraged because branch switches in `<operator>` then risk wiping tracked-but-ignored session files. | Heavy/mutable state (session bulk, per-target clones, archive worktrees) lives **outside** `<operator>` when this is set, so branch switches and `git status` in `<operator>` stay fast and uncluttered. |
-| `<stacks-core fork>` | Remote GitHub repo where Phase 5 pushes the `agentic/<id>/<target>` branches and opens PRs. Default: `cylewitruk/stacks-core`. | Decouples the bot's per-target work from the upstream `stacks/stacks-core` repo so PRs go through a fork-then-PR flow that's standard for outside-contributor work. |
+| `<operator>` | Operator git repo (the dir `sbagent init` creates). Holds the `.sbagent/` bundle and the `sessions.jsonl` ledger on `main`. **No source submodule** — `[source]` config drives a per-session checkout under `<workspace>` instead. | Operator-owned source of truth for the *configuration* of an autonomous fleet. Lives where the operator chooses (e.g. a fork of [`stacks-bench-agentic-operator`](https://github.com/cylewitruk/stacks-bench-agentic-operator)). |
+| `<workspace>` | Mutable scratch root. `<layout.agent_workspace_root>` in config — **no Rust default**; set explicitly. Recommended value: `/private/tmp/sbagent-workspaces` (macOS) or `/var/tmp/sbagent-workspaces` (Linux). When unset, sbagent falls back to a legacy layout that anchors session bulk inside `<operator>` or the framework dir — discouraged because branch switches in `<operator>` then risk wiping tracked-but-ignored session files. | Heavy/mutable state (the shared bare object cache, per-session source checkouts, per-target optimizer clones, archive worktrees) lives **outside** `<operator>` so branch switches and `git status` in `<operator>` stay fast and uncluttered. |
+| `<workspace>/cache/<cache_id>.git/` | Shared bare object clone of `[source].url`. One per distinct upstream; reused across sessions. Naming derives from the configured URL (or `[source].id` when pinned) — see `sbagent source cache-id`. | Lets each session's per-session checkout fork via `git clone --reference --local`: objects are hardlinked from the cache instead of re-fetched. Concurrency-safe under a per-cache-id lock during fetch + write. |
+| `<workspace>/sessions/<id>/repos/<cache_id>/` | Per-session source checkout, materialized at session start from the bare cache + `[source].branch`. The base every per-target optimizer clone forks from. Pinned at the SHA recorded in `<session>/results/source.json` so every phase in a given session sees the same source state. | Replaces the pre-v3 operator submodule. Per-session ownership means concurrent sessions can't race on a shared `<base>/target/`, and the operator dir stays free of mutable source state. |
+| `<stacks-core fork>` | Remote GitHub repo where Phase 5 pushes the `agentic/<id>/<target>` branches and opens PRs. Owner configured via `publish.head_owner`. | Decouples the bot's per-target work from the canonical upstream so PRs go through a fork-then-PR flow that's standard for outside-contributor work. **For publish sessions** (`session run --publish-accepted-prs`): `[source].url` MUST be this writable fork — its owner is cross-checked against `publish.head_owner` at preflight, since per-target clones inherit only `origin = [source].url` and Phase 5 pushes `agentic/...` straight to it. **For read-only sessions** (no publish): `[source].url` may point at any URL the bot can clone from, including the canonical upstream. |
 
 Path conventions used throughout this doc:
 
 - `<id>` is a session id (e.g. `20260607-104400`).
 - `<target>` is a merged-target id (e.g. `marf-trie-cache`).
 - `<inv>` is a `verification_replay.invocations[].id`.
-- `<base>` is the `<operator>/repos/stacks-core/` submodule path.
+- `<cache_id>` is the bare-cache directory name — `sbagent source cache-id` prints it.
+- `<source>` is the per-session source checkout at `<workspace>/sessions/<id>/repos/<cache_id>/` (replaces the pre-v3 `<base>` path).
 
 ## 1. Initial install
 
@@ -33,25 +37,24 @@ When you run `sbagent init`.
 
 ```text
 <operator>/
-  .gitignore                            # ignores /sessions/, target/, etc.
-  .gitmodules                           # records repos/stacks-core submodule
+  .gitignore                            # ignores in-tree config.toml + editor noise
   .sbagent/
     prompts/                            # bundled MiniJinja templates seeded
     schemas/                            # bundled JSON Schemas seeded
     queries/                            # bundled SQL queries seeded
     context/                            # bundled reference docs seeded
-  repos/
-    stacks-core/                        # submodule checkout at the configured
-                                        # base_branch tip; provides the base
-                                        # every per-target optimizer clone
-                                        # forks from
   memory/                               # lifted OUT of .sbagent/; holds
                                         # cross-session bot memory (today:
                                         # analyzed-rejections ledger)
 ```
 
 Nothing is created under `<workspace>` yet — that materializes on the
-first session.
+first session (both the shared bare cache under `<workspace>/cache/`
+and the per-session checkout under `<workspace>/sessions/<id>/repos/<cache_id>/`).
+
+There is no `repos/` subtree and no `.gitmodules` at the operator
+root — sbagent does not vendor the source repo into the operator dir.
+Source materialization is entirely a session-time concern.
 
 ### Git operations
 
@@ -59,18 +62,15 @@ In `<operator>`:
 
 1. `git init -b <push_branch>` (if no `.git/` present; `push_branch`
    defaults to `main`).
-2. `git submodule add <base_repo_url> repos/stacks-core -b <base_branch>`.
-3. `git add` the seeded bundle + `.gitignore` + `.gitmodules` +
-   submodule pointer.
-4. One initial commit authored as `Stacks BenchBot`, no GPG signing.
-5. `git push -u origin <push_branch>` only when `--push` is passed
+2. `git add` the seeded bundle + `.gitignore`.
+3. One initial commit authored as `Stacks BenchBot`, no GPG signing.
+4. `git push -u origin <push_branch>` only when `--push` is passed
    (PAT-via-env auth, no `.git/config` mutation).
 
 After this, `<operator>` is on `main` (or the configured push branch),
 clean, with the seeded bundle committed.
 
-No branches exist anywhere except `main` in `<operator>` and the
-`base_branch` ref inside the `repos/stacks-core/` submodule.
+No branches exist anywhere except `main` in `<operator>`.
 
 ## 2. When a session is created
 
@@ -79,24 +79,43 @@ When `sbagent session run` starts a fresh `<id>`.
 ### Local files / dirs created
 
 ```text
-<workspace>/sessions/<id>/              # session root — siblings:
-  results/                              # phase outputs (canonical artifact tree)
-    baseline/                           # Phase 0: run-id, rerun-id,
+<workspace>/
+  cache/<cache_id>.git/                 # shared bare clone of [source].url;
+                                        # created on the first session for a
+                                        # given cache_id, reused thereafter.
+                                        # Fetched at session start (per-cache
+                                        # lock); per-session checkouts below
+                                        # fork from this via --reference --local.
+  sessions/<id>/                        # session root — siblings:
+    repos/<cache_id>/                   # per-session source checkout, forked
+                                        # from <cache_id>.git via `git clone
+                                        # --reference --local --branch <branch>`.
+                                        # SHA captured in results/source.json.
+                                        # Phase 0a builds stacks-bench HERE;
+                                        # per-target optimizer clones in §3
+                                        # fork from here. (Dir naming matches
+                                        # the bare cache so `sbagent source
+                                        # cache-id` resolves either side.)
+    results/                            # phase outputs (canonical artifact tree)
+      source.json                       # provenance: url, branch, sha,
+                                        #   fetched_at, cache_id (v1 schema,
+                                        #   write-once at session start)
+      baseline/                         # Phase 0: run-id, rerun-id,
                                         #   bench-run.json, *.stderr.log,
                                         #   profiler-hotspots.json, bin/
-    triage/                             # Phase 1: candidates.json, prompt,
+      triage/                           # Phase 1: candidates.json, prompt,
                                         #   final-message, queries/, drilldowns/
-    analysis/<family>/                  # Phase 1.5: per-family analyzer output
-    merge/                              # Phase 1.7: optimization-targets.json
-    verify/<target>/<inv>/              # Phase 1.8: per-invocation baseline
+      analysis/<family>/                # Phase 1.5: per-family analyzer output
+      merge/                            # Phase 1.7: optimization-targets.json
+      verify/<target>/<inv>/            # Phase 1.8: per-invocation baseline
                                         #   calibration outputs
-    optimize/<target>/                  # Phase 2 + 3 + 5 per-target outputs
+      optimize/<target>/                # Phase 2 + 3 + 5 per-target outputs
                                         #   (added per target as they're processed)
-    analyze/<target>/                   # Phase 3.5: results-analysis.json
-    finalize/                           # Phase 4: summary.json, summary.md
-  worktrees/                            # (legacy fallback if agent_workspace_root
+      analyze/<target>/                 # Phase 3.5: results-analysis.json
+      finalize/                         # Phase 4: summary.json, summary.md
+    worktrees/                          # (legacy fallback if agent_workspace_root
                                         #  is unset — see §3)
-  .run.pid                              # written after preflight passes; cleared
+    .run.pid                            # written after preflight passes; cleared
                                         # by RAII drop on normal exit / ? bail /
                                         # unwinding panics. SIGINT/SIGKILL leave
                                         # it behind (no signal handler).
@@ -118,30 +137,45 @@ Phase 0a also writes `<workspace>/sessions/<id>/results/baseline/bin/stacks-benc
 imported-baseline sessions. The same binary is *copied* (not moved) into
 the per-target optimizer dirs in §3.
 
+### Source materialization
+
+Session start runs three steps under a single per-cache-id lock
+(blocks at the cache directory granularity, so unrelated sessions
+against different upstreams proceed in parallel):
+
+1. **Resolve `cache_id`** — either `[source].id` verbatim, or
+   deterministically derived as `<canonical-url-slug>-<sha256-prefix>`.
+2. **Fetch into `<workspace>/cache/<cache_id>.git/`** — `git init
+   --bare` on the first session, then a forced refspec fetch of
+   `[source].branch` (so a moving upstream advances the local ref).
+3. **Clone into `<workspace>/sessions/<id>/repos/<cache_id>/`** — `git clone
+   --reference <cache> --local --branch <branch>`. Objects are
+   hardlinked from the cache; the working tree is exclusive to this
+   session.
+4. **Write `results/source.json`** — write-once via
+   `tempfile::persist_noclobber` (race-safe against retries).
+
+The lock is released after `source.json` lands. Subsequent phases
+read `source.json` rather than re-resolving from settings, so
+mid-session edits to `[source]` don't bleed in.
+
 ### Git operations
 
 **None in `<operator>`.** A session start does not touch the operator
-repo. The bot remembers a baseline sha by sampling
-`git -C <base> rev-parse HEAD` for the [`SessionRecord`](../crates/stacks-bench-agent/src/models/session_record.rs)
-that gets written at archive time (§5b), but no commit / no branch /
-no push happens at session start.
+repo. No commit / no branch / no push happens at session start —
+`<operator>/main` is whatever it was before.
 
-**Git/source state in `<base>` (`<operator>/repos/stacks-core/`) is
-read-only.** The submodule's working tree (source files), index, and
-refs are never mutated by a running session. The base sha is recorded
-in `baseline/manifest.json` so a later reader can trace which exact
-upstream commit the session ran against.
-
-**But the filesystem under `<base>` is NOT read-only.** Phase 0a
-runs `cargo build --release -p stacks-bench` in `<base>` to produce
-the baseline binary that gets archived under
-`<workspace>/sessions/<id>/results/baseline/bin/stacks-bench`. That
-build populates `<base>/target/release/` with normal Cargo build
-artifacts. The Cargo state is operator-shared and persists across
-sessions (warm-cache benefit on the next run); only the source state
-is invariant. Per-target optimizer clones in §3 get their own
-`target/` directories and run a separate build; those build caches
-are reclaimed by the `cargo clean` step (§4).
+**Git/source state in `<workspace>/sessions/<id>/repos/<cache_id>/`
+(i.e. `<source>`) is
+read-mostly.** The source-files state is invariant for the session
+(the SHA recorded in `source.json` is the contract). The filesystem
+under `repos/<cache_id>/` is NOT read-only: Phase 0a runs
+`cargo build --release -p stacks-bench` there, populating
+`repos/<cache_id>/target/release/` with normal Cargo build artifacts.
+That build cache is per-session (lives under the session dir,
+reclaimed when the session dir is pruned) — unlike the pre-v3 layout,
+no build state spans sessions. Per-target optimizer clones in §3 get
+their own `target/` dirs.
 
 ## 3. When an optimization experiment begins
 
@@ -152,9 +186,10 @@ Phase 2: the optimizer agent gets dispatched for one merged target.
 ```text
 <workspace>/optimizers/<id>/<target>/   # per-target git clone (NEW)
   .git/                                 # standalone clone — own git state,
-                                        # not a worktree of <base>
-  <all source files from base @ base_branch>
-                                        # working tree at base_branch tip
+                                        # not a worktree of <source>
+  <all source files from <source> @ <source>.branch>
+                                        # working tree at the SHA pinned in
+                                        # results/source.json
   target/                               # cargo build output (created during
                                         # build step; reclaimed after Phase 3
                                         # bench by `cargo clean` — see Phase 3
@@ -167,7 +202,7 @@ contents, different parent. The
 [`session_optimizer_checkouts_dir`](../crates/stacks-bench-agent/src/layout.rs#L499)
 helper picks the right root.
 
-Inside `<operator>` and `<base>`: **nothing**. The clone is
+Inside `<operator>` and `<source>`: **nothing**. The clone is
 self-contained.
 
 The optimizer agent's prompt, events, and outputs land under
@@ -184,19 +219,25 @@ The optimizer agent's prompt, events, and outputs land under
 
 In a new `<workspace>/optimizers/<id>/<target>/`:
 
-1. `git clone --reference <base> --branch <base_branch> --local <base> <checkout>`
-   — shares `<base>`'s object store via `--reference --local`, so the
+1. `git clone --reference <source> --branch <source>.branch --local <source> <checkout>`
+   — shares `<source>`'s object store via `--reference --local`, so the
    new clone is tiny on disk. Per-target clones are independent git
-   repos with their own refs; they are NOT linked worktrees of `<base>`.
+   repos with their own refs; they are NOT linked worktrees of `<source>`.
 2. `git switch -c agentic/<id>/<target>` — fresh branch, pointed at
-   `base_branch`'s tip in the new clone. The branch lives ONLY inside
+   `<source>.branch`'s tip in the new clone. The branch lives ONLY inside
    this per-target clone until Phase 5 pushes it.
-3. `git remote set-url origin <base>'s origin url>` — `--local` defaults
-   `origin` to the local `<base>` path; we rewrite it to the operator's
-   configured GitHub URL so Phase 5's `git push` targets GitHub.
-4. Every remote that `<base>` had gets replicated. The
-   `publish.remote` config picks which one Phase 5 pushes to (e.g.
-   `origin` for the bot's own fork, or a separate `fork` remote).
+3. `git remote set-url origin <source>'s origin url>` — `--local` defaults
+   `origin` to the local `<source>` path; we rewrite it to
+   `[source].url` so Phase 5's `git push origin <branch>` targets the
+   configured GitHub upstream (the bot's writable fork for publish
+   sessions; see [publishing.md](publishing.md)).
+4. Every remote that `<source>` had gets replicated. Post-v3 the only
+   remote on `<source>` is `origin`, so the per-target clone ends up
+   with `origin` only — and `publish.remote` is constrained to
+   `"origin"` (preflight rejects anything else). A future tunable
+   hook may let operators install a separate publish remote URL into
+   per-target clones; until then, the single-`origin` model is the
+   contract.
 
 **Crucial sandbox boundary**: the optimizer agent runs inside the
 clone and *edits source files*, but it CANNOT commit. The Codex
@@ -209,7 +250,7 @@ them (or doesn't) after validating the agent's typed
 [optimizers.rs](../crates/stacks-bench-agent/src/session/optimizers.rs)
 for the full agent/coordinator split.
 
-In `<operator>`, `<base>`, and the GitHub fork: **nothing** at this
+In `<operator>`, `<source>`, and the GitHub fork: **nothing** at this
 point. `agentic/<id>/<target>` exists only inside the per-target
 clone's git database.
 
@@ -262,7 +303,7 @@ Local files / dirs:
                                         #   exists with outcome=aborted
 ```
 
-Git operations: **none**. The per-target clone stays at `base_branch`
+Git operations: **none**. The per-target clone stays at `<source>.branch`
 tip (no coordinator commit), and at session end (§5) the aborted
 clone is torn down by [`session_end_cleanup`](../crates/stacks-bench-agent/src/cli/session/run.rs#L611).
 
@@ -310,8 +351,9 @@ Git operations: inside the per-target clone at
    actually staged something. Authored as `Stacks BenchBot`, no GPG.
    When there's nothing staged (the typical case), this is a no-op
    and Phase 5 pushes the Phase 2 coordinator commit unchanged.
-4. `git push -u <publish.remote> agentic/<id>/<target>` — pushes to
-   the configured remote (default `cylewitruk/stacks-core`). PAT
+4. `git push -u origin agentic/<id>/<target>` — `publish.remote` is
+   constrained to `"origin"` post-v3 (preflight rejects others), and
+   `origin` resolves to `[source].url` (the bot's writable fork). PAT
    travels via `http.<prefix>.extraheader` env override; the token
    is never in argv and never in `.git/config`.
 5. `octocrab` opens a draft PR against `publish.base_repo` with head
@@ -333,7 +375,7 @@ commit / no push. The publisher opens an issue with a hidden trace
 tag (`<!-- agentic-<id>-<target> -->`) in the body for idempotent
 re-runs.
 
-Nothing in `<operator>` or `<base>` is mutated by publish.
+Nothing in `<operator>` or `<source>` is mutated by publish.
 
 ### 5b. Archive (Phase 6)
 

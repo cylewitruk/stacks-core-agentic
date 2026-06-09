@@ -78,7 +78,7 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
         3,
         &mut report,
     );
-    check_schema_version(&layout.summary_json(), "finalize/summary.json", 3, &mut report);
+    check_schema_version(&layout.summary_json(), "finalize/summary.json", 4, &mut report);
 
     // Phase 1.5: every candidate family must have an analysis.json.
     // Surface load + cross-field-validate failures as hard errors.

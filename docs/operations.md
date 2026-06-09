@@ -421,15 +421,13 @@ in isolation.
 ```bash
 OPERATOR_DIR="$(pwd)"      # the dir `sbagent init` created
 SBAGENT_SESSION_ID="${SBAGENT_SESSION_ID:-$(date +%Y%m%d-%H%M%S)}"
-SESSION_DIR="$OPERATOR_DIR/sessions/$SBAGENT_SESSION_ID/results"
 
-# Per-target optimizer checkouts. If `layout.agent_workspace_root` is set in
-# config.toml (the recommended layout), checkouts live at
-# `<layout.agent_workspace_root>/optimizers/<session>/<target>/` — outside
-# the operator repo so `git status` stays clean. With
-# `layout.agent_workspace_root` unset, sbagent falls back to
-# `$OPERATOR_DIR/sessions/<session>/worktrees/<target>/`.
+# Per-session source checkout (post-v3 — the operator submodule is gone).
+# sbagent materializes this at session start; for hand-debugging you can
+# point at an existing checkout, or `git clone` a fresh one yourself.
 AGENT_WORKSPACE_ROOT="${AGENT_WORKSPACE_ROOT:-/private/tmp/sbagent-workspaces}"
+BASE="$AGENT_WORKSPACE_ROOT/sessions/$SBAGENT_SESSION_ID/repos/$(sbagent source cache-id)"
+SESSION_DIR="$AGENT_WORKSPACE_ROOT/sessions/$SBAGENT_SESSION_ID/results"
 WORKTREES="$AGENT_WORKSPACE_ROOT/optimizers/$SBAGENT_SESSION_ID"
 
 STACKS_BENCH_DATA_DIR="$OPERATOR_DIR/data/stacks-bench"
@@ -481,7 +479,7 @@ concurrent `bench run` writer holding the bench lock.
 ### Index chainstate
 
 ```bash
-cd "$BASE"  # operator's stacks-core checkout (e.g. operator-repo/repos/stacks-core)
+cd "$BASE"  # per-session source checkout (see "Setup variables" above)
 
 flock "$BENCH_LOCK" \
   cargo stacks-bench \
@@ -496,7 +494,7 @@ flock "$BENCH_LOCK" \
 ### Baseline benchmark
 
 ```bash
-cd "$BASE"  # operator's stacks-core checkout (e.g. operator-repo/repos/stacks-core)
+cd "$BASE"  # per-session source checkout (see "Setup variables" above)
 
 BENCH_NAME="baseline-$SBAGENT_SESSION_ID"
 

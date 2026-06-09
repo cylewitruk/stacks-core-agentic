@@ -178,11 +178,6 @@ fn stage_framework_and_session(
             .path()
             .join("benchmark.lock"),
         test_lock: tmp.path().join("test.lock"),
-        base: Some(
-            framework
-                .join("repos")
-                .join("stacks-core"),
-        ),
         stacks_bench_shadow_dir: None,
         agent_workspace_root: None,
         operator_repo_root: None,
@@ -261,6 +256,7 @@ async fn analyzers_fan_out_writes_analysis_per_family_and_tallies() {
         settings,
         parallel: Some(2),
         harness: harness.clone(),
+        source_checkout: std::path::PathBuf::from("/tmp/test-source-checkout"),
     })
     .await
     .expect("analyzers::run");
@@ -296,6 +292,7 @@ async fn analyzers_no_op_when_no_candidates() {
         settings: Settings::default(),
         parallel: None,
         harness: harness.clone(),
+        source_checkout: std::path::PathBuf::from("/tmp/test-source-checkout"),
     })
     .await
     .expect("analyzers::run");

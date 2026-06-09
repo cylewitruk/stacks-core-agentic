@@ -6,13 +6,14 @@
 //! is [`StacksBenchCli`](crate::session::bench::StacksBenchCli), which
 //! shells out to `cargo stacks-bench` (or the prebuilt release binary).
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
 use crate::session::bench::StacksBenchCli;
 use crate::session::finalize::{FinalizeInputs, finalize};
 use crate::session::{SessionLayout, db_consistency};
+use crate::source::read_session_source;
 use crate::types::SessionId;
 
 /// Args for `sbagent session finalize run`.
@@ -24,7 +25,24 @@ pub struct FinalizeRunArgs {}
 pub async fn run(args: FinalizeRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
-    let bench = StacksBenchCli::from_layout(&ctx.layout)?;
+    // v3 Phase 3 cutover: finalize's DB-consistency probe uses the
+    // archived Phase 0a baseline binary. Cargo cwd is the per-session
+    // source checkout (looked up via source.json — finalize is
+    // strictly downstream of session start).
+    let workspace_root = ctx
+        .layout
+        .require_agent_workspace_root()?;
+    let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
+        .context("v3 Phase 3: per-session source.json required for finalize")?;
+    let bench = StacksBenchCli::strict_archived(
+        layout.baseline_bin_path(),
+        ctx.layout
+            .stacks_bench_data_dir
+            .clone(),
+        resolved
+            .session_checkout
+            .clone(),
+    );
 
     // DB ↔ artifact run-id consistency check: surface dangling refs
     // BEFORE finalize bakes them into `summary.json`. Same helper the

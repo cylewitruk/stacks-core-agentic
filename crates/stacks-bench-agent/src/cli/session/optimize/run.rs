@@ -64,6 +64,28 @@ pub async fn run(args: OptimizeRunArgs, ctx: &CliContext, session_id: &SessionId
             .budget_minutes = Some(m);
     }
 
+    // v3 Phase 3: the standalone `session optimize run` consumes the
+    // per-session source checkout previously materialized by
+    // `session run`. Read source.json — it's the truth — and derive
+    // the per-session checkout path from the RECORDED cache_id, NOT
+    // from current settings (an operator who changes/removes
+    // `[source].id` between invocations must still find the original
+    // checkout). Bails with a clear pointer if no prior `session run`
+    // has materialized the source for this session.
+    let source =
+        crate::models::source::SourceJson::read(&layout.source_json()).with_context(|| {
+            "v3 Phase 3: per-session source.json missing — run `sbagent session run` first to \
+             materialize the source checkout (or remove the partial session dir to start over)"
+        })?;
+    let workspace_root = ctx
+        .layout
+        .require_agent_workspace_root()?;
+    let source_checkout = crate::source::repo::session_repo_dir_for(
+        workspace_root,
+        session_id.as_str(),
+        &source.cache_id,
+    );
+
     let outputs = optimizers::run(Inputs {
         layout,
         framework: ctx.layout.clone(),
@@ -73,6 +95,7 @@ pub async fn run(args: OptimizeRunArgs, ctx: &CliContext, session_id: &SessionId
         harness,
         git: Arc::new(StdGitCheckoutManager),
         resume: args.resume,
+        source_checkout,
     })
     .await?;
 

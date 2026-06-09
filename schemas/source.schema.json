@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Per-session source-provenance record. v1 of the contract.",
+  "properties": {
+    "branch": {
+      "description": "Branch fetched + checked out. Matches the operator's\n`[source].branch`.",
+      "type": "string"
+    },
+    "cache_id": {
+      "description": "Cache id used to derive both the bare-cache path\n(`<workspace>/cache/<cache_id>.git/`) and the per-session\nsource checkout (`<workspace>/sessions/<id>/repos/<cache_id>/`).\nRecorded here so resume + standalone commands derive the same\npaths the session originally used — even if the operator\nremoves or changes `[source].id` in config between invocations.\nSlug-validated by [`SourceJson::validate_model`].",
+      "type": "string"
+    },
+    "fetched_at": {
+      "description": "ISO 8601 UTC timestamp of the `git fetch` resolution. Useful\nwhen the same SHA reappears in a later session and you want\nto know whether the operator was on a recent or stale view.",
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    },
+    "sha": {
+      "description": "40-char hex SHA the branch resolved to at session start. The\nload-bearing anchor: this SHA is what every Phase 2 per-target\noptimizer clone forks from, and what archive + finalize quote\nas the source identity.",
+      "type": "string"
+    },
+    "url": {
+      "description": "Clone URL passed to `git fetch` at session start. Canonical form\nmatches the operator's `[source].url` setting; sbagent does\n**not** rewrite the URL (so an SSH config alias remains an SSH\nconfig alias in the record).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "url",
+    "branch",
+    "sha",
+    "fetched_at",
+    "cache_id"
+  ],
+  "title": "SourceJson",
+  "type": "object"
+}

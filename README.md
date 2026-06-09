@@ -39,10 +39,12 @@ That split is intentional:
 - **Tail with late-arrival semantics**: `sbagent session tail`
   multiplexes every JSONL/stderr stream as it appears.
 - **One-shot operator bootstrap**: `sbagent init` materializes a
-  fresh operator dir (submodule, prompts/schemas/queries bundles,
-  `.gitignore`, initial commit authored as the bot). Optional
-  `--push` + `--seed-from` flags handle the PAT-via-env auth so the
-  token never enters argv, `.git/config`, or shell history.
+  fresh operator dir (prompts/schemas/queries/context bundles,
+  `.gitignore`, initial commit authored as the bot). No source
+  submodule — `[source]` config drives a per-session checkout under
+  `<workspace>` at session start. Optional `--push` handles the
+  PAT-via-env auth so the token never enters argv, `.git/config`,
+  or shell history.
 - **Self-contained operator dirs**: prompts, JSON schemas, and SQL
   query bundles are embedded in the `sbagent` binary and seeded to
   `<operator>/.sbagent/{prompts,schemas,queries}/`. `sbagent sync`
@@ -92,21 +94,26 @@ they're seeded into the operator dir by `sbagent init` / `sbagent sync`.
     prompts/                # MiniJinja templates + reference docs (tunable)
     schemas/                # JSON Schemas (mirror of binary bundle, do not edit)
     queries/                # triage/analyzer SQL (mirror of binary bundle, do not edit)
-  repos/
-    stacks-core/            # submodule, tracks `publish.base_branch`
-  sessions/<id>/results/    # per-session artifacts
+    context/                # reference docs the agents read (tunable)
+  memory/                   # cross-session bot memory (analyzed-rejections ledger)
   events/                   # append-only event log (operator-side only)
 ```
 
-Mutable agent scratch state (per-target git clones during a session) lives
-under `layout.agent_workspace_root` — defaults to `/private/tmp/sbagent-workspaces/`
-on macOS — NOT under the operator dir. Keeps `git status` clean and avoids
-embedded-repo warnings.
+No source submodule — `[source].url` + `[source].branch` drive a
+per-session checkout under
+`<workspace>/sessions/<id>/repos/<cache_id>/`, materialized at session
+start from a shared bare cache at `<workspace>/cache/<cache_id>.git/`
+(use `sbagent source cache-id` to print the resolved id). Mutable
+agent scratch state (per-target optimizer clones) also lives under
+`layout.agent_workspace_root` — defaults to recommended
+`/private/tmp/sbagent-workspaces/` on macOS — keeping `git status` in
+`<operator>` clean.
 
 ## CLI overview
 
 ```text
-sbagent init [--push] [--seed-from URL]    # bootstrap a fresh operator dir
+sbagent init [--push]                      # bootstrap a fresh operator dir
+sbagent source cache-id                    # print the resolved bare-cache id
 sbagent sync [--keep-tunables]             # refresh .sbagent/{schemas,queries,
                                            # prompts,context} from binary;
                                            # --keep-tunables preserves operator
@@ -159,9 +166,9 @@ cat >~/.config/sbagent/config.toml <<'TOML'
 prompt_overrides_dir = ".sbagent/prompts"
 agent_workspace_root = "/private/tmp/sbagent-workspaces"
 
-[stacks_core]
-base          = "repos/stacks-core"
-base_repo_url = "https://github.com/<bot>/stacks-core.git"
+[source]
+url    = "https://github.com/<bot>/stacks-core.git"
+branch = "feat/stacks-bench"
 
 [stacks_bench]
 # Required by `session baseline run`.
@@ -171,7 +178,11 @@ count      = 25_000
 
 [publish]
 token_file    = "/Users/me/.config/sbagent/gh_token"
-remote        = "bot"
+# `remote` defaults to `origin`. Post-v3 the per-target clone has only
+# `origin`, pointing at `[source].url`; the bot pushes
+# `agentic/<id>/<target>` there, which means `[source].url` MUST be a
+# repo the bot's PAT can write to (typically the bot's fork — see
+# `[source]` above).
 base_repo     = "<bot>/stacks-core"
 base_branch   = "feat/stacks-bench"
 head_owner    = "<bot>"
@@ -187,7 +198,7 @@ TOML
 mkdir -p ~/operator && cd ~/operator
 git init -b main
 git remote add origin https://github.com/<bot>/<operator-repo>.git
-sbagent init --seed-from https://github.com/<your-fork>/stacks-core.git --push
+sbagent init --push
 
 # 5. Smoke-test.
 sbagent check --with-publish

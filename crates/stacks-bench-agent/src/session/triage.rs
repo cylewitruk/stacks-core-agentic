@@ -30,6 +30,12 @@ pub struct Inputs<'a, H: AgentHarness> {
     pub axis_weights: &'a str,
     /// Agent harness (typically [`crate::harnesses::codex::CodexHarness`]).
     pub harness: &'a H,
+    /// **v3 Phase 3 cutover**: per-session source checkout passed to
+    /// the triage prompt as `base` and granted to Codex via
+    /// `add_dirs`. Replaces the pre-cutover `framework.require_base()`
+    /// (the operator submodule). Materialized at session start by
+    /// [`crate::source::session::materialize_session_source`].
+    pub source_checkout: &'a std::path::Path,
 }
 
 /// Outputs of a triage run.
@@ -126,9 +132,10 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
                 .stacks_bench_data_dir
                 .to_string_lossy()
                 .into_owned(),
+            // v3 Phase 3 cutover: prompt `base` = per-session source
+            // checkout, not the operator's submodule.
             base: inputs
-                .framework
-                .require_base()?
+                .source_checkout
                 .to_string_lossy()
                 .into_owned(),
             baseline_run_id: baseline_run_id.to_string(),
@@ -202,15 +209,15 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
         )
     })?;
     let mut add_dirs: Vec<PathBuf> = vec![
-        // Persistent stacks-bench db + stacks-core checkout (agent reads
-        // these directly).
+        // Persistent stacks-bench db + per-session source checkout
+        // (agent reads these directly). v3 Phase 3 cutover: grant the
+        // per-session checkout, not the operator's submodule.
         inputs
             .framework
             .stacks_bench_data_dir
             .clone(),
         inputs
-            .framework
-            .require_base()?
+            .source_checkout
             .to_path_buf(),
         // Operator-side bundles (rendered prompt references files
         // inside each by absolute path: *.sql in queries,

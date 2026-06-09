@@ -842,19 +842,23 @@ pub async fn push<G: GhClient>(inputs: &PushInputs<'_, G>) -> Result<PushOutputs
         return Ok(PushOutputs::default());
     }
 
-    let head_owner = match &inputs
+    // v3 Phase 3 cutover: `publish.head_owner` is required (validated
+    // at preflight; see `cli::preflight::collect_publish_findings`).
+    // Pre-cutover, an unset `head_owner` derived from `<base>`'s
+    // remote URL — that fallback is gone because the operator
+    // submodule is going away in v3 Phase 4 and the per-session
+    // source checkout's `origin` (the bare cache) isn't a meaningful
+    // owner.
+    let head_owner = inputs
         .config
         .publish_head_owner
-    {
-        Some(o) => o.clone(),
-        None => derive_head_owner(
-            inputs.gh,
-            inputs
-                .framework
-                .require_base()?,
-            &inputs.config.publish_remote,
-        )?,
-    };
+        .clone()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "`publish.head_owner` is required post-v3-cutover but is not set; preflight \
+                 should have caught this — did you bypass preflight with `--skip-preflight`?",
+            )
+        })?;
 
     let mut outputs = PushOutputs::default();
     for target in &targets.targets {
@@ -1120,36 +1124,12 @@ async fn push_issue<G: GhClient>(
         .await
 }
 
-fn derive_head_owner<G: GhClient>(gh: &G, base: &Path, remote: &str) -> Result<String> {
-    let url = gh.worktree_remote_url(base, remote)?;
-    let rest = url
-        .strip_prefix("git@github.com:")
-        .or_else(|| url.strip_prefix("https://github.com/"))
-        .ok_or_else(|| anyhow::anyhow!("unable to derive head owner from remote URL: {url}"))?;
-    // Need both an owner segment AND a repo segment — `git@github.com:foo`
-    // (no slash) would otherwise return the whole tail as `owner` and
-    // produce a `<owner>:<branch>` head ref the GitHub API rejects with
-    // an opaque error.
-    let (owner, _) = rest
-        .split_once('/')
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "remote URL {url} is missing the `owner/repo` separator; expected \
-                 `git@github.com:OWNER/REPO[.git]` or `https://github.com/OWNER/REPO`"
-            )
-        })?;
-    if owner.is_empty() {
-        bail!("remote URL {url} has an empty owner segment");
-    }
-    Ok(owner.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::common::{
         BenchInvocation, BenchSamples, Bucket, ExpectedSignal, Hotspot, ImprovementVector,
-        ProfilerMode, Risk, SchemaVersionV3, SelectionLens, SignalDirection, VerificationReplay,
+        ProfilerMode, Risk, SchemaVersionV4, SelectionLens, SignalDirection, VerificationReplay,
     };
     use crate::models::results_analysis::Confidence;
     use crate::models::summary::{
@@ -1224,7 +1204,7 @@ mod tests {
 
     fn summary_accepted(target_id: &str) -> Summary {
         Summary {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             session_id: "20260507-104400".into(),
             baseline_run_id: 100,
             baseline_rerun_id: 101,
@@ -1252,6 +1232,10 @@ mod tests {
             },
             lens_dispositions: vec![],
             next_targets_hint: None,
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
         }
     }
 

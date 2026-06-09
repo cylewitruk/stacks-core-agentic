@@ -251,7 +251,7 @@ fn lens_disposition_reason_rejects_null() {
     // status=not_actionable requires non-null reason.
     let validator = schema_for("summary.schema.json");
     let value = json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "session_id": "x",
         "baseline_run_id": 1,
         "baseline_rerun_id": 2,
@@ -414,7 +414,7 @@ fn experiment_status_constrained_by_delivery_mode() {
     // PocLanded is invalid for normal_pr per the injected enum-narrowing.
     let validator = schema_for("summary.schema.json");
     let value = json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "session_id": "x",
         "baseline_run_id": 1,
         "baseline_rerun_id": 2,

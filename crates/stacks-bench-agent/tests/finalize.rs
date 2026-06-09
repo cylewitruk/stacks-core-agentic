@@ -361,3 +361,70 @@ fn finalize_leaves_sha_fields_none_when_provenance_missing() {
         assert_eq!(exp.head_sha, None, "{}", exp.target_id);
     }
 }
+
+/// v3 Phase 3 cutover: when `<session>/results/source.json` exists,
+/// finalize copies its four fields into `Summary.source_*`. When it
+/// doesn't exist (pre-cutover sessions), the fields stay `None` so
+/// the legacy path still flows through cleanly.
+#[test]
+fn finalize_populates_summary_source_fields_from_source_json() {
+    use stacks_bench_agent::models::common::SchemaVersionV1;
+    use stacks_bench_agent::models::source::SourceJson;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    let source = SourceJson {
+        schema_version: SchemaVersionV1,
+        url: "https://github.com/stacks-network/stacks-core.git".to_owned(),
+        branch: "feat/stacks-bench".to_owned(),
+        sha: "0ad33704c259da4102b5f195617760003ac89c18".to_owned(),
+        fetched_at: "2026-06-07T12:00:00Z".to_owned(),
+        cache_id: "stacks-core-feat-stacks-bench".to_owned(),
+    };
+    source
+        .write(&layout.source_json())
+        .expect("write source.json");
+
+    let summary = finalize(&FinalizeInputs { layout: &layout }).expect("finalize with source");
+    assert_eq!(
+        summary.source_url.as_deref(),
+        Some("https://github.com/stacks-network/stacks-core.git"),
+    );
+    assert_eq!(
+        summary
+            .source_branch
+            .as_deref(),
+        Some("feat/stacks-bench")
+    );
+    assert_eq!(summary.source_sha.as_deref(), Some("0ad33704c259da4102b5f195617760003ac89c18"),);
+    assert_eq!(
+        summary
+            .source_fetched_at
+            .as_deref(),
+        Some("2026-06-07T12:00:00Z")
+    );
+}
+
+#[test]
+fn finalize_leaves_source_fields_none_when_source_json_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    // Confirm the fixture has no source.json (pre-cutover shape).
+    assert!(!layout.source_json().exists());
+
+    let summary = finalize(&FinalizeInputs { layout: &layout }).expect("finalize");
+    assert_eq!(summary.source_url, None);
+    assert_eq!(summary.source_branch, None);
+    assert_eq!(summary.source_sha, None);
+    assert_eq!(summary.source_fetched_at, None);
+}

@@ -193,11 +193,17 @@ pub const SCHEMA_VERSION_V2: u32 = 2;
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
 /// Schema version sentinel for v3 artifacts. Carried by `analysis.json`,
-/// `optimization-targets.json`, and `summary.json` — the three artifacts
-/// that gained Pass 1c semantics: analyzer-emitted `verification_replay`
-/// with one or more `BenchInvocation`s, and finalize/summary fields
-/// sourced from `results-analysis.json`.
+/// `optimization-targets.json`, and (pre-v3-cutover) `summary.json` —
+/// the three artifacts that gained Pass 1c semantics: analyzer-emitted
+/// `verification_replay` with one or more `BenchInvocation`s, and
+/// finalize/summary fields sourced from `results-analysis.json`.
 pub const SCHEMA_VERSION_V3: u32 = 3;
+
+/// Schema version sentinel for v4 artifacts. Carried by `summary.json`
+/// post-v3-iteration: gains the four source-provenance fields
+/// (`source_url`, `source_branch`, `source_sha`, `source_fetched_at`)
+/// populated from `source.json` at session start.
+pub const SCHEMA_VERSION_V4: u32 = 4;
 
 /// Kebab-case identifier regex applied to family ids, target ids, and
 /// fix signatures. Matches `^[a-z0-9][a-z0-9-]*$` — same pattern the
@@ -865,6 +871,58 @@ impl JsonSchema for SchemaVersionV3 {
         schemars::json_schema!({
             "type": "integer",
             "const": SCHEMA_VERSION_V3
+        })
+    }
+}
+
+/// Phantom type that serializes / deserializes as the integer literal `4`
+/// and emits `{"const": 4}` in the JSON Schema. Carried by `summary.json`
+/// post-v3 iteration (adds source-provenance fields). Mirrors
+/// [`SchemaVersionV3`] / [`SchemaVersionV2`] / [`SchemaVersionV1`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersionV4;
+
+impl SchemaVersionV4 {
+    /// Return the underlying integer constant (always `4`).
+    pub const fn get(self) -> u32 {
+        SCHEMA_VERSION_V4
+    }
+}
+
+impl Default for SchemaVersionV4 {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Serialize for SchemaVersionV4 {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u32(SCHEMA_VERSION_V4)
+    }
+}
+
+impl<'de> Deserialize<'de> for SchemaVersionV4 {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = u32::deserialize(d)?;
+        if v == SCHEMA_VERSION_V4 {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "expected schema_version={SCHEMA_VERSION_V4}, got {v}"
+            )))
+        }
+    }
+}
+
+impl JsonSchema for SchemaVersionV4 {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("SchemaVersionV4")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "integer",
+            "const": SCHEMA_VERSION_V4
         })
     }
 }

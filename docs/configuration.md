@@ -20,7 +20,7 @@ flag is `SBAGENT_SESSION_ID` (on `--session-id`). No `.env` file.
 The annotated template is checked in at
 [assets/example.config.toml](../assets/example.config.toml) — copy it
 to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
-stanzas (`[layout]`, `[stacks_core]`, `[stacks_bench]`, `[triage]`,
+stanzas (`[layout]`, `[source]`, `[stacks_bench]`, `[triage]`,
 `[analyzer]`, `[optimizer]`, `[results_analysis]`, `[codex]`,
 `[publish]`, `[preflight]`, `[git]`); each stanza's fields are
 documented inline in that file. Notable Pass 1c knobs:
@@ -75,14 +75,29 @@ intentional, because it can add significant chainstate copy time.
                                     # (analyzed-rejections ledger). Lifts
                                     # out of .sbagent/ by default so it
                                     # sits next to the bundle dirs.
-  repos/
-    stacks-core/                    # submodule, tracks publish.base_branch
-  sessions/<session-id>/results/    # per-session artifacts
+  sessions/<session-id>/results/    # per-session artifacts (resolves to
+                                    # <agent_workspace_root>/sessions/<id>
+                                    # when workspace_root is set, or
+                                    # <operator>/sessions/<id> on the
+                                    # legacy fallback)
   events/                           # append-only event log (operator-side)
 ```
 
+No `repos/` subtree at the operator root — per-v3 there is no
+operator-side source submodule. Source materializes at session start
+under `<workspace>/sessions/<id>/repos/<cache_id>/` from `[source].url` +
+`[source].branch`; see [git-topology.md](git-topology.md) §2.
+
 ```text
-<layout.agent_workspace_root>       # default /private/tmp/sbagent-workspaces
+<layout.agent_workspace_root>       # recommended /private/tmp/sbagent-workspaces
+  cache/<cache_id>.git/             # shared bare clone of [source].url
+                                    # (one per upstream; reused across
+                                    # sessions). `sbagent source cache-id`
+                                    # prints the derived id.
+  sessions/<session-id>/
+    repos/<cache_id>/               # per-session source checkout, forked
+                                    # from <cache_id>.git via
+                                    # `git clone --reference --local`
   optimizers/<session-id>/<target>/ # mutable per-target git clones
                                     # — NOT inside the operator repo, so
                                     # `git status` stays clean and Codex
@@ -132,7 +147,7 @@ Prompts, JSON schemas, and SQL queries are all embedded in the
 
 ## Forge-agnostic auth
 
-`sbagent init --push` / `--seed-from` use an `http.<prefix>.extraheader`
+`sbagent init --push` uses an `http.<prefix>.extraheader`
 config override (injected via `GIT_CONFIG_COUNT` env-vars, never
 persisted) to attach a Basic credential to git pushes. Two settings
 control it:
@@ -190,9 +205,6 @@ writable_roots = [
   "/private/tmp/sbagent-workspaces",   # match `layout.agent_workspace_root`
 ]
 
-[projects."/absolute/path/to/<bot>/<operator>/repos/stacks-core"]
-trust_level = "trusted"
-
 [projects."/private/tmp/sbagent-workspaces"]
 trust_level = "trusted"
 ```
@@ -201,13 +213,19 @@ The framework checkout no longer needs `writable_roots` entries —
 operator deployments don't read from it at runtime (prompts /
 schemas / queries are bundled).
 
-The `sbagent-workspaces` trust entry covers session bulk
-(`/private/tmp/sbagent-workspaces/sessions/<id>/`) AND per-target
-optimizer clones (`/private/tmp/sbagent-workspaces/optimizers/<id>/
-<target>/`) AND transient archive worktrees in one rule — every
-mutable subagent scratch dir lives under
-`layout.agent_workspace_root` by design. Adjust the path to match
-whatever you set `layout.agent_workspace_root` to.
+The `sbagent-workspaces` trust entry covers EVERY mutable subagent
+scratch dir in one rule:
+
+- session bulk + per-session source checkout
+  (`/private/tmp/sbagent-workspaces/sessions/<id>/`)
+- the shared bare cache
+  (`/private/tmp/sbagent-workspaces/cache/<cache_id>.git/`)
+- per-target optimizer clones
+  (`/private/tmp/sbagent-workspaces/optimizers/<id>/<target>/`)
+- transient archive worktrees
+
+Adjust the path to match whatever you set `layout.agent_workspace_root`
+to.
 
 Trust the worktree root once at bootstrap so newly created
 session-scoped worktrees inherit trust without per-experiment config
@@ -226,15 +244,16 @@ chmod 600 ~/.codex/config.toml
 ## Optional MCP configuration for stacks-bench
 
 Useful after the direct CLI loop works. Point Codex at the
-**pre-built** binary so MCP startup doesn't pay first-build cost
-(`cargo run` would invoke a build check on every startup, which can
-blow past `startup_timeout_sec`).
+**archived** baseline binary that Phase 0a writes per session — it
+lives outside the per-session source checkout and persists for the
+lifetime of the session dir, so MCP startup doesn't pay a build
+cost.
 
 Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.stacks_bench]
-command = "/absolute/path/to/<bot>/<operator>/repos/stacks-core/target/release/stacks-bench"
+command = "/private/tmp/sbagent-workspaces/sessions/<SESSION_ID>/results/baseline/bin/stacks-bench"
 args    = ["--db", "/absolute/path/to/data/stacks-bench", "mcp"]
 startup_timeout_sec = 30
 tool_timeout_sec    = 600
@@ -242,10 +261,9 @@ enabled = true
 ```
 
 `--db` points at `stacks_bench.data_dir` from your config.toml. The
-bootstrap step that pre-builds `stacks-bench` (see
-[setup.md](setup.md)) is what makes this safe. If you ever wipe
-`target/release/`, re-run `cargo stacks-bench --help >/dev/null` from
-the submodule before launching Codex to repopulate the binary.
+archived binary path is per-session (rewrite the `<SESSION_ID>`
+component when switching sessions, or leave MCP off if you're not
+using it).
 
 For the demo, keep MCP optional. The direct command-line flow is
 easier to debug.

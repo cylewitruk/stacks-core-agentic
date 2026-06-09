@@ -1,9 +1,9 @@
 # Design: Per-Session Ephemeral Source Clone
 
 - **id:** `0022-ephemeral-source-clone`
-- **status:** `backlog`
-- **priority:** `low`
-- **backlog:** [0022-ephemeral-source-clone](../backlog.md#0022-ephemeral-source-clone)
+- **status:** `planned`
+- **priority:** `medium`
+- **iteration:** [v3-ephemeral-source-clone](../iterations/v3-ephemeral-source-clone.md)
 - **decision:** [Decision 0003](../decisions/0003-ephemeral-source-clone.md)
 
 ## Problem

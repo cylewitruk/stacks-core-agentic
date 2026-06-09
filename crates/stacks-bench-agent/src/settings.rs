@@ -45,10 +45,6 @@ pub struct Settings {
     #[serde(default)]
     pub layout: LayoutSettings,
 
-    /// stacks-core submodule that builds the `stacks-bench` binary.
-    #[serde(default)]
-    pub stacks_core: StacksCoreSettings,
-
     /// `stacks-bench` invocation params (chainstate source, network,
     /// block range, filter).
     #[serde(default)]
@@ -84,10 +80,141 @@ pub struct Settings {
     #[serde(default)]
     pub preflight: PreflightSettings,
 
+    /// Upstream source repo we're optimizing — URL, branch, optional
+    /// stable cache id. Required by every session phase that needs
+    /// source (Phase 0a build, Phase 2 per-target clones, finalize +
+    /// archive provenance) post-cutover (v3 iteration). Settings
+    /// parsing validates `source.id` shape so the cache path segments
+    /// can't escape the workspace root.
+    #[serde(default)]
+    pub source: SourceSettings,
+
     /// Git identity + PAT-via-extraheader auth used by `init` (push /
     /// seed) and by every agent-side commit (optimizer worktrees).
     #[serde(default)]
     pub git: GitSettings,
+}
+
+/// `[source]` — upstream source repo to optimize.
+///
+/// Single source of truth for the source repo's URL + branch. Replaces
+/// the pre-v3 `[stacks_core]` stanza, which is no longer recognised
+/// (Phase 4 cutover landed the removal — operators on a pre-v3 config
+/// see `deny_unknown_fields` reject the stanza at load time).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceSettings {
+    /// Clone URL (HTTPS or SSH). Required — every session phase that
+    /// touches source takes a hard dependency on this being set.
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// Branch sessions fetch + clone. Required.
+    #[serde(default)]
+    pub branch: Option<String>,
+
+    /// Optional stable id for the bare cache dir naming. When unset,
+    /// sbagent derives a `<canonical-url>-<sha256-prefix>` id at
+    /// runtime. Set this when you want a human-readable cache path.
+    ///
+    /// **Validation** (via the [`SourceSettings`] custom deserializer
+    /// at load time): must match `^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+    /// (lowercase ASCII slug, leading letter, mandatory trailing
+    /// `[a-z0-9]`, ≤64 chars total). This stops the value from being
+    /// used as a path-segment to escape the workspace root.
+    #[serde(default, deserialize_with = "deserialize_source_id")]
+    pub id: Option<String>,
+}
+
+impl SourceSettings {
+    /// Resolve `(url, branch)` for any phase that needs source. Both
+    /// fields are required; this helper returns an error with the
+    /// exact remediation pointer when either is missing.
+    pub fn require_url_and_branch(&self) -> anyhow::Result<(&str, &str)> {
+        let url = self
+            .url
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "`[source].url` is required but is not set; add a `[source]` stanza to \
+                     config.toml (see docs/setup.md migration recipe)"
+                )
+            })?;
+        let branch = self
+            .branch
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "`[source].branch` is required but is not set; add a `[source]` stanza to \
+                     config.toml (see docs/setup.md migration recipe)"
+                )
+            })?;
+        Ok((url, branch))
+    }
+}
+
+/// One-pass validation of `source.id` against the slug regex described
+/// on [`SourceSettings::id`]. Implemented as a custom deserializer so
+/// settings parsing fails fast at config-load time — preflight
+/// re-validates as defense-in-depth.
+fn deserialize_source_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    match raw {
+        None => Ok(None),
+        Some(s) => match validate_source_id(&s) {
+            Ok(()) => Ok(Some(s)),
+            Err(e) => Err(serde::de::Error::custom(format!("invalid source.id `{s}`: {e}"))),
+        },
+    }
+}
+
+/// Validate a `source.id` candidate against
+/// `^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$`. Returns `Ok(())` for valid
+/// ids; `Err(reason)` with a one-line description otherwise. Exposed
+/// for the preflight re-check.
+pub fn validate_source_id(s: &str) -> Result<(), String> {
+    if s.is_empty() {
+        return Err("must not be empty".into());
+    }
+    if s.len() > 64 {
+        return Err(format!("must be ≤64 chars (got {})", s.len()));
+    }
+    let bytes = s.as_bytes();
+    // Leading character: lowercase ASCII letter.
+    if !bytes[0].is_ascii_lowercase() {
+        return Err("must start with a lowercase ASCII letter (a-z)".into());
+    }
+    // If there's more than one char, the trailing char must be
+    // `[a-z0-9]` (no trailing hyphen). Middle chars are `[a-z0-9-]`.
+    if s.len() > 1 {
+        let last = *bytes
+            .last()
+            .expect("len > 1 ⇒ last byte exists");
+        if !(last.is_ascii_lowercase() || last.is_ascii_digit()) {
+            return Err(
+                "must end with a lowercase ASCII letter or digit (no trailing hyphen)".into()
+            );
+        }
+        // Middle bytes (between [0] and [len-1]) are `[a-z0-9-]`.
+        for (i, &b) in bytes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take(s.len() - 2)
+        {
+            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+                return Err(format!(
+                    "char {i} (`{}`) not allowed; only `[a-z0-9-]` permitted between first and \
+                     last positions",
+                    b as char,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `[preflight]` — session-start safety floors.
@@ -203,24 +330,6 @@ pub struct LayoutSettings {
     /// `<operator>/memory/` from `prompt_overrides_dir`'s parent.
     #[serde(default)]
     pub memory_dir: Option<PathBuf>,
-}
-
-/// `[stacks_core]` — the stacks-core submodule.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StacksCoreSettings {
-    /// Path to the stacks-core checkout (typically a submodule at
-    /// `<operator>/repos/stacks-core`). Builds the `stacks-bench`
-    /// binary and is the source SHA finalize records. Required — no
-    /// default.
-    #[serde(default)]
-    pub base: Option<PathBuf>,
-
-    /// Clone URL for the stacks-core checkout. Read by `sbagent init`
-    /// when bootstrapping the submodule; unused at runtime thereafter
-    /// (sbagent reads `git -C <base> remote get-url origin` directly).
-    #[serde(default)]
-    pub base_repo_url: Option<String>,
 }
 
 /// `[stacks_bench]` — `stacks-bench` invocation params.
@@ -512,7 +621,7 @@ pub struct GitSettings {
     pub author_email: Option<String>,
 
     /// Username component of the HTTP Basic credential injected for
-    /// `init --push` and `--seed-from`. Combined with the PAT from
+    /// `init --push` and Phase 5 publish push. Combined with the PAT from
     /// `publish.token_file` as `<auth_username>:<token>` then
     /// base64-encoded into an `AUTHORIZATION: basic ...` header.
     ///
@@ -529,8 +638,8 @@ pub struct GitSettings {
     /// URL prefix the PAT-via-extraheader auth is scoped to. Used as
     /// (a) the `http.<prefix>.extraheader` git config key (so the token
     /// is only sent to URLs matching this prefix), and (b) the
-    /// validation gate for `init --push` origin and `init --seed-from`
-    /// `stacks_core.base_repo_url`.
+    /// validation gate for `init --push` origin and Phase 5 publish
+    /// push targets.
     ///
     /// Defaults to `https://github.com/`. Set to a different forge's
     /// HTTPS root (with trailing slash) to use the same mechanism
@@ -701,8 +810,8 @@ impl PublishSettings {
         self.token_file
             .as_deref()
             .context(
-                "`publish.token_file` not set in config; required for `--push` / `--seed-from` / \
-                 `publish push` / `session archive` (push step)",
+                "`publish.token_file` not set in config; required for `init --push` / `publish \
+                 push` / `session archive` (push step)",
             )
     }
 }
@@ -1457,5 +1566,96 @@ mod tests {
             ..AnalyzerSettings::default()
         };
         assert_eq!(a.effective_max_invocations_per_target(), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // v3 Phase 1: source.id slug regex validation. Table-driven against
+    // the accept/reject fixtures pinned in the iteration's Config
+    // contract section.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_source_id_accepts_valid_slugs() {
+        let exactly_64 = "a".repeat(64);
+        let cases: [&str; 5] = [
+            "stacks-core-feat-stacks-bench",
+            "my-fork",
+            "s",  // degenerate
+            "a1", // letter + digit
+            exactly_64.as_str(),
+        ];
+        for ok in cases {
+            assert!(
+                validate_source_id(ok).is_ok(),
+                "expected `{ok}` to be valid: {:?}",
+                validate_source_id(ok),
+            );
+        }
+    }
+
+    #[test]
+    fn validate_source_id_rejects_path_escape_attempts() {
+        for bad in ["../escape", "foo/bar", "foo\\bar"] {
+            assert!(validate_source_id(bad).is_err(), "expected `{bad}` to be rejected",);
+        }
+    }
+
+    #[test]
+    fn validate_source_id_rejects_case_and_leading_digit() {
+        for bad in ["Foo", "FOO", "1leading", "0abc"] {
+            assert!(validate_source_id(bad).is_err(), "expected `{bad}` to be rejected",);
+        }
+    }
+
+    #[test]
+    fn validate_source_id_rejects_trailing_hyphen() {
+        // The stricter regex `^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+        // mandates a non-hyphen trailing char when len > 1.
+        for bad in ["trailing-", "a-", "abc-"] {
+            assert!(
+                validate_source_id(bad).is_err(),
+                "expected `{bad}` to be rejected (trailing hyphen)",
+            );
+        }
+    }
+
+    #[test]
+    fn validate_source_id_rejects_empty_and_oversize() {
+        assert!(validate_source_id("").is_err(), "empty should reject");
+        // 65 chars — one over.
+        let over = "a".repeat(65);
+        assert!(validate_source_id(&over).is_err(), "65 chars should reject");
+    }
+
+    #[test]
+    fn deserialize_source_id_rejects_invalid_via_settings_load() {
+        // Round-trip through the TOML deserializer to confirm the
+        // custom deserializer fires at config-load time, not just at
+        // direct `validate_source_id` calls.
+        let toml_src = r#"
+            [source]
+            id = "trailing-"
+        "#;
+        let err = toml::from_str::<Settings>(toml_src).expect_err("trailing hyphen should reject");
+        let msg = err.to_string();
+        assert!(msg.contains("invalid source.id"), "error should name source.id; got: {msg}",);
+        assert!(msg.contains("trailing-"), "error should echo the bad value; got: {msg}");
+    }
+
+    #[test]
+    fn deserialize_source_id_accepts_valid_via_settings_load() {
+        let toml_src = r#"
+            [source]
+            url = "https://github.com/stacks-network/stacks-core.git"
+            branch = "feat/stacks-bench"
+            id = "stacks-core-feat-stacks-bench"
+        "#;
+        let s: Settings = toml::from_str(toml_src).expect("valid stanza should parse");
+        assert_eq!(s.source.id.as_deref(), Some("stacks-core-feat-stacks-bench"),);
+        assert_eq!(
+            s.source.url.as_deref(),
+            Some("https://github.com/stacks-network/stacks-core.git"),
+        );
+        assert_eq!(s.source.branch.as_deref(), Some("feat/stacks-bench"));
     }
 }

@@ -4,7 +4,7 @@
 //! [`crate::cli::session::bench_range::BenchRangeArgs`]) so the
 //! closed-loop can sample different windows without mutating config.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
@@ -12,6 +12,7 @@ use crate::cli::session::bench_range::BenchRangeArgs;
 use crate::session::SessionLayout;
 use crate::session::baseline::{self, ArchiveBinaryInputs, RunInputs};
 use crate::session::bench::StacksBenchCli;
+use crate::source::{StdSourceRepo, materialize_session_source};
 use crate::types::SessionId;
 
 /// Args for `sbagent session baseline run`. Long-lived configuration
@@ -42,14 +43,35 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         .range
         .resolve(&ctx.settings)?;
 
+    // v3 Phase 3 cutover: cargo cwd for the baseline build is the
+    // per-session source checkout. Materialize it now (fresh) or
+    // reuse the existing one (resume) — same contract as `session
+    // run`'s session-start materialization, just driven from the
+    // standalone command. Operators who invoke `session baseline run`
+    // before `session run` get the source materialization here.
+    std::fs::create_dir_all(&layout.results_dir).with_context(|| {
+        format!("creating session results dir {}", layout.results_dir.display())
+    })?;
+    let workspace_root = ctx
+        .layout
+        .require_agent_workspace_root()?
+        .to_path_buf();
+    let resolved = materialize_session_source(
+        &StdSourceRepo,
+        &workspace_root,
+        session_id.as_str(),
+        &ctx.settings.source,
+        &layout.source_json(),
+    )
+    .context("v3 Phase 3: per-session source materialization")?;
+    let stacks_core_base = resolved
+        .session_checkout
+        .clone();
+
     // Phase 0a: build + archive the baseline binary BEFORE Phase 0b
     // bench runs. From this point on, baseline / calibration /
     // full-range fallback all read from the archived path. Strict
     // contract: missing archived binary later = hard error.
-    let stacks_core_base = ctx
-        .layout
-        .require_base()?
-        .to_path_buf();
     let archive_outputs = baseline::archive_baseline_binary(&ArchiveBinaryInputs {
         layout: &layout,
         stacks_core_base: &stacks_core_base,

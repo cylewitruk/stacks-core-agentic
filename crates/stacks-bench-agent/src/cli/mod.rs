@@ -20,6 +20,7 @@ pub mod publish;
 pub mod rejections;
 pub mod schema;
 pub mod session;
+pub mod source;
 pub mod sync;
 pub mod workspace;
 
@@ -48,11 +49,13 @@ pub enum Command {
     /// sync with the typed models.
     Check(check::CheckArgs),
 
-    /// One-shot bootstrap for a fresh operator directory: add the
-    /// stacks-core submodule, seed bundled prompt templates, drop a
-    /// `.gitignore`, and produce an initial commit authored as the bot.
-    /// Optionally push with `--push` (PAT-via-env auth, no
-    /// `.git/config` mutation).
+    /// One-shot bootstrap for a fresh operator directory: seed bundled
+    /// prompt / schema / query / context templates, drop a
+    /// `.gitignore`, and produce an initial commit authored as the
+    /// bot. Optionally push with `--push` (PAT-via-env auth, no
+    /// `.git/config` mutation). No source submodule is added — source
+    /// repos are materialized per-session from `[source]` under
+    /// `<workspace>/sessions/<id>/repos/<cache_id>/`.
     Init(init::InitArgs),
 
     /// Prompt-template lifecycle: lint disk-loaded templates, force-sync
@@ -74,6 +77,11 @@ pub enum Command {
 
     /// Per-session commands (validate, finalize, baseline, triage, ...).
     Session(session::SessionArgs),
+
+    /// Source-clone helpers (read-only). `cache-id` prints the
+    /// deterministic id used to name `<workspace>/cache/<id>.git`; the
+    /// operator migration recipe in `docs/setup.md` calls it.
+    Source(source::SourceArgs),
 
     /// Refresh the operator's on-disk bundle from the running
     /// binary's embedded defaults. By default rewrites ALL bundles
@@ -247,8 +255,8 @@ fn migrate_legacy_context_docs(settings: &Settings, layout: &Layout) -> Result<(
 /// Parse-then-route the top-level command. Called once from `main`.
 pub async fn dispatch(args: CliArgs) -> Result<()> {
     // `init` runs BEFORE building the full `CliContext` — the whole
-    // point of init is to create the operator directory (with its
-    // submodule, prompts dir, layout dirs, etc.). Going through
+    // point of init is to create the operator directory (`.git/`,
+    // prompts dir, .sbagent/ bundles, etc.). Going through
     // `CliContext::from_args` here would try to materialize a layout
     // against an empty target dir and fail. Init loads Settings
     // directly and does its own setup work.
@@ -265,6 +273,7 @@ pub async fn dispatch(args: CliArgs) -> Result<()> {
         Command::Rejections(a) => rejections::run(a, &ctx).await,
         Command::Schema(a) => schema::run(a, &ctx).await,
         Command::Session(a) => session::run(a, &ctx).await,
+        Command::Source(a) => source::run(a, &ctx).await,
         Command::Sync(a) => sync::run(a, &ctx).await,
         Command::Workspace(a) => workspace::run(a, &ctx).await,
     }

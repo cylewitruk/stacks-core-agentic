@@ -1,5 +1,17 @@
 # GitHub setup — `stacks-bench-bot` publish topology
 
+> ⚠️ **Partial v3 cutover state**: the topology diagrams in §"Repos in
+> play" reflect the post-v3 layout (per-session source checkout under
+> `<workspace>`, no operator submodule). The setup recipes farther
+> down this file (`<operator>/repos/stacks-core` `cd`s,
+> `git -C <operator>/repos/stacks-core remote -v` probes, the
+> "remotes-on-base-checkout" preflight) still describe the pre-v3
+> operator-submodule layout and have NOT been ported. For current
+> operator setup, follow [docs/setup.md](../docs/setup.md) and
+> [docs/git-topology.md](../docs/git-topology.md); use this file for
+> the bot-account / fork / branch topology only, not the local-dir
+> recipes.
+
 Concrete map of the repos, forks, and branches sbagent reads from and writes to, plus the GitHub-side setup needed before Phase 5 publish can run.
 
 The topology has **two phases**: a **pilot** phase (now — keeps everything inside the bot's own fork) and an **upstream** phase (later — promotes PRs to the canonical repo once stacks-bench lands in `stacks-network/stacks-core`). The transition between them is a config change, not a code change.
@@ -21,24 +33,29 @@ cylewitruk/stacks-core                  (your personal fork — the substrate
 └─ feat/stacks-bench  ◄── you push      authoring tree where YOU evolve
    stacks-bench commits here             stacks-bench. sbagent never pushes here)
 
-stacks-bench-bot/stacks-core            <operator>/repos/stacks-core/  ← git submodule
-└─ feat/stacks-bench  ◄── seeded from   ├─ HEAD detached at pinned SHA
-│  cylewitruk/feat/stacks-bench;        ├─ remotes:
-│  must be manually re-pushed when you  │   • origin    → cylewitruk/stacks-core
-│  advance stacks-bench                 │   • bot       → stacks-bench-bot/stacks-core
-└─ agentic/<session>/<target>           │   • upstream  → stacks-network/stacks-core
-   ◄── pushed by sbagent on each        │     (optional, for future swap)
-   successful publish                   └─ feat/stacks-bench (local ref, kept in
-                                            sync with origin/feat/stacks-bench)
+stacks-bench-bot/stacks-core            <workspace>/sessions/<id>/repos/<cache_id>/
+└─ feat/stacks-bench  ◄── seeded from   │   ← per-session source checkout (fresh
+│  cylewitruk/feat/stacks-bench;        │     per session; cargo state is per-session)
+│  must be manually re-pushed when you  ├─ HEAD pinned at the SHA recorded in
+│  advance stacks-bench                 │   results/source.json
+└─ agentic/<session>/<target>           ├─ origin → [source].url (rewritten from
+   ◄── pushed by sbagent on each        │   the local cache path so Phase 5 push
+   successful publish                   │   lands on GitHub, not in the cache)
+                                        └─ <workspace>/cache/<cache_id>.git/
+                                            ← shared bare clone of [source].url
+                                              (one per upstream; reused across
+                                              sessions, hardlinked into the
+                                              per-session checkout)
 
 cylewitruk/stacks-bench-agent           ~/Code/.../stacks-bench-agent/
 (this code — the sbagent CLI tool)      └─ committable, your own dev repo
 
 cylewitruk/stacks-bench-agentic-        ~/Code/.../stacks-bench-agentic-operator/
-operator                                ├─ committable (sessions/, events/,
-(operator state — sessions, roadmap,    │  example.config.toml, roadmap)
-etc.)                                   ├─ repos/stacks-core/   (submodule)
-                                        └─ sessions/<id>/results/  (durable artifacts)
+operator                                ├─ committable (.sbagent/, memory/,
+(operator state — config, ledger,       │  events/, sessions.jsonl ledger)
+roadmap, etc.)                          └─ NO repos/ subtree (post-v3 — source
+                                            materializes per-session under
+                                            <workspace>, not the operator dir)
 
                                         ~/.config/sbagent/config.toml
                                         └─ per-user config (outside operator repo,

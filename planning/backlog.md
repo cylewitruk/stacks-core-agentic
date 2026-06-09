@@ -40,27 +40,6 @@ redesign makes them obsolete first.
 **Acceptance:** A stale local branch ref or unfetched upstream state fails
 before expensive session phases.
 
-<a id="0022-ephemeral-source-clone"></a>
-
-### Per-Session Ephemeral Source Clone
-
-- **id:** `0022-ephemeral-source-clone`
-- **status:** `backlog`
-- **priority:** `low`
-- **source:** [Decision 0003 draft](decisions/0003-ephemeral-source-clone.md)
-- **design:** [design/0022-ephemeral-source-clone.md](design/0022-ephemeral-source-clone.md)
-
-**Problem:** The shared operator submodule is the source of several drift modes:
-SHA staleness, detached-HEAD/branch-ref divergence, and cross-session
-interference.
-
-**Scope:** Materialize a per-session source checkout under
-`agent_workspace_root`, backed by a shared bare cache, and record explicit
-source provenance in session artifacts.
-
-**Acceptance:** A session id is sufficient to identify source URL, branch, SHA,
-and fetch time without consulting operator git history.
-
 <a id="0024-archive-audit-fields"></a>
 
 ### Archive Ledger Audit Fields

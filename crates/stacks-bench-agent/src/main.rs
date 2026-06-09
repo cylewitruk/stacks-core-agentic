@@ -15,13 +15,17 @@ async fn main() -> Result<()> {
     dispatch(args).await
 }
 
-/// Initialize a tracing subscriber that respects `RUST_LOG`. Defaults to
-/// `info` so operators get useful output without setting an env var.
+/// Initialize a tracing subscriber that respects `RUST_LOG`. Defaults
+/// to `info` so operators get useful output without setting an env
+/// var. Logs route to **stderr**, leaving stdout reserved for
+/// machine-readable program output (e.g. `sbagent source cache-id`
+/// for shell substitution).
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(std::io::stderr)
         .init();
 }

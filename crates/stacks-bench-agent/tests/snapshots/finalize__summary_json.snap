@@ -3,7 +3,7 @@ source: crates/stacks-bench-agent/tests/finalize.rs
 expression: summary_json
 ---
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "session_id": "20260507-104400",
   "baseline_run_id": 100,
   "baseline_rerun_id": 101,

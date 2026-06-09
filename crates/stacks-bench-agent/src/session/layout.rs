@@ -99,6 +99,15 @@ impl SessionLayout {
             .join("baseline")
     }
 
+    /// `results/source.json` — per-session source-provenance record
+    /// (v3 iteration). Sits at the results-tree root because every
+    /// phase reads it; written once at session start, never mutated.
+    /// See [`crate::models::source::SourceJson`].
+    pub fn source_json(&self) -> PathBuf {
+        self.results_dir
+            .join("source.json")
+    }
+
     /// `results/baseline/bench-run.json`.
     pub fn baseline_bench_run_json(&self) -> PathBuf {
         self.baseline_dir()

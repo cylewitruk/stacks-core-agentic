@@ -17,7 +17,6 @@ use std::{fs, io};
 
 use anyhow::{Context as _, Result};
 
-use crate::models::FromJson;
 use crate::models::session_record::SessionRecord;
 use crate::session::run_pid;
 
@@ -225,7 +224,11 @@ fn read_archived_ids(path: &Path) -> Result<HashSet<String>> {
         if line.is_empty() {
             continue;
         }
-        let Ok(rec) = SessionRecord::from_json(line) else {
+        // `from_ledger_line` accepts both v1 (pre-v3-cutover) and v2
+        // records, so workspace prune's archived-set lookup against a
+        // long-running `sessions.jsonl` doesn't silently treat legacy
+        // sessions as "not archived" and offer to prune them.
+        let Ok(rec) = SessionRecord::from_ledger_line(line) else {
             continue;
         };
         ids.insert(rec.id);
@@ -511,7 +514,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         use crate::models::ToJson;
-        use crate::models::common::SchemaVersionV1;
+        use crate::models::common::SchemaVersionV2;
         use crate::models::session_record::{
             SessionRange, SessionRecord, SessionRecordKind, SessionStatus,
         };
@@ -525,7 +528,7 @@ mod tests {
             .join("sessions.jsonl");
         let rec = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: SchemaVersionV1,
+            schema_version: SchemaVersionV2,
             id: "20260601-archived".to_owned(),
             artifact_branch: "session/20260601-archived".to_owned(),
             artifact_sha: "deadbeef".to_owned(),
@@ -548,6 +551,10 @@ mod tests {
             baseline_run_ids: vec![],
             phase_durations_secs: BTreeMap::new(),
             targets: vec![],
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
         };
         let line = rec.to_json().unwrap();
         fs::write(&ledger, format!("{line}\n")).unwrap();

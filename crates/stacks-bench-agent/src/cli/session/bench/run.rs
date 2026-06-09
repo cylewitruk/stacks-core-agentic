@@ -7,13 +7,14 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::cli::CliContext;
 use crate::session::bench_experiments::{self, BenchEnv, Inputs, TargetOutcome};
 use crate::session::cargo::StdCargoRunner;
 use crate::session::{SessionLayout, loader};
+use crate::source::read_session_source;
 use crate::types::SessionId;
 
 /// Args for `sbagent session bench`.
@@ -50,10 +51,18 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
         .layout
         .stacks_bench_data_dir
         .clone();
-    let cargo_cwd = ctx
+    // v3 Phase 3 cutover: Phase 3 candidate bench cargo cwd is the
+    // per-session source checkout. Bench run is downstream of session
+    // start, so source.json MUST already exist — `read_session_source`
+    // bails loudly if it doesn't.
+    let workspace_root = ctx
         .layout
-        .require_base()?
-        .to_path_buf();
+        .require_agent_workspace_root()?;
+    let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
+        .context("v3 Phase 3: per-session source.json required for bench run")?;
+    let cargo_cwd = resolved
+        .session_checkout
+        .clone();
     let bench_for_target =
         move |bin: &std::path::Path| -> Box<dyn crate::session::bench::BenchClient> {
             bench_experiments::stacks_bench_for(bin, &data_dir, &cargo_cwd)

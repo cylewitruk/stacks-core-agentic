@@ -13,8 +13,11 @@ externally and need to exist before any local step:
    PR opener for autonomously-generated work.
 2. **Two repos on the bot's account:**
    - `<bot>/stacks-core` — fork of `stacks-network/stacks-core` (the
-    target codebase). `feat/stacks-bench` doesn't need to exist on
-    this fork yet; `sbagent init --seed-from` will push it.
+    target codebase). `feat/stacks-bench` must exist on this fork at
+    session-start time — sbagent fetches it from `[source].url` into
+    the shared bare cache. If the fork is brand-new, seed the branch
+    manually before the first session: `git push <fork> <branch>` from
+    any clone that already carries it.
    - `<bot>/<operator>` — empty repo for the operator dir (no README /
     `.gitignore` — init writes those). Any name; commonly something
     like `<bot>-autopilot` or `stacks-bench-agentic-operator`.
@@ -59,11 +62,16 @@ chmod 600 ~/.config/sbagent/config.toml
 Edit the minimum required fields (stanza shape — every key sits under
 its `[section]`):
 
-- `[stacks_core] base = "repos/stacks-core"` (submodule path inside
-  the operator dir) and `base_repo_url = "https://github.com/<bot>/stacks-core.git"`
+- `[source] url = "https://github.com/<bot>/stacks-core.git"` and
+  `branch = "feat/stacks-bench"` — sbagent materializes a per-session
+  source checkout from this at session start (no operator submodule).
+  Optional `id = "..."` pins the bare-cache dir name; otherwise sbagent
+  derives one deterministically (see `sbagent source cache-id`).
 - `[publish] base_branch = "feat/stacks-bench"`,
   `token_file` (absolute path to step 2's token), plus `remote`,
-  `base_repo`, `head_owner`, `branch_prefix`, `draft_prs`
+  `base_repo`, `head_owner` (required — names the GitHub owner whose
+  fork holds the bot's `agentic/<id>/<target>` branches; there is no
+  fallback derivation post-v3), `branch_prefix`, `draft_prs`
 - `[layout] prompt_overrides_dir = ".sbagent/prompts"` — sibling
   `.sbagent/schemas/`, `.sbagent/queries/`, `.sbagent/context/`,
   and top-level `<operator>/memory/` auto-derive from this
@@ -85,29 +93,29 @@ different location pass `-c <path>` on every invocation.
 
 ## 4. Bootstrap the operator dir
 
-`sbagent init` is a one-shot bootstrap that adds the stacks-core
-submodule, seeds `.sbagent/{prompts,schemas,queries,context}/` from
-the binary, writes a `.gitignore`, and produces an initial commit
-authored as the bot. On a brand-new bot fork (no `feat/stacks-bench`
-branch yet), pass `--seed-from <your-fork-url>` so init pushes the
-substrate branch first.
+`sbagent init` is a one-shot bootstrap that seeds
+`.sbagent/{prompts,schemas,queries,context}/` from the binary, writes
+a `.gitignore`, and produces an initial commit authored as the bot.
+No source submodule is added — `[source]` config drives a per-session
+source checkout under `<workspace>` at session start.
 
 ```bash
 mkdir -p ~/operator && cd ~/operator
 git init -b main
 git remote add origin https://github.com/<bot>/<operator-repo>.git
 
-sbagent init \
-  --seed-from https://github.com/<your-fork>/stacks-core.git \
-  --push
+sbagent init --push
 ```
 
-`--push` lands the initial commit on `origin/main` using the same
-PAT-via-env mechanism (token never enters argv, `.git/config`, or
-shell history). The HTTPS origin is validated against
-`git.auth_url_prefix` (defaults to `https://github.com/`); SSH /
-other-prefix URLs error up-front rather than silently bypassing the
-header.
+`git init` first so `git remote add origin` has a `.git/` to record
+into; `sbagent init` is then a no-op for the init step and proceeds
+with bundle seeding + initial commit + push.
+
+`--push` lands the initial commit on `origin/main` using a PAT-via-env
+mechanism (token never enters argv, `.git/config`, or shell history).
+The HTTPS origin is validated against `git.auth_url_prefix` (defaults
+to `https://github.com/`); SSH / other-prefix URLs error up-front
+rather than silently bypassing the header.
 
 Re-running `init` on the same dir is safe — prompt / schema / query
 seeding is don't-replace, and the commit step skips when nothing is
@@ -134,7 +142,8 @@ github.com.
 If Codex has not been initialized yet, run it once interactively so
 `~/.codex` exists. Then edit `~/.codex/config.toml` per
 [configuration.md](configuration.md#recommended-codex-config) — at
-minimum, trust the submodule checkout and the sessions root.
+minimum, trust the `<workspace>/sessions/<id>/repos/<cache_id>/` checkout (where
+Phase 0a builds `stacks-bench`) and the sessions root.
 
 ## 6. Apply benchmark host tuning
 
@@ -170,16 +179,18 @@ can review what host-level state was active when a session ran:
 } > ~/.config/sbagent/.tuning
 ```
 
-## 7. Pre-build `stacks-bench`
+## 7. Pre-build `stacks-bench` (optional)
 
-Pre-build the release binary in the operator's stacks-core checkout
-before the first session so the baseline run and any optional MCP
-usage do not pay first-build cost:
+Phase 0a now builds `stacks-bench` inside the per-session source
+checkout under `<workspace>/sessions/<id>/repos/<cache_id>/`. There is no
+operator-side checkout to warm up — the cost of the first session's
+Phase 0a build is paid once per session.
 
-```bash
-cd "$HOME/stacks-bench-agentic-operator/repos/stacks-core"
-cargo build --release -p stacks-bench
-```
+Across sessions targeting the same upstream `[source]`, the shared
+bare cache at `<workspace>/cache/<cache_id>.git/` makes subsequent
+`git clone` steps near-instant (hardlinked objects), but the cargo
+build is per-session because each session's
+`repos/<cache_id>/target/` is independent.
 
 ## 8. Build cache
 
@@ -224,9 +235,6 @@ the full Phase 5 setup.
 
 ## Updating
 
-Two repos can advance independently: the tool (`sbagent` binary) and
-the operator dir (which pins a stacks-core submodule).
-
 **Tool side** — after a `git pull` in your `stacks-bench-agent`
 checkout, re-install + refresh the bundled prompts/schemas/queries in
 every operator dir on the host:
@@ -247,14 +255,63 @@ sbagent check                             # confirm no drift remains
 `sbagent sync --push` chains the commit + push if the operator dir
 should track upgrades in its own git history.
 
-**Operator side** — advance the stacks-core submodule from inside the
-operator dir:
+**Source side** — there is no operator-side source checkout to
+advance. Every `sbagent session run` fetches `[source].branch` into
+the bare cache and re-clones into the per-session checkout, so the
+session always runs against the `[source].branch` tip on the
+configured `[source].url` at session start. For publish sessions that
+URL is the bot's writable fork (see
+[Prerequisites](#prerequisites-manual-off-the-agent-vm)) — operators
+keep its `[source].branch` in sync with the canonical upstream
+out-of-band (`git fetch upstream && git push origin`). To pin to a
+specific SHA, point `[source].branch` at a tag or named ref.
+
+## Migrating a pre-v3 operator dir (one-time)
+
+Run this once on an operator dir that still carries the legacy
+`repos/stacks-core` submodule + `[stacks_core]` config. Each step is
+an explicit shell command so you can stop and inspect at any point.
 
 ```bash
-cd ~/operator
-git submodule update --remote repos/stacks-core
-# inspect, run sbagent check, commit the new pointer
+# 1. Confirm clean state on operator main and inside the submodule.
+git -C ~/operator status
+git -C ~/operator/repos/stacks-core status
+
+# 2. Update config.toml: remove [stacks_core], add [source]. Use the
+#    annotated template as reference.
+$EDITOR ~/.config/sbagent/config.toml
+#   - delete the [stacks_core] stanza entirely
+#   - add [source] url + branch (typically matches the old
+#     base_repo_url + publish.base_branch)
+
+# 3. Seed the bare cache from the existing submodule (fast — local).
+mkdir -p /private/tmp/sbagent-workspaces/cache      # or your workspace root
+CACHE_ID="$(sbagent source cache-id)"
+git clone --bare --local \
+  ~/operator/repos/stacks-core \
+  "/private/tmp/sbagent-workspaces/cache/${CACHE_ID}.git"
+
+# 4. Remove the submodule from the operator dir.
+git -C ~/operator submodule deinit -f repos/stacks-core
+git -C ~/operator rm -rf repos/stacks-core
+rm -rf ~/operator/.git/modules/repos/stacks-core
+rm -f ~/operator/.gitmodules       # if no other submodules remain
+
+# 5. Commit the removal on operator main as the bot identity.
+#    (Use the same identity sbagent uses for the seeded initial commit.)
+git -C ~/operator -c user.name="Stacks BenchBot" \
+    -c user.email="<bot-email>" \
+    commit -m "migrate: drop repos/stacks-core submodule (v3 cutover)"
+
+# 6. Sanity-check the new shape.
+sbagent check
+sbagent source cache-id     # confirms the helper resolves the same id
 ```
+
+Existing archived `session/<id>` branches are unaffected — those are
+write-once and keep their pre-v3 layout. Only post-migration sessions
+materialize the new `<workspace>/sessions/<id>/repos/<cache_id>/` + `source.json`
+shape.
 
 ## Later benchmark-VM replacement
 
