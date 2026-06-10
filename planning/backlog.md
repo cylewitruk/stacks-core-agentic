@@ -40,24 +40,6 @@ redesign makes them obsolete first.
 **Acceptance:** A stale local branch ref or unfetched upstream state fails
 before expensive session phases.
 
-<a id="0024-archive-audit-fields"></a>
-
-### Archive Ledger Audit Fields
-
-- **id:** `0024-archive-audit-fields`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0024-archive-audit-fields.md](design/0024-archive-audit-fields.md)
-
-**Problem:** `head_sha` is archived, but `pr_url` and bench wall-clock totals
-remain unset or incomplete.
-
-**Scope:** Wire publish feedback and bench wall-clock fields into
-`SessionRecord.targets[]`.
-
-**Acceptance:** Archived target records include PR URL when published and useful
-per-target bench timing metadata.
-
 <a id="0025-named-phases"></a>
 
 ### Named Phases Over Numbered Phases
@@ -77,21 +59,6 @@ numbering history.
 
 **Deferred / non-goals:** Do not change artifact paths unless paired with a
 separate migration.
-
-<a id="0026-phase-timing"></a>
-
-### Phase Timing Instrumentation
-
-- **id:** `0026-phase-timing`
-- **status:** `backlog`
-- **priority:** `low`
-
-**Problem:** `SessionRecord.phase_durations_secs` is empty, so session runtime
-analysis is manual.
-
-**Scope:** Add durable phase start/stop timing and populate the archive ledger.
-
-**Acceptance:** Archived sessions include per-phase wall-clock durations.
 
 <a id="0027-maintain-ledger"></a>
 
@@ -314,3 +281,6 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
+- `0024-archive-audit-fields`, `0026-phase-timing`,
+  `0043-example-config-load-test` —
+  [v5: Archive Metadata](iterations/v5-archive-metadata.md).
