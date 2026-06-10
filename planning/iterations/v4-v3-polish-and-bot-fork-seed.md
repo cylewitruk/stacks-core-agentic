@@ -6,7 +6,16 @@ hardcoded-`None` provenance field on `SessionRecord`, the unrehearsed
 migration recipe) and restore the one operator usability gap Phase 4
 introduced when it removed `--seed-from`.
 
-> **Status:** planned.
+> **Status:** in_progress (code-complete; ready for live validation).
+>
+> All four phases are implemented, reviewed, and exercised by unit /
+> integration tests. The remaining work is operator-level live
+> validation, which folds into the same
+> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md) v2 and v3 are
+> waiting on: a real-operator-repo migration confirms the recipe
+> converges without configuration loss, and a real bot-fork seed
+> against GitHub confirms `sbagent source seed` works end-to-end
+> against a brand-new fork.
 >
 > v3's code side shipped; live smoke is deferred to a separate v1
 > Pass 1c re-run. v4 is the natural tidy-up plus a single new
@@ -14,15 +23,18 @@ introduced when it removed `--seed-from`.
 > finalize v3 cleanly without bundling broader publish-flexibility
 > work (per-target remote-install hook, archive audit fields) that
 > belongs in a later themed iteration.
+>
+> Move to `shipped` once the live bullets in Final Validation are
+> checked.
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0039-v3-transition-marker-scrub` | primary | planned |
-| `0040-session-record-source-sha-cleanup` | primary | planned |
-| `0041-migration-recipe-rehearsal` | primary | planned |
-| `0042-source-seed-helper` | primary | planned |
+| `0039-v3-transition-marker-scrub` | primary | in_progress |
+| `0040-session-record-source-sha-cleanup` | primary | in_progress |
+| `0041-migration-recipe-rehearsal` | primary | in_progress |
+| `0042-source-seed-helper` | primary | in_progress |
 
 ## Why
 

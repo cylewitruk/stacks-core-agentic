@@ -3,11 +3,13 @@
 Goal: run one real end-to-end session through the current Pass 1c flow and
 collect the first live evidence for prompt quality and artifact handoffs.
 
-> **Status:** planned.
+> **Status:** blocked (awaiting NVMe-with-chainstate availability).
 >
-> This iteration validates the system as implemented. Prompt hardening and other
-> follow-up work should become new numbered backlog items unless it is tiny and
-> directly blocks the smoke.
+> This iteration validates the system as implemented; no engineering
+> work remains to start it. v2, v3, and v4 are all code-complete and
+> route their live-validation bullets through this same smoke. Prompt
+> hardening and other follow-up work should become new numbered
+> backlog items unless it is tiny and directly blocks the smoke.
 
 ## Items
 
@@ -15,7 +17,7 @@ collect the first live evidence for prompt quality and artifact handoffs.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0018-live-pass-1c-smoke` | primary validation slice | planned |
+| `0018-live-pass-1c-smoke` | primary validation slice | blocked |
 
 ## Why
 

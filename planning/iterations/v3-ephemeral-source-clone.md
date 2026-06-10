@@ -5,7 +5,17 @@ Replace the shared `<operator>/repos/stacks-core` submodule with per-session
 source checkouts under `<workspace>`, backed by a shared bare object cache,
 and record explicit source provenance in every session bulk.
 
-> **Status:** planned.
+> **Status:** in_progress (code-complete; ready for live validation).
+>
+> All four phases are implemented, reviewed, and exercised by unit /
+> integration tests (including the fixture-driven migration recipe
+> rehearsal that landed in v4 Phase 3). The remaining work is
+> operator-level live validation, which folds into the
+> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md): one end-to-end
+> session on a post-cutover operator dir confirms `source.json` flows
+> through to the published PR body / archive branch / ledger entry,
+> and a real-operator-repo migration confirms the recipe converges
+> without configuration loss.
 >
 > Decision is committed
 > ([Decision 0003](../decisions/0003-ephemeral-source-clone.md)). The four
@@ -13,6 +23,9 @@ and record explicit source provenance in every session bulk.
 > are empirically confirmed (the cargo-build cross-session interference Codex
 > caught during the v2 doc pass is one of them). This iteration is the
 > implementation.
+>
+> Move to `shipped` once both live bullets in Final Validation are
+> checked.
 
 ## Items
 
@@ -20,7 +33,7 @@ and record explicit source provenance in every session bulk.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0022-ephemeral-source-clone` | primary | planned |
+| `0022-ephemeral-source-clone` | primary | in_progress |
 
 ## Why
 
