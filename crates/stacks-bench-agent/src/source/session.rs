@@ -383,11 +383,11 @@ mod tests {
         assert!(!source_json.exists(), "no source.json should be written when config is missing");
     }
 
-    /// v3 Phase 3 Codex High-#1: source.json is the truth. If the
-    /// operator changes `[source].id` between `session run` and a
-    /// later resume (or standalone phase), the resume must still see
-    /// the ORIGINAL cache_id + checkout path, not the new one derived
-    /// from current settings.
+    /// source.json is the truth. If the operator changes
+    /// `[source].id` between `session run` and a later resume (or
+    /// standalone phase), the resume must still see the ORIGINAL
+    /// cache_id + checkout path, not the new one derived from
+    /// current settings.
     #[test]
     fn resume_uses_cache_id_from_source_json_not_current_settings() {
         let tmp = tempfile::tempdir().unwrap();

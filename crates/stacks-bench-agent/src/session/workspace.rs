@@ -224,10 +224,10 @@ fn read_archived_ids(path: &Path) -> Result<HashSet<String>> {
         if line.is_empty() {
             continue;
         }
-        // `from_ledger_line` accepts both v1 (pre-v3-cutover) and v2
+        // `from_ledger_line` accepts both legacy v1 and current v2
         // records, so workspace prune's archived-set lookup against a
-        // long-running `sessions.jsonl` doesn't silently treat legacy
-        // sessions as "not archived" and offer to prune them.
+        // long-running `sessions.jsonl` doesn't silently treat
+        // legacy sessions as "not archived" and offer to prune them.
         let Ok(rec) = SessionRecord::from_ledger_line(line) else {
             continue;
         };

@@ -32,9 +32,8 @@ pub struct Inputs<H: AgentHarness + 'static> {
     pub parallel: Option<usize>,
     /// Agent harness, shared across spawned tasks via `Arc`.
     pub harness: Arc<H>,
-    /// **v3 Phase 3 cutover**: per-session source checkout passed to
-    /// every analyzer prompt as `base` and granted to Codex via
-    /// `add_dirs`. Replaces the pre-cutover `framework.require_base()`.
+    /// Per-session source checkout passed to every analyzer prompt
+    /// as `base` and granted to Codex via `add_dirs`.
     pub source_checkout: std::path::PathBuf,
 }
 
@@ -156,7 +155,7 @@ struct AnalyzerTaskInputs<H: AgentHarness + 'static> {
     session_results_dir: PathBuf,
     sem: Arc<Semaphore>,
     harness: Arc<H>,
-    /// v3 Phase 3 cutover: per-session source checkout (carried from
+    /// Per-session source checkout (carried from
     /// [`Inputs::source_checkout`]). Used as the analyzer prompt's
     /// `base` field + as an `add_dirs` entry granting the agent read
     /// access to the source.
@@ -210,8 +209,7 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
             output_dir: out_dir
                 .to_string_lossy()
                 .into_owned(),
-            // v3 Phase 3 cutover: prompt `base` = per-session source
-            // checkout, not the operator's submodule.
+            // Prompt `base` = per-session source checkout.
             base: state
                 .source_checkout
                 .to_string_lossy()
@@ -273,8 +271,7 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
         .dangerously_bypass_sandbox
         .unwrap_or(false);
     let mut add_dirs: Vec<PathBuf> = vec![
-        // v3 Phase 3 cutover: grant the per-session source checkout,
-        // not the operator's submodule.
+        // Grant the per-session source checkout.
         state.source_checkout.clone(),
         state
             .framework
@@ -497,9 +494,8 @@ fn maybe_append_rejection<H: AgentHarness + 'static>(
         return Ok(());
     }
 
-    // v3 Phase 3 cutover: rev-parse the per-session source checkout
-    // (matches source.json.sha exactly) instead of the operator
-    // submodule.
+    // Rev-parse the per-session source checkout (matches
+    // source.json.sha exactly).
     let stacks_core_sha = crate::git::rev_parse_head_optional(&state.source_checkout);
 
     let fingerprint = compute_fingerprint(&FingerprintInputs {

@@ -428,11 +428,9 @@ pub struct Inputs<H: AgentHarness + 'static, G: GitCheckoutManager + 'static> {
     /// recover a partially-failed optimizer phase without redoing the
     /// targets that already succeeded.
     pub resume: bool,
-    /// **v3 Phase 3 cutover**: per-session source checkout that
-    /// per-target clones fork from. Replaces the previous
-    /// `framework.require_base()` reference (the operator submodule).
-    /// Pin to `<workspace>/sessions/<id>/repos/<cache_id>/` —
-    /// resolved by `cli::session::run` at session start.
+    /// Per-session source checkout that per-target clones fork from.
+    /// Pin to `<workspace>/sessions/<id>/repos/<cache_id>/` — resolved
+    /// by `cli::session::run` at session start.
     pub source_checkout: std::path::PathBuf,
 }
 
@@ -614,10 +612,9 @@ struct OptimizerTaskInputs<H: AgentHarness + 'static, G: GitCheckoutManager + 's
     harness: Arc<H>,
     git: Arc<G>,
     resume: bool,
-    /// v3 Phase 3: per-session source checkout passed down from
+    /// Per-session source checkout passed down from
     /// [`Inputs::source_checkout`]. Per-target clones fork from this
-    /// (`git clone --reference <source_checkout> --local ...`) instead
-    /// of the pre-cutover `framework.require_base()`.
+    /// (`git clone --reference <source_checkout> --local ...`).
     source_checkout: PathBuf,
 }
 
@@ -676,11 +673,10 @@ where
     // against the same `base` checkout don't collide on `agent/<id>`
     // when their target ids overlap. Mirrors the Phase 5 push branch
     // shape (`agentic/<session>/<target>`).
-    // v3 Phase 3 cutover: fork from the per-session source checkout
-    // (resolved + materialized at session start), not the operator's
-    // shared submodule. Per-target clones now share the session's
-    // `--reference` source-of-truth, so the SHA the session pinned in
-    // `source.json` is what every per-target clone forks from.
+    // Per-target clones fork from the per-session source checkout
+    // (resolved + materialized at session start). Every clone shares
+    // the session's `--reference` source-of-truth, so the SHA pinned
+    // in `source.json` is what each per-target clone forks from.
     state.git.recreate_checkout(
         &state.source_checkout,
         &worktree,

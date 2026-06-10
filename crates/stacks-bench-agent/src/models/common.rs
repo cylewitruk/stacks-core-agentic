@@ -192,17 +192,18 @@ pub const SCHEMA_VERSION_V2: u32 = 2;
 /// Pass 1c's `results-analysis.json`.
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
-/// Schema version sentinel for v3 artifacts. Carried by `analysis.json`,
-/// `optimization-targets.json`, and (pre-v3-cutover) `summary.json` —
-/// the three artifacts that gained Pass 1c semantics: analyzer-emitted
-/// `verification_replay` with one or more `BenchInvocation`s, and
-/// finalize/summary fields sourced from `results-analysis.json`.
+/// Schema version sentinel for v3 artifacts. Carried by `analysis.json`
+/// and `optimization-targets.json` — the artifacts that gained Pass
+/// 1c semantics: analyzer-emitted `verification_replay` with one or
+/// more `BenchInvocation`s, and finalize/summary fields sourced from
+/// `results-analysis.json`. `summary.json` rode this version
+/// transitionally before bumping to v4 alongside source provenance.
 pub const SCHEMA_VERSION_V3: u32 = 3;
 
-/// Schema version sentinel for v4 artifacts. Carried by `summary.json`
-/// post-v3-iteration: gains the four source-provenance fields
-/// (`source_url`, `source_branch`, `source_sha`, `source_fetched_at`)
-/// populated from `source.json` at session start.
+/// Schema version sentinel for v4 artifacts. Carried by `summary.json`,
+/// which gains the four source-provenance fields (`source_url`,
+/// `source_branch`, `source_sha`, `source_fetched_at`) populated from
+/// `source.json` at session start.
 pub const SCHEMA_VERSION_V4: u32 = 4;
 
 /// Kebab-case identifier regex applied to family ids, target ids, and

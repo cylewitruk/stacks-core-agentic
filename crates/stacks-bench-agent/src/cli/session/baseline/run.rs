@@ -43,12 +43,12 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         .range
         .resolve(&ctx.settings)?;
 
-    // v3 Phase 3 cutover: cargo cwd for the baseline build is the
-    // per-session source checkout. Materialize it now (fresh) or
-    // reuse the existing one (resume) — same contract as `session
-    // run`'s session-start materialization, just driven from the
-    // standalone command. Operators who invoke `session baseline run`
-    // before `session run` get the source materialization here.
+    // Cargo cwd for the baseline build is the per-session source
+    // checkout. Materialize it now (fresh) or reuse the existing one
+    // (resume) — same contract as `session run`'s session-start
+    // materialization, just driven from the standalone command.
+    // Operators who invoke `session baseline run` before `session
+    // run` get the source materialization here.
     std::fs::create_dir_all(&layout.results_dir).with_context(|| {
         format!("creating session results dir {}", layout.results_dir.display())
     })?;
@@ -63,7 +63,7 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         &ctx.settings.source,
         &layout.source_json(),
     )
-    .context("v3 Phase 3: per-session source materialization")?;
+    .context("per-session source materialization")?;
     let stacks_core_base = resolved
         .session_checkout
         .clone();

@@ -1,6 +1,6 @@
 //! `sbagent init` — one-shot bootstrap for a fresh operator directory.
 //!
-//! Bootstrap order (post-v3-cutover; the submodule path is gone):
+//! Bootstrap order:
 //!
 //! 1. Validate the loaded [`Settings`] has the fields `init` needs
 //!    (`layout.prompt_overrides_dir`). If `--push` is set, also
@@ -34,8 +34,7 @@
 //!
 //! Per-session source clones are materialized at session start from
 //! `[source]` (see [`crate::source`]); init does not touch source repo
-//! state at all. There is no submodule, no `.gitmodules`, and no
-//! `[stacks_core]` stanza post-cutover (v3 Phase 4).
+//! state at all. No submodule is added, no `.gitmodules` is written.
 //!
 //! `init` is filesystem-only. It does NOT create the GitHub repo, the
 //! bot fork, or the PAT — those stay manual.

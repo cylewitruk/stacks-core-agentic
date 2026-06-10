@@ -148,11 +148,11 @@ pub fn compute_summary(
     let outcome_counts = aggregate_counts(&experiments);
     let next_targets_hint = compute_hint(&experiments);
 
-    // v3 Phase 3 cutover: populate source-provenance fields from
-    // `<session>/results/source.json` when it exists (every
-    // post-cutover session writes it at session start). Sessions that
-    // ran pre-cutover may have no source.json — leave fields `None`
-    // in that case so legacy artifacts continue to finalize cleanly.
+    // Populate source-provenance fields from
+    // `<session>/results/source.json` when it exists (every session
+    // writes it at session start). Legacy sessions may have no
+    // source.json — leave fields `None` so those artifacts continue
+    // to finalize cleanly.
     let source_path = inputs.layout.source_json();
     let (source_url, source_branch, source_sha, source_fetched_at) = if source_path.exists() {
         let s = crate::models::source::SourceJson::read(&source_path)

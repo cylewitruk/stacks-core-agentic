@@ -51,15 +51,15 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
         .layout
         .stacks_bench_data_dir
         .clone();
-    // v3 Phase 3 cutover: Phase 3 candidate bench cargo cwd is the
-    // per-session source checkout. Bench run is downstream of session
-    // start, so source.json MUST already exist — `read_session_source`
-    // bails loudly if it doesn't.
+    // Phase 3 candidate bench cargo cwd is the per-session source
+    // checkout. Bench run is downstream of session start, so
+    // source.json MUST already exist — `read_session_source` bails
+    // loudly if it doesn't.
     let workspace_root = ctx
         .layout
         .require_agent_workspace_root()?;
     let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
-        .context("v3 Phase 3: per-session source.json required for bench run")?;
+        .context("per-session source.json required for bench run")?;
     let cargo_cwd = resolved
         .session_checkout
         .clone();

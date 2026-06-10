@@ -74,10 +74,9 @@ pub fn collect_findings(ctx: &CliContext) -> Result<Vec<Finding>> {
     Ok(findings)
 }
 
-/// v3 Phase 3 cutover: every `session run` materializes a per-session
-/// source checkout under
-/// `<agent_workspace_root>/sessions/<id>/repos/<cache_id>/`. That requires
-/// three config invariants:
+/// Every `session run` materializes a per-session source checkout
+/// under `<agent_workspace_root>/sessions/<id>/repos/<cache_id>/`.
+/// That requires three config invariants:
 ///
 /// 1. `[source].url` must be set.
 /// 2. `[source].branch` must be set.
@@ -652,7 +651,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // v3 Phase 3: check_source_config — settings-side preflight gate.
+    // check_source_config — settings-side preflight gate.
     // ─────────────────────────────────────────────────────────────────
 
     use crate::settings::SourceSettings;

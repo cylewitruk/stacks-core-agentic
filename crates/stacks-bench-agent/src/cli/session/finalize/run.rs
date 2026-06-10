@@ -25,15 +25,15 @@ pub struct FinalizeRunArgs {}
 pub async fn run(args: FinalizeRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
-    // v3 Phase 3 cutover: finalize's DB-consistency probe uses the
-    // archived Phase 0a baseline binary. Cargo cwd is the per-session
-    // source checkout (looked up via source.json — finalize is
-    // strictly downstream of session start).
+    // Finalize's DB-consistency probe uses the archived Phase 0a
+    // baseline binary. Cargo cwd is the per-session source checkout
+    // (looked up via source.json — finalize is strictly downstream
+    // of session start).
     let workspace_root = ctx
         .layout
         .require_agent_workspace_root()?;
     let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
-        .context("v3 Phase 3: per-session source.json required for finalize")?;
+        .context("per-session source.json required for finalize")?;
     let bench = StacksBenchCli::strict_archived(
         layout.baseline_bin_path(),
         ctx.layout

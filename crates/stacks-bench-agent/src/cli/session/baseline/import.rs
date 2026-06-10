@@ -27,10 +27,9 @@ pub struct BaselineImportArgs {
 pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
-    // v3 Phase 3 cutover: Phase 0a's cargo build runs in the
-    // per-session source checkout. Materialize fresh (or reuse on
-    // resume) — same contract as `session run` + `session baseline
-    // run`.
+    // Phase 0a's cargo build runs in the per-session source
+    // checkout. Materialize fresh (or reuse on resume) — same
+    // contract as `session run` + `session baseline run`.
     std::fs::create_dir_all(&layout.results_dir).with_context(|| {
         format!("creating session results dir {}", layout.results_dir.display())
     })?;
@@ -45,7 +44,7 @@ pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &Sessio
         &ctx.settings.source,
         &layout.source_json(),
     )
-    .context("v3 Phase 3: per-session source materialization")?;
+    .context("per-session source materialization")?;
     let stacks_core_base = resolved
         .session_checkout
         .clone();

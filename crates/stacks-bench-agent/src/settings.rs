@@ -83,9 +83,9 @@ pub struct Settings {
     /// Upstream source repo we're optimizing — URL, branch, optional
     /// stable cache id. Required by every session phase that needs
     /// source (Phase 0a build, Phase 2 per-target clones, finalize +
-    /// archive provenance) post-cutover (v3 iteration). Settings
-    /// parsing validates `source.id` shape so the cache path segments
-    /// can't escape the workspace root.
+    /// archive provenance). Settings parsing validates `source.id`
+    /// shape so the cache path segments can't escape the workspace
+    /// root.
     #[serde(default)]
     pub source: SourceSettings,
 
@@ -1569,9 +1569,8 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // v3 Phase 1: source.id slug regex validation. Table-driven against
-    // the accept/reject fixtures pinned in the iteration's Config
-    // contract section.
+    // source.id slug regex validation. Table-driven against the
+    // accept/reject fixtures pinned in the `[source]` config contract.
     // ─────────────────────────────────────────────────────────────────
 
     #[test]

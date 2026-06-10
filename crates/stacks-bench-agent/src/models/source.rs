@@ -1,7 +1,6 @@
 //! `<session>/results/source.json` — typed source-provenance record
-//! written exactly once at session start (by the v3 Phase 3 consumer
-//! cutover) and read by every later phase that needs to confirm the
-//! source state.
+//! written exactly once at session start and read by every later
+//! phase that needs to confirm the source state.
 //!
 //! Decoupled from the `[source]` config stanza
 //! ([`crate::settings::SourceSettings`]): `source.json` carries the

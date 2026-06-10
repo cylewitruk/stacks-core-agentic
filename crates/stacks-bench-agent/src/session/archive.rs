@@ -508,8 +508,8 @@ fn ledger_contains_id(path: &Path, id: &str) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        // `from_ledger_line` accepts both v1 (pre-v3-cutover; no
-        // source_* fields) and v2 records, so an archive idempotency
+        // `from_ledger_line` accepts both legacy v1 (no source_*
+        // fields) and current v2 records, so an archive idempotency
         // check on a long-running operator-main `sessions.jsonl`
         // doesn't silently skip every legacy line.
         let Ok(rec) = SessionRecord::from_ledger_line(line) else {
@@ -606,10 +606,10 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
     let targets = build_target_records(inputs.layout, summary.as_ref(), targets_doc.as_ref())
         .unwrap_or_default();
 
-    // v3 Phase 3 cutover: populate source-provenance fields from
-    // `<session>/results/source.json` when it exists. Pre-cutover
-    // sessions have no source.json — leave fields `None` in that
-    // case so legacy archives continue to flow through.
+    // Populate source-provenance fields from
+    // `<session>/results/source.json` when it exists. Legacy
+    // sessions have no source.json — leave fields `None` so those
+    // archives continue to flow through.
     let source_path = inputs.layout.source_json();
     let (source_url, source_branch, source_sha, source_fetched_at) = if source_path.exists() {
         let s = crate::models::source::SourceJson::read(&source_path)

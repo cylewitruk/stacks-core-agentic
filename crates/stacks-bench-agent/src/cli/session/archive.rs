@@ -36,15 +36,15 @@ pub async fn run(args: ArchiveArgs, ctx: &CliContext, session_id: &SessionId) ->
     // warn before the immutable write. Same helper the full-pipeline
     // `session run` invokes at Phase 6.
     //
-    // v3 Phase 3 cutover: use the archived Phase 0a baseline binary
-    // with the per-session source checkout (looked up via
-    // `source.json` — archive is strictly downstream of session start),
-    // mirroring standalone finalize.
+    // Use the archived Phase 0a baseline binary with the per-session
+    // source checkout (looked up via `source.json` — archive is
+    // strictly downstream of session start), mirroring standalone
+    // finalize.
     let workspace_root = ctx
         .layout
         .require_agent_workspace_root()?;
     let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
-        .context("v3 Phase 3: per-session source.json required for archive")?;
+        .context("per-session source.json required for archive")?;
     let bench = StacksBenchCli::strict_archived(
         layout.baseline_bin_path(),
         ctx.layout

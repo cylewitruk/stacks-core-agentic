@@ -179,10 +179,10 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     /// Read one line of `sessions.jsonl` in a backwards-compatible
-    /// way: accept both pre-v3-cutover (`schema_version=1`, no
-    /// `source_*` fields) and post-v3 (`schema_version=2`) records.
-    /// v1 lines are promoted in-place to the v2 in-memory shape with
-    /// `source_*` fields set to `None`.
+    /// way: accept legacy v1 records (`schema_version=1`, no
+    /// `source_*` fields) and current v2 records. v1 lines are
+    /// promoted in-place to the v2 in-memory shape with `source_*`
+    /// fields set to `None`.
     ///
     /// Use this on every `sessions.jsonl` read site to avoid silently
     /// skipping legacy records (the unparseable-line fall-through in
@@ -452,8 +452,8 @@ mod tests {
         assert!(!s.contains("\"source_url\""));
     }
 
-    /// v3 Phase 2 — backwards-compat reader accepts both pre-cutover
-    /// v1 (no source fields) and post-cutover v2 records.
+    /// Backwards-compat reader accepts both legacy v1 records (no
+    /// source fields) and current v2 records.
     #[test]
     fn from_ledger_line_accepts_legacy_v1_records() {
         // Hand-rolled v1 line (no source_* fields, schema_version=1).

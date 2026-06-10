@@ -188,13 +188,11 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
         crate::session::preflight::report(&findings)?;
     }
 
-    // v3 Phase 3: materialize the per-session source checkout +
-    // write `source.json` BEFORE constructing PhaseEnv. Every
-    // downstream phase that previously consumed
-    // `<operator>/repos/<base>/` now reads
-    // `env.source.session_checkout`. Order: preflight (which
-    // validates [source] config) -> .run.pid install -> source
-    // materialization -> PhaseEnv -> Phase 0a.
+    // Materialize the per-session source checkout + write
+    // `source.json` BEFORE constructing PhaseEnv. Every downstream
+    // phase reads `env.source.session_checkout`. Order: preflight
+    // (which validates [source] config) -> .run.pid install ->
+    // source materialization -> PhaseEnv -> Phase 0a.
     let session_layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
     println!(
         "session: {}",
@@ -235,7 +233,7 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
         &ctx.settings.source,
         &session_layout.source_json(),
     )
-    .context("v3 Phase 3: per-session source materialization")?;
+    .context("per-session source materialization")?;
     println!(
         "source: {} ({}@{})",
         source
@@ -297,12 +295,10 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
 /// depends on `baseline/bin/stacks-bench` existing — including in
 /// imported-baseline sessions where Phase 0b is skipped.
 fn phase_0a_archive_baseline(env: &PhaseEnv<'_>) -> Result<baseline::ArchiveBinaryOutputs> {
-    // v3 Phase 3 cutover: `cargo build` runs inside the per-session
-    // source checkout, not inside `<operator>/repos/<base>/`. This
-    // eliminates the cross-session `<base>/target/` pollution drift
-    // mode named in Decision 0003 (concurrent sessions can't share
-    // the operator submodule's `target/` cache anymore — each session
-    // has its own `target/` under the per-session checkout).
+    // `cargo build` runs inside the per-session source checkout, so
+    // each session has its own `target/` cache — concurrent sessions
+    // cannot pollute each other's build state (the drift mode named
+    // in Decision 0003).
     let stacks_core_base = env
         .source
         .session_checkout
@@ -329,8 +325,8 @@ fn phase_0_baseline(
     env: &PhaseEnv<'_>,
     archive_outputs: &baseline::ArchiveBinaryOutputs,
 ) -> Result<()> {
-    // v3 Phase 3 cutover: bench cargo cwd is the per-session source
-    // checkout (matches the cwd Phase 0a built against).
+    // Bench cargo cwd is the per-session source checkout (matches
+    // the cwd Phase 0a built against).
     let stacks_core_base = env
         .source
         .session_checkout
@@ -451,7 +447,7 @@ async fn phase_1_7_merge(env: &PhaseEnv<'_>) -> Result<()> {
 /// improvement_pct comparison.
 fn phase_1_8_calibration(env: &PhaseEnv<'_>) -> Result<()> {
     let targets = loader::read_optimization_targets(&env.layout).context("Phase 1.8")?;
-    // v3 Phase 3 cutover: same per-session checkout as Phase 0a/0.
+    // Same per-session checkout as Phase 0a/0.
     let stacks_core_base = env
         .source
         .session_checkout
@@ -535,8 +531,8 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
         .layout
         .stacks_bench_data_dir
         .clone();
-    // v3 Phase 3 cutover: Phase 3 candidate bench cargo cwd is the
-    // per-session source checkout, matching every other build step.
+    // Phase 3 candidate bench cargo cwd is the per-session source
+    // checkout, matching every other build step.
     let cargo_cwd = env
         .source
         .session_checkout
@@ -624,12 +620,11 @@ async fn phase_3_5_results_analyzer(env: &PhaseEnv<'_>) -> Result<()> {
 /// run-id refs first so they don't get baked into the immutable
 /// summary.
 fn phase_4_finalize(env: &PhaseEnv<'_>) -> Result<()> {
-    // v3 Phase 3 cutover: the DB-consistency probe shells out to
-    // `stacks-bench bench show` — use the archived Phase 0a baseline
-    // binary, not a `cargo stacks-bench` fallback against the
-    // soon-to-be-removed operator submodule. Cargo cwd is the
-    // per-session source checkout for the (unused, since strict)
-    // cargo fallback path.
+    // The DB-consistency probe shells out to `stacks-bench bench
+    // show` — use the archived Phase 0a baseline binary (strict; no
+    // `cargo stacks-bench` fallback). Cargo cwd is the per-session
+    // source checkout for the (unused, since strict) cargo fallback
+    // path.
     let bench = StacksBenchCli::strict_archived(
         env.layout.baseline_bin_path(),
         env.ctx
@@ -685,9 +680,9 @@ async fn phase_5_publish(env: &PhaseEnv<'_>) -> Result<()> {
 /// dangling DB ↔ artifact refs first so the archive doesn't bake them
 /// into the immutable branch.
 fn phase_6_archive(env: &PhaseEnv<'_>) -> Result<()> {
-    // v3 Phase 3 cutover: same archived-binary path as Phase 4
-    // finalize. The DB-consistency probe doesn't need cargo; the
-    // strict-archived path keeps the contract self-contained.
+    // Same archived-binary path as Phase 4 finalize. The
+    // DB-consistency probe doesn't need cargo; the strict-archived
+    // path keeps the contract self-contained.
     let bench = StacksBenchCli::strict_archived(
         env.layout.baseline_bin_path(),
         env.ctx

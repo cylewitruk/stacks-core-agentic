@@ -30,12 +30,12 @@ pub async fn run(
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
     let harness = Arc::new(CodexHarness::new());
 
-    // v3 Phase 3: standalone analyze-results reads source.json.
+    // Standalone analyze-results reads source.json.
     let workspace_root = ctx
         .layout
         .require_agent_workspace_root()?;
     let resolved = read_session_source(workspace_root, session_id.as_str(), &layout.source_json())
-        .context("v3 Phase 3: per-session source.json required")?;
+        .context("per-session source.json required")?;
 
     let outputs = results_analyzer::run(Inputs {
         layout,

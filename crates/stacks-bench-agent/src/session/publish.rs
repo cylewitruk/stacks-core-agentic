@@ -842,13 +842,10 @@ pub async fn push<G: GhClient>(inputs: &PushInputs<'_, G>) -> Result<PushOutputs
         return Ok(PushOutputs::default());
     }
 
-    // v3 Phase 3 cutover: `publish.head_owner` is required (validated
-    // at preflight; see `cli::preflight::collect_publish_findings`).
-    // Pre-cutover, an unset `head_owner` derived from `<base>`'s
-    // remote URL — that fallback is gone because the operator
-    // submodule is going away in v3 Phase 4 and the per-session
-    // source checkout's `origin` (the bare cache) isn't a meaningful
-    // owner.
+    // `publish.head_owner` is required (validated at preflight; see
+    // `cli::preflight::collect_publish_findings`). There is no
+    // canonical place to derive it from in the per-session source
+    // checkout's remotes, so the operator must set it explicitly.
     let head_owner = inputs
         .config
         .publish_head_owner

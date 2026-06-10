@@ -22,8 +22,8 @@ pub struct CacheIdArgs {}
 /// Print the resolved cache id to stdout (no trailing newline beyond
 /// `println!`'s — shell substitution `$(sbagent source cache-id)`
 /// strips it). Reads `[source].url` + optional `[source].id` from
-/// settings; fails loudly if `[source].url` is unset (pre-v3-cutover
-/// operators have nothing meaningful to derive from).
+/// settings; fails loudly if `[source].url` is unset (nothing
+/// meaningful to derive from).
 pub fn run(_args: CacheIdArgs, ctx: &CliContext) -> Result<()> {
     let (url, _branch) = ctx
         .settings
