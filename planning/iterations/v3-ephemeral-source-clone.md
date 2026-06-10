@@ -460,9 +460,12 @@ In-process / unit (each phase tests its own slice; rolled-up here):
       during a session (Phase 3 — the entire `<base>` field is gone).
 - [x] `sbagent init` produces no submodule on fresh dirs (Phase 4 —
       `tests/init.rs::init_writes_no_gitmodules_and_no_submodule_pointer`).
-- [ ] Migration recipe converges a pre-cutover operator dir to the
-      post-cutover shape (recipe shipped in `docs/setup.md`; manual
-      validation pending on a real operator repo).
+- [x] Migration recipe converges a pre-cutover operator dir to the
+      post-cutover shape (v4 Phase 3 —
+      `tests/migration_recipe.rs::migration_recipe_converges_pre_cutover_operator_to_post_cutover`,
+      fixture-driven against a synthetic operator dir; live validation
+      against a real operator repo remains under the live-smoke bullet
+      below).
 
 Live / operator (deferred to a v3 smoke; folds into the rerun of the
 [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md) post-cutover):

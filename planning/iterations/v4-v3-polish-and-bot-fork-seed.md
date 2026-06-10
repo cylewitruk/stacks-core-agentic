@@ -158,20 +158,20 @@ preserve read-compat for v1 + v2 archives.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] A v1 ledger line round-trips through the v3 reader unchanged.
-- [ ] A v2 ledger line round-trips through the v3 reader (the
+- [x] A v1 ledger line round-trips through the v3 reader unchanged.
+- [x] A v2 ledger line round-trips through the v3 reader (the
       legacy field is dropped silently).
-- [ ] A v3 ledger line round-trips through the v3 reader; the
+- [x] A v3 ledger line round-trips through the v3 reader; the
       typed model has no `stacks_core_base_sha` field.
-- [ ] `sbagent check` passes against the regenerated bundled schema.
-- [ ] No existing v2 round-trip test loses coverage — the
+- [x] `sbagent check` passes against the regenerated bundled schema.
+- [x] No existing v2 round-trip test loses coverage — the
       mixed-version tests cover the gap.
 
 **Tests:**
@@ -186,7 +186,8 @@ preserve read-compat for v1 + v2 archives.
 **Goal:** The `docs/setup.md` "Migrating a pre-v3 operator dir
 (one-time)" recipe is exercised against a fixture pre-cutover
 operator dir, converging it to the post-cutover shape; the
-converged shape is asserted by a snapshot test.
+converged shape is asserted by direct assertions on the resulting
+filesystem + git state.
 
 **Scope:**
 
@@ -216,17 +217,18 @@ converged shape is asserted by a snapshot test.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `just test migration_recipe` passes on a clean checkout.
-- [ ] If the recipe needed any wording fixes during the rehearsal,
-      `docs/setup.md` carries them.
-- [ ] v3 iteration doc updated to mark the migration-recipe bullet
+- [x] `just test migration_recipe` passes on a clean checkout.
+- [x] If the recipe needed any wording fixes during the rehearsal,
+      `docs/setup.md` carries them. (Added `rmdir ~/operator/repos`
+      cleanup step after `git rm`.)
+- [x] v3 iteration doc updated to mark the migration-recipe bullet
       done.
 
 **Tests:**

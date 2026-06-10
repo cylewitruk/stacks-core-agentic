@@ -295,7 +295,8 @@ git clone --bare --local \
 git -C ~/operator submodule deinit -f repos/stacks-core
 git -C ~/operator rm -rf repos/stacks-core
 rm -rf ~/operator/.git/modules/repos/stacks-core
-rm -f ~/operator/.gitmodules       # if no other submodules remain
+rm -f ~/operator/.gitmodules                   # if no other submodules remain
+rmdir ~/operator/repos 2>/dev/null || true     # if no sibling subdirs remain
 
 # 5. Commit the removal on operator main as the bot identity.
 #    (Use the same identity sbagent uses for the seeded initial commit.)
