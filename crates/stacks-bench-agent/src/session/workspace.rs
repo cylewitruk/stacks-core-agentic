@@ -224,10 +224,11 @@ fn read_archived_ids(path: &Path) -> Result<HashSet<String>> {
         if line.is_empty() {
             continue;
         }
-        // `from_ledger_line` accepts both legacy v1 and current v2
-        // records, so workspace prune's archived-set lookup against a
-        // long-running `sessions.jsonl` doesn't silently treat
-        // legacy sessions as "not archived" and offer to prune them.
+        // `from_ledger_line` accepts every supported schema version
+        // (v1 / v2 / v3), so workspace prune's archived-set lookup
+        // against a long-running `sessions.jsonl` doesn't silently
+        // treat historical sessions as "not archived" and offer to
+        // prune them.
         let Ok(rec) = SessionRecord::from_ledger_line(line) else {
             continue;
         };
@@ -514,7 +515,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         use crate::models::ToJson;
-        use crate::models::common::SchemaVersionV2;
+        use crate::models::common::SchemaVersionV3;
         use crate::models::session_record::{
             SessionRange, SessionRecord, SessionRecordKind, SessionStatus,
         };
@@ -528,7 +529,7 @@ mod tests {
             .join("sessions.jsonl");
         let rec = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             id: "20260601-archived".to_owned(),
             artifact_branch: "session/20260601-archived".to_owned(),
             artifact_sha: "deadbeef".to_owned(),
@@ -540,7 +541,6 @@ mod tests {
             failure_reason: None,
             sbagent_version: "0.1.0".to_owned(),
             sbagent_git_sha: None,
-            stacks_core_base_sha: None,
             range: SessionRange {
                 start_at: None,
                 count: None,

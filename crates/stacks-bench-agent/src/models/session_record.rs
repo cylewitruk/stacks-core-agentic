@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
-use crate::models::common::{DeliveryMode, KEBAB_PATTERN, SchemaVersionV2};
+use crate::models::common::{DeliveryMode, KEBAB_PATTERN, SchemaVersionV3};
 
 /// Discriminator for ledger lines. Single variant today; left open so
 /// future event kinds (e.g. post-completion observations from a future
@@ -93,11 +93,14 @@ pub enum TargetStatusStage {
 pub struct SessionRecord {
     /// Discriminator — currently always `session_completed`.
     pub kind: SessionRecordKind,
-    /// Constant: 2 (v3 iteration bump — adds the `source_*` fields).
-    /// Records emitted before the v3 cutover carry `1` and lack source
-    /// fields; [`SessionRecord::from_ledger_line`] is the
-    /// backwards-compat reader.
-    pub schema_version: SchemaVersionV2,
+    /// Constant: 3. The previous v2 write path hardcoded
+    /// `stacks_core_base_sha` to `None` once source provenance moved
+    /// to the four `source_*` fields below, so v3 drops the dead
+    /// column. Records on disk may also carry `2` (carry
+    /// `stacks_core_base_sha`) or `1` (no source fields at all);
+    /// [`SessionRecord::from_ledger_line`] is the backwards-compat
+    /// reader for all three.
+    pub schema_version: SchemaVersionV3,
     /// Session id (e.g. `20260518-190321-nextest-flags-smoke`).
     pub id: String,
     /// Name of the write-once branch holding the full bulk:
@@ -135,13 +138,6 @@ pub struct SessionRecord {
     /// the binary was built outside a git checkout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sbagent_git_sha: Option<String>,
-    /// HEAD sha of the stacks-core base checkout at session start.
-    /// `None` only if the session ran without a configured base
-    /// (which today is a configuration error for any phase past
-    /// baseline, but the schema allows it for future read-only
-    /// session kinds).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stacks_core_base_sha: Option<String>,
     /// Range parameters passed to the baseline + every bench run in
     /// this session. Captured here so the ledger can answer "did this
     /// session test enough blocks?" without traversing the archive
@@ -159,10 +155,13 @@ pub struct SessionRecord {
     /// One row per target the session touched. Ordered by target id.
     pub targets: Vec<TargetRecord>,
     /// Source-provenance fields copied from
-    /// `<session>/results/source.json` at archive time. Populated only
-    /// on post-v3-cutover sessions; absent on legacy paths.
-    /// [`SessionRecord::from_ledger_line`] promotes v1 records (which
-    /// lack these fields entirely) to `None` for compatibility. See
+    /// `<session>/results/source.json` at archive time. Populated
+    /// when `source.json` exists in the session bulk; absent on
+    /// legacy archives that predate the source.json contract
+    /// (notably v1 records, but also any v2/v3 archive whose
+    /// session didn't materialize source.json).
+    /// [`SessionRecord::from_ledger_line`] promotes records without these
+    /// fields to `None` for compatibility. See
     /// [`crate::models::source::SourceJson`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
@@ -179,10 +178,13 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     /// Read one line of `sessions.jsonl` in a backwards-compatible
-    /// way: accept legacy v1 records (`schema_version=1`, no
-    /// `source_*` fields) and current v2 records. v1 lines are
-    /// promoted in-place to the v2 in-memory shape with `source_*`
-    /// fields set to `None`.
+    /// way: accept legacy v1 records (no `source_*` fields), v2
+    /// records (have `stacks_core_base_sha`), and current v3 records
+    /// (drop `stacks_core_base_sha`). All three are promoted in-place
+    /// to the v3 in-memory shape — v1 records gain `None` source
+    /// fields, v2 records have their `stacks_core_base_sha` field
+    /// stripped (the SHA is preserved in the v2 raw JSON on disk;
+    /// the typed in-memory shape just doesn't carry it).
     ///
     /// Use this on every `sessions.jsonl` read site to avoid silently
     /// skipping legacy records (the unparseable-line fall-through in
@@ -195,25 +197,28 @@ impl SessionRecord {
             .and_then(|s| s.as_u64())
             .unwrap_or(1);
         match v {
-            1 => {
-                // Bump in-place so the v2 deserializer accepts the
-                // shape. v1 records have no `source_*` fields; the v2
-                // struct's `#[serde(default)]` on those Options fills
-                // them in as `None`.
+            1 | 2 => {
+                // Bump in-place so the v3 deserializer accepts the
+                // shape. v1 records have no `source_*` fields; the
+                // v3 struct's `#[serde(default)]` on those Options
+                // fills them in as `None`. v2 records carry
+                // `stacks_core_base_sha`; strip it here so v3's
+                // `deny_unknown_fields` doesn't reject the line.
                 if let Some(obj) = value.as_object_mut() {
-                    obj.insert("schema_version".to_owned(), serde_json::json!(2));
+                    obj.insert("schema_version".to_owned(), serde_json::json!(3));
+                    obj.remove("stacks_core_base_sha");
                 }
                 let rec: Self = serde_json::from_value(value)
-                    .map_err(|e| anyhow::anyhow!("v1 ledger line failed v2 promotion: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("v{v} ledger line failed v3 promotion: {e}"))?;
                 Ok(rec)
             }
-            2 => {
+            3 => {
                 let rec: Self = serde_json::from_value(value)
-                    .map_err(|e| anyhow::anyhow!("v2 ledger line: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("v3 ledger line: {e}"))?;
                 Ok(rec)
             }
             other => {
-                bail!("unsupported sessions.jsonl schema_version {other}; expected 1 or 2");
+                bail!("unsupported sessions.jsonl schema_version {other}; expected 1, 2, or 3");
             }
         }
     }
@@ -407,7 +412,7 @@ mod tests {
     fn record_round_trips_through_json() {
         let r = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: SchemaVersionV2,
+            schema_version: SchemaVersionV3,
             id: "20260518-190321-test".to_owned(),
             artifact_branch: "session/20260518-190321-test".to_owned(),
             artifact_sha: "deadbeef".repeat(5),
@@ -421,7 +426,6 @@ mod tests {
             failure_reason: None,
             sbagent_version: "0.1.0".to_owned(),
             sbagent_git_sha: Some("abcdef".repeat(7)),
-            stacks_core_base_sha: Some("f4cab0a011e273e1f1f9b5249afee2fba6123da5".to_owned()),
             range: SessionRange {
                 start_at: Some(5_003_180),
                 count: Some(100),
@@ -452,8 +456,9 @@ mod tests {
         assert!(!s.contains("\"source_url\""));
     }
 
-    /// Backwards-compat reader accepts both legacy v1 records (no
-    /// source fields) and current v2 records.
+    /// Backwards-compat reader accepts every supported schema
+    /// version (v1 legacy / v2 / v3 current). This case covers v1
+    /// (no source fields); v2 and v3 have their own tests below.
     #[test]
     fn from_ledger_line_accepts_legacy_v1_records() {
         // Hand-rolled v1 line (no source_* fields, schema_version=1).
@@ -481,13 +486,18 @@ mod tests {
             rec.source_fetched_at
                 .is_none()
         );
-        // schema_version is now V2 in-memory (the on-disk record stays
+        // schema_version is now V3 in-memory (the on-disk record stays
         // v1; `from_ledger_line` doesn't mutate the file).
-        assert_eq!(rec.schema_version.get(), 2);
+        assert_eq!(rec.schema_version.get(), 3);
     }
 
+    /// v2 records carry `stacks_core_base_sha`; `from_ledger_line`
+    /// strips it during the v2 → v3 promotion so the v3 typed shape
+    /// (with `deny_unknown_fields`) accepts the line. The legacy
+    /// SHA stays in the on-disk record's raw JSON for archive
+    /// readers that want it.
     #[test]
-    fn from_ledger_line_accepts_native_v2_records() {
+    fn from_ledger_line_accepts_v2_records_and_strips_legacy_stacks_core_base_sha() {
         let v2 = r#"{
             "kind":"session_completed","schema_version":2,
             "id":"20260607-104400",
@@ -497,6 +507,7 @@ mod tests {
             "finished_at":"2026-06-07T11:00:00Z",
             "status":"succeeded",
             "sbagent_version":"0.2.0",
+            "stacks_core_base_sha":"f4cab0a011e273e1f1f9b5249afee2fba6123da5",
             "range":{"network":"mainnet"},
             "baseline_run_ids":[42],
             "phase_durations_secs":{"baseline":300.0},
@@ -506,18 +517,61 @@ mod tests {
             "source_sha":"0ad33704c259da4102b5f195617760003ac89c18",
             "source_fetched_at":"2026-06-07T10:43:59Z"
         }"#;
-        let rec = SessionRecord::from_ledger_line(v2).expect("v2 line should parse");
+        let rec = SessionRecord::from_ledger_line(v2).expect("v2 line should promote to v3");
         assert_eq!(rec.id, "20260607-104400");
+        assert_eq!(rec.schema_version.get(), 3);
         assert_eq!(
             rec.source_url.as_deref(),
             Some("https://github.com/stacks-network/stacks-core.git"),
         );
         assert_eq!(rec.source_branch.as_deref(), Some("feat/stacks-bench"));
         assert_eq!(rec.source_sha.as_deref(), Some("0ad33704c259da4102b5f195617760003ac89c18"),);
-        assert_eq!(
-            rec.source_fetched_at
-                .as_deref(),
-            Some("2026-06-07T10:43:59Z")
+    }
+
+    #[test]
+    fn from_ledger_line_accepts_native_v3_records() {
+        let v3 = r#"{
+            "kind":"session_completed","schema_version":3,
+            "id":"20260609-120000",
+            "artifact_branch":"session/20260609-120000",
+            "artifact_sha":"cafebabecafebabecafebabecafebabecafebabe",
+            "started_at":"2026-06-09T12:00:00Z",
+            "finished_at":"2026-06-09T12:15:00Z",
+            "status":"succeeded",
+            "sbagent_version":"0.3.0",
+            "range":{"network":"mainnet"},
+            "baseline_run_ids":[100],
+            "phase_durations_secs":{"baseline":280.0},
+            "targets":[],
+            "source_url":"https://github.com/cylewitruk/stacks-core.git",
+            "source_branch":"feat/stacks-bench",
+            "source_sha":"1234567890abcdef1234567890abcdef12345678",
+            "source_fetched_at":"2026-06-09T11:59:59Z"
+        }"#;
+        let rec = SessionRecord::from_ledger_line(v3).expect("v3 line should parse");
+        assert_eq!(rec.id, "20260609-120000");
+        assert_eq!(rec.schema_version.get(), 3);
+        assert_eq!(rec.source_branch.as_deref(), Some("feat/stacks-bench"));
+    }
+
+    /// A v3 record carrying `stacks_core_base_sha` is rejected — the
+    /// field was deliberately removed and `deny_unknown_fields`
+    /// catches that anyone writing v3 with the legacy field present
+    /// is confused about which schema they're on.
+    #[test]
+    fn from_ledger_line_rejects_v3_with_legacy_stacks_core_base_sha() {
+        let bad = r#"{
+            "kind":"session_completed","schema_version":3,
+            "id":"x","artifact_branch":"x","artifact_sha":"x",
+            "started_at":"x","finished_at":"x","status":"succeeded",
+            "sbagent_version":"x","range":{"network":"mainnet"},
+            "baseline_run_ids":[],"phase_durations_secs":{},"targets":[],
+            "stacks_core_base_sha":"f4cab0a011"
+        }"#;
+        let err = SessionRecord::from_ledger_line(bad).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("v3 ledger line"),
+            "expected v3-deserializer rejection: {err:#}",
         );
     }
 

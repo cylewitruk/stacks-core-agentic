@@ -131,7 +131,7 @@ fn archive_dry_run_creates_branch_and_ledger() {
     let v: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(v["id"], "20260518-190321-test");
     assert_eq!(v["kind"], "session_completed");
-    assert_eq!(v["schema_version"], 2);
+    assert_eq!(v["schema_version"], 3);
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn archive_populates_session_record_source_fields_from_source_json() {
         .find(|l| l.contains("\"20260607-104400-v3\""))
         .expect("ledger line for session");
     let v: serde_json::Value = serde_json::from_str(line).unwrap();
-    assert_eq!(v["schema_version"], 2);
+    assert_eq!(v["schema_version"], 3);
     assert_eq!(v["source_url"], "https://github.com/stacks-network/stacks-core.git",);
     assert_eq!(v["source_branch"], "feat/stacks-bench");
     assert_eq!(v["source_sha"], "0ad33704c259da4102b5f195617760003ac89c18");

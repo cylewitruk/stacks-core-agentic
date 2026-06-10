@@ -20,8 +20,8 @@
         }
       ]
     },
-    "SchemaVersionV2": {
-      "const": 2,
+    "SchemaVersionV3": {
+      "const": 3,
       "type": "integer"
     },
     "SessionRange": {
@@ -361,8 +361,8 @@
       "type": "string"
     },
     "schema_version": {
-      "$ref": "#/$defs/SchemaVersionV2",
-      "description": "Constant: 2 (v3 iteration bump — adds the `source_*` fields).\nRecords emitted before the v3 cutover carry `1` and lack source\nfields; [`SessionRecord::from_ledger_line`] is the\nbackwards-compat reader."
+      "$ref": "#/$defs/SchemaVersionV3",
+      "description": "Constant: 3. The previous v2 write path hardcoded\n`stacks_core_base_sha` to `None` once source provenance moved\nto the four `source_*` fields below, so v3 drops the dead\ncolumn. Records on disk may also carry `2` (carry\n`stacks_core_base_sha`) or `1` (no source fields at all);\n[`SessionRecord::from_ledger_line`] is the backwards-compat\nreader for all three."
     },
     "source_branch": {
       "description": "See [`SessionRecord::source_url`].",
@@ -386,14 +386,7 @@
       ]
     },
     "source_url": {
-      "description": "Source-provenance fields copied from\n`<session>/results/source.json` at archive time. Populated only\non post-v3-cutover sessions; absent on legacy paths.\n[`SessionRecord::from_ledger_line`] promotes v1 records (which\nlack these fields entirely) to `None` for compatibility. See\n[`crate::models::source::SourceJson`].",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "stacks_core_base_sha": {
-      "description": "HEAD sha of the stacks-core base checkout at session start.\n`None` only if the session ran without a configured base\n(which today is a configuration error for any phase past\nbaseline, but the schema allows it for future read-only\nsession kinds).",
+      "description": "Source-provenance fields copied from\n`<session>/results/source.json` at archive time. Populated\nwhen `source.json` exists in the session bulk; absent on\nlegacy archives that predate the source.json contract\n(notably v1 records, but also any v2/v3 archive whose\nsession didn't materialize source.json).\n[`SessionRecord::from_ledger_line`] promotes records without these\nfields to `None` for compatibility. See\n[`crate::models::source::SourceJson`].",
       "type": [
         "string",
         "null"

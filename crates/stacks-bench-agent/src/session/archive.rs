@@ -508,10 +508,11 @@ fn ledger_contains_id(path: &Path, id: &str) -> Result<bool> {
         if line.trim().is_empty() {
             continue;
         }
-        // `from_ledger_line` accepts both legacy v1 (no source_*
-        // fields) and current v2 records, so an archive idempotency
-        // check on a long-running operator-main `sessions.jsonl`
-        // doesn't silently skip every legacy line.
+        // `from_ledger_line` accepts every supported schema
+        // version (v1 legacy / v2 / v3 current), so an archive
+        // idempotency check on a long-running operator-main
+        // `sessions.jsonl` doesn't silently skip any historical
+        // line.
         let Ok(rec) = SessionRecord::from_ledger_line(line) else {
             continue;
         };
@@ -595,14 +596,6 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
             .to_owned(),
     };
 
-    // Pre-v3 the operator submodule HEAD was the canonical "source
-    // SHA" recorded here. Post-cutover the per-session `source.json`
-    // (populated below) carries the same information under
-    // `source_sha`; this field stays `None` on new sessions and is
-    // retained on `SessionRecord` only for read-compatibility with
-    // archived pre-cutover entries.
-    let stacks_core_base_sha = None;
-
     let targets = build_target_records(inputs.layout, summary.as_ref(), targets_doc.as_ref())
         .unwrap_or_default();
 
@@ -621,7 +614,7 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
 
     Ok(SessionRecord {
         kind: SessionRecordKind::SessionCompleted,
-        schema_version: crate::models::common::SchemaVersionV2,
+        schema_version: crate::models::common::SchemaVersionV3,
         id: session_id_str,
         artifact_branch: branch.to_owned(),
         artifact_sha: String::new(), // filled in after the commit lands
@@ -633,7 +626,6 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
         failure_reason,
         sbagent_version: SBAGENT_VERSION.to_owned(),
         sbagent_git_sha: sbagent_git_sha().map(str::to_owned),
-        stacks_core_base_sha,
         range,
         baseline_run_ids,
         phase_durations_secs: BTreeMap::new(),
@@ -1066,7 +1058,7 @@ mod tests {
         writeln!(f, "{{}}").unwrap();
         let rec = SessionRecord {
             kind: SessionRecordKind::SessionCompleted,
-            schema_version: crate::models::common::SchemaVersionV2,
+            schema_version: crate::models::common::SchemaVersionV3,
             id: "20260518-190321".to_owned(),
             artifact_branch: "session/20260518-190321".to_owned(),
             artifact_sha: "abc".to_owned(),
@@ -1078,7 +1070,6 @@ mod tests {
             failure_reason: None,
             sbagent_version: "0.1.0".to_owned(),
             sbagent_git_sha: None,
-            stacks_core_base_sha: None,
             range: SessionRange {
                 start_at: None,
                 count: None,
