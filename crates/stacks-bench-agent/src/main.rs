@@ -10,7 +10,15 @@ use stacks_bench_agent::cli::{CliArgs, dispatch};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = CliArgs::try_parse()?;
+    // `try_parse().unwrap_or_else(|e| e.exit())` is the canonical
+    // pattern: clap's own `Error::exit` writes `--help` / `--version`
+    // output to stdout with status 0 (the contract any CLI tool
+    // should honor), and writes real parse errors to stderr with
+    // status 2. Propagating the error via `?` would dump help text
+    // into anyhow's `Error: <...>` formatting and exit non-zero,
+    // which breaks every operator + integration-test `--help`
+    // invocation.
+    let args = CliArgs::try_parse().unwrap_or_else(|e| e.exit());
     init_tracing();
     dispatch(args).await
 }

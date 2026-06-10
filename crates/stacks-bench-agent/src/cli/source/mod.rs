@@ -1,14 +1,18 @@
-//! `sbagent source ...` — read-only helpers for the per-session source
-//! clone subsystem.
+//! `sbagent source ...` — helpers for the per-session source clone
+//! subsystem.
 //!
-//! Currently one subcommand: `cache-id`, which prints the deterministic
-//! cache id derived from `[source]` settings (or echoes a pinned
-//! `source.id`). Supports the Phase 4 operator migration recipe in
-//! [docs/setup.md](../../../../docs/setup.md) — the bare-cache directory
-//! is named `<workspace>/cache/<cache_id>.git`, and the recipe's
-//! `git clone --bare` step needs that id.
+//! Subcommands:
+//!
+//! - `cache-id`: prints the deterministic cache id derived from `[source]`
+//!   settings (or echoes a pinned `source.id`). Supports the operator migration
+//!   recipe in [docs/setup.md](../../../../docs/setup.md) — the bare-cache
+//!   directory is named `<workspace>/cache/<cache_id>.git`.
+//! - `seed`: one-shot push of a branch from `<source-url>` to `<dest-url>`.
+//!   Bootstraps a brand-new bot fork so the first `session run` can fetch
+//!   `[source].branch`. See the [`seed`] module for the auth contract.
 
 pub mod cache_id;
+pub mod seed;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -27,11 +31,16 @@ pub struct SourceArgs {
 pub enum SourceCommand {
     /// Print the cache id derived from `[source]` settings.
     CacheId(cache_id::CacheIdArgs),
+    /// Bare-clone a branch from a source URL and push it to a
+    /// destination URL. Bootstraps a brand-new bot fork before the
+    /// first `session run`.
+    Seed(seed::SeedArgs),
 }
 
 /// Dispatch for `sbagent source ...`.
 pub async fn run(args: SourceArgs, ctx: &CliContext) -> Result<()> {
     match args.command {
         SourceCommand::CacheId(a) => cache_id::run(a, ctx),
+        SourceCommand::Seed(a) => seed::run(a, ctx),
     }
 }

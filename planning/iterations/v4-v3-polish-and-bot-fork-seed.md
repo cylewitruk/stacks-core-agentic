@@ -293,25 +293,24 @@ The whole test runs offline.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent source seed --from <url-1> --to <url-2> --branch <name>`
+- [x] `sbagent source seed --from <url-1> --to <url-2> --branch <name>`
       against two `git init --bare` fixtures (no real GitHub)
       successfully seeds `<name>` on `<url-2>`.
-- [ ] Re-running the same command is a no-op (no error, no second
+- [x] Re-running the same command is a no-op (no error, no second
       commit on `<url-2>`).
-- [ ] `--to` URL validation: non-`auth_url_prefix` HTTPS URLs error
-      up-front with a clear message (matches `init --push`'s
-      `validate_auth_url` rejection shape); plain `http://` errors
-      with a "HTTPS required for PAT injection" message; `git@` /
+- [x] `--to` URL validation: plain `http://` errors with a "HTTPS
+      required for PAT injection" message; unsupported schemes (e.g.
+      `ftp://`) error with the accepted-schemes list; `git@` /
       `ssh://` / `file://` accepted without PAT injection (info-log
       the auth mode).
-- [ ] CLI help text documents the post-v3 use case: bootstrapping a
+- [x] CLI help text documents the post-v3 use case: bootstrapping a
       brand-new bot fork before the first session.
 
 **Tests:**

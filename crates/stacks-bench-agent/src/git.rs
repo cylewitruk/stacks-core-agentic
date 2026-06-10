@@ -610,6 +610,29 @@ pub fn clone_with_reference(base: &Path, branch: &str, dest: &Path) -> Result<()
     Ok(())
 }
 
+/// `git clone --bare --branch <branch> <source_url> <dest>` — pulls
+/// just `<branch>` from `<source_url>` into a bare repo at `<dest>`,
+/// no working tree. Used by `sbagent source seed` as the staging area
+/// for the subsequent push to the operator's writable fork.
+pub fn clone_bare_branch(source_url: &str, branch: &str, dest: &Path) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .arg("clone")
+        .arg("--bare")
+        .arg("--branch")
+        .arg(branch)
+        .arg(source_url)
+        .arg(dest)
+        .status()
+        .with_context(|| format!("spawn git clone --bare --branch {branch} {source_url}"))?;
+    if !status.success() {
+        bail!(
+            "git clone --bare --branch {branch} {source_url} exited {status}; verify the URL is \
+             reachable and carries {branch}",
+        );
+    }
+    Ok(())
+}
+
 /// `git switch -c <branch>` — create + check out `branch` from
 /// HEAD. Used by per-target clones to land on an
 /// `agent/<session>/<target>` branch.
@@ -724,10 +747,16 @@ pub fn ls_remote_no_prompt(dir: &Path, remote: &str) -> Result<()> {
     Ok(())
 }
 
-/// Push a refspec to an explicit destination URL with the
-/// PAT-via-env auth header overlaid. Used by `init --push` where
-/// the destination is a one-shot URL (not a configured remote).
-/// `base_env` is overlaid the same way [`push_with_pat`] does.
+/// Push a refspec to an explicit destination URL (not a configured
+/// remote). Used by `sbagent source seed` to push from its staging
+/// bare clone to the operator-supplied `--to` URL.
+///
+/// `env` is an optional auth-header overlay (typically the output of
+/// [`build_auth_header_env`]). Pass an empty slice for SSH /
+/// `file://` destinations, where git's own auth path handles
+/// credentials and PAT injection would be a silent no-op anyway —
+/// the helper is auth-agnostic; the caller decides whether to
+/// attach a header.
 pub fn push_url_refspec(
     bare_repo: &Path,
     dest_url: &str,
@@ -735,6 +764,12 @@ pub fn push_url_refspec(
     env: &[(String, String)],
 ) -> Result<()> {
     let status = std::process::Command::new("git")
+        // Override any operator-global `safe.bareRepository=explicit`:
+        // the typical caller hands us a bare repo (staging area for
+        // `sbagent source seed`), and git's bare-repo safety check
+        // would otherwise reject `git -C <bare> push`.
+        .arg("-c")
+        .arg("safe.bareRepository=all")
         .arg("-C")
         .arg(bare_repo)
         .arg("push")
