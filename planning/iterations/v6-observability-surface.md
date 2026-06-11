@@ -19,7 +19,7 @@ planning debt before the next iteration uses preflight as a hook.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0021-preflight-v2` | prologue (rescope/close) | planned |
+| `0021-preflight-v2` | prologue (rescope/close) | shipped (superseded by v3) |
 | `0036-observability-surface` | primary | planned |
 
 ## Why
@@ -38,9 +38,10 @@ v5's three landed fields are dark unless someone parses
 Plus one piece of planning hygiene that v3 made obsolete but never
 closed:
 
-- **`0021-preflight-v2`** explicitly says "If `ephemeral-source-clone`
-  ships first, delete or shrink this design" (see
-  [design/0021-preflight-v2.md:37](../design/0021-preflight-v2.md#L37)).
+- **`0021-preflight-v2`** explicitly said "If `ephemeral-source-clone`
+  ships first, delete or shrink this design" (see the now-archived
+  design at
+  [archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)).
   v3 shipped the ephemeral source clone. Both remaining checks
   (branch-ref divergence, network-fetch freshness) are obsoleted:
   per-session fetch + `source.json` SHA pinning catches the same
@@ -115,28 +116,40 @@ shrunken design (if one or two checks survive the v3 audit).
   bump") is impossible by construction. Expected verdict:
   superseded.
 - Update [planning/backlog.md](../backlog.md) to remove `0021`'s
-  entry (or shrink it). Move
-  [planning/design/0021-preflight-v2.md](../design/0021-preflight-v2.md)
-  to `planning/archive/superseded/0021-preflight-v2.md` with a
-  one-line "superseded by v3 per-session source clone" header note.
+  entry (or shrink it). Move the design doc to
+  [planning/archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)
+  with a one-line "superseded by v3 per-session source clone"
+  header note.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `0021-preflight-v2` no longer appears in `backlog.md`'s
-      candidate-items list (or its scope is documented as
-      shrunken).
-- [ ] If superseded: design doc lives at
-      `planning/archive/superseded/0021-preflight-v2.md` with a
-      short rationale paragraph naming the v3 mechanism that
-      subsumes each remaining check.
+- [x] `0021-preflight-v2` no longer appears in `backlog.md`'s
+      candidate-items list. Verdict: superseded (no shrunken
+      design needed — both checks structurally obsoleted by v3).
+- [x] Design doc moved to
+      `planning/archive/superseded/0021-preflight-v2.md` with
+      rationale naming `ensure_cache`'s explicit-refspec fetch
+      and `source.json.sha` pinning as the v3 mechanisms that
+      subsume branch-ref divergence and network-fetch freshness.
 
 **Tests:** No new tests; planning doc edits only.
+
+**Outcome:** Verdict was superseded (the expected outcome). The
+audit confirmed v3's per-session fetch + `source.json.sha` pinning
+makes both remaining checks structurally impossible, not merely
+unnecessary. `ensure_cache` force-updates the bare cache's
+`refs/heads/<branch>` via explicit refspec on every session start;
+`clone_session_checkout` clones from that just-refreshed ref; the
+resolved SHA pins durably into `source.json`. No operator-side
+branch ref to drift, no operator-side fetch step to forget. See
+[archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)
+for the full audit note.
 
 ### Phase 2: Typed Ledger Reader
 
@@ -394,7 +407,7 @@ small and can roll into v7 cleanly.
 
 In-process / unit:
 
-- [ ] `0021-preflight-v2` closed or shrunken with the change
+- [x] `0021-preflight-v2` closed or shrunken with the change
       reflected in `backlog.md` + design archive location.
 - [ ] Ledger reader handles v1 + v2 + v3 records on the same file.
 - [ ] `history list` table renders against the fixture ledger.

@@ -247,6 +247,7 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
-- `0021-preflight-v2` (prologue: rescope/close as superseded by v3),
-  `0036-observability-surface` —
+- `0036-observability-surface` —
   [v6: Observability Surface](iterations/v6-observability-surface.md).
+  (Prologue closed `0021-preflight-v2` as superseded by v3's per-session
+  source clone — see [archive/superseded/0021-preflight-v2.md](archive/superseded/0021-preflight-v2.md).)

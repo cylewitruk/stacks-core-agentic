@@ -24,6 +24,7 @@
 
 ## Follow-Up
 
-- Branch-ref and network-fetch freshness checks remain candidates in
-  [planning/backlog.md](../../backlog.md#0021-preflight-v2).
+- Branch-ref and network-fetch freshness checks were tracked as
+  [`0021-preflight-v2`](0021-preflight-v2.md) and closed as
+  superseded by v3's per-session source clone (v6 prologue, 2026-06-11).
 - Full per-session source clone redesign remains a P2 candidate.
