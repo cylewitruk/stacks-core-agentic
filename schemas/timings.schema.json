@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "v1 of the timings record.",
+  "properties": {
+    "durations": {
+      "additionalProperties": {
+        "format": "double",
+        "type": "number"
+      },
+      "description": "Wall-clock seconds per phase. Keys: see module doc.",
+      "type": "object"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    }
+  },
+  "required": [
+    "schema_version",
+    "durations"
+  ],
+  "title": "Timings",
+  "type": "object"
+}

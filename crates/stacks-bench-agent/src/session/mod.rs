@@ -17,6 +17,7 @@ pub mod layout;
 pub mod loader;
 pub mod merge;
 pub mod optimizers;
+pub mod phase_timing;
 pub mod preflight;
 pub mod publish;
 pub mod render;

@@ -720,3 +720,124 @@ fn archive_leaves_session_record_source_fields_absent_when_source_json_missing()
         "{v}"
     );
 }
+
+/// v5 Phase 2: when `<session>/results/timings.json` exists, archive
+/// reads its map and lands it on `SessionRecord.phase_durations_secs`.
+#[test]
+fn archive_populates_phase_durations_secs_from_timings_json() {
+    use std::time::Duration;
+
+    use stacks_bench_agent::session::phase_timing::PhaseTimingsRecorder;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-timings"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // Stage a fixture `timings.json` via the production recorder
+    // (mirrors what `cli/session/run.rs` would write at runtime).
+    let mut rec = PhaseTimingsRecorder::new(session_layout.timings_json());
+    rec.record("baseline", Duration::from_secs_f64(295.6))
+        .unwrap();
+    rec.record("triage", Duration::from_secs_f64(12.4))
+        .unwrap();
+    rec.record("optimize", Duration::from_secs_f64(1200.0))
+        .unwrap();
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-timings\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let durations = v["phase_durations_secs"]
+        .as_object()
+        .expect("phase_durations_secs should be a JSON object");
+    assert_eq!(durations.len(), 3);
+    assert!(
+        (durations["baseline"]
+            .as_f64()
+            .unwrap()
+            - 295.6)
+            .abs()
+            < 1e-9
+    );
+    assert!(
+        (durations["triage"]
+            .as_f64()
+            .unwrap()
+            - 12.4)
+            .abs()
+            < 1e-9
+    );
+    assert!(
+        (durations["optimize"]
+            .as_f64()
+            .unwrap()
+            - 1200.0)
+            .abs()
+            < 1e-9
+    );
+}
+
+/// Legacy sessions (no `timings.json`) archive cleanly with an
+/// empty `phase_durations_secs` map — consistent with the
+/// "absent file → empty map" contract.
+#[test]
+fn archive_leaves_phase_durations_secs_empty_when_timings_json_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-no-timings"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    assert!(
+        !session_layout
+            .timings_json()
+            .exists()
+    );
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-no-timings\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let durations = v["phase_durations_secs"]
+        .as_object()
+        .expect("phase_durations_secs should serialize as `{}` for legacy sessions");
+    assert!(durations.is_empty());
+}

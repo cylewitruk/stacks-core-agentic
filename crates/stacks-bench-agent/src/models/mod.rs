@@ -26,6 +26,7 @@ pub mod session_record;
 pub mod source;
 pub mod summary;
 pub mod targets;
+pub mod timings;
 
 pub trait ToJson {
     /// Serialize the model to a compact JSON string. Suitable as one

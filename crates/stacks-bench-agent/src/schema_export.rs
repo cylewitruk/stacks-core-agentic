@@ -29,6 +29,7 @@ use crate::models::session_record::SessionRecord;
 use crate::models::source::SourceJson;
 use crate::models::summary::Summary;
 use crate::models::targets::OptimizationTargets;
+use crate::models::timings::Timings;
 
 /// Schema entry: `(file_name, root_schema)`. The file name matches the
 /// committed JSON Schema layout (`candidates.schema.json` etc.) so the
@@ -53,6 +54,7 @@ pub fn generate_all() -> Result<Vec<SchemaEntry>> {
         entry::<SessionRecord>("session-record.schema.json")?,
         entry::<ResultsAnalysis>("results-analysis.schema.json")?,
         entry::<SourceJson>("source.schema.json")?,
+        entry::<Timings>("timings.schema.json")?,
     ])
 }
 

@@ -108,6 +108,14 @@ impl SessionLayout {
             .join("source.json")
     }
 
+    /// `results/timings.json` — per-session wall-clock phase
+    /// durations, written incrementally after each phase completes.
+    /// See [`crate::models::timings::Timings`].
+    pub fn timings_json(&self) -> PathBuf {
+        self.results_dir
+            .join("timings.json")
+    }
+
     /// `results/baseline/bench-run.json`.
     pub fn baseline_bench_run_json(&self) -> PathBuf {
         self.baseline_dir()

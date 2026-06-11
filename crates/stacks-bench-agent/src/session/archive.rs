@@ -22,12 +22,12 @@
 //!   orchestrator writes.
 //! - `finished_at` is the latest mtime under `sessions/<id>/`. Good enough for
 //!   ordering; not authoritative.
-//! - `phase_durations_secs` is empty until phase-timing instrumentation lands
-//!   (separate work item).
+//! - `phase_durations_secs` is read from `<session>/results/timings.json`,
+//!   which `cli/session/run.rs` writes incrementally after each phase. Empty
+//!   for sessions that predate the timings.json contract.
 //!
 //! See [`crate::models::session_record`] for the full record shape.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{fs, io};
@@ -612,6 +612,25 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
         (None, None, None, None)
     };
 
+    // Populate per-phase wall-clock durations from
+    // `<session>/results/timings.json`. Written incrementally by
+    // each phase wrapper in `cli/session/run.rs`; absent on legacy
+    // sessions (and on sessions that crashed before any phase
+    // completed) → empty map.
+    let phase_durations_secs =
+        crate::models::timings::Timings::read_optional(&inputs.layout.timings_json())
+            .with_context(|| {
+                format!(
+                    "loading timings.json at {}",
+                    inputs
+                        .layout
+                        .timings_json()
+                        .display()
+                )
+            })?
+            .map(|t| t.durations)
+            .unwrap_or_default();
+
     Ok(SessionRecord {
         kind: SessionRecordKind::SessionCompleted,
         schema_version: crate::models::common::SchemaVersionV3,
@@ -628,7 +647,7 @@ fn build_session_record(inputs: &ArchiveInputs<'_>, branch: &str) -> Result<Sess
         sbagent_git_sha: sbagent_git_sha().map(str::to_owned),
         range,
         baseline_run_ids,
-        phase_durations_secs: BTreeMap::new(),
+        phase_durations_secs,
         targets,
         source_url,
         source_branch,
@@ -1013,6 +1032,8 @@ pub fn print_outputs(out: &ArchiveOutputs) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]

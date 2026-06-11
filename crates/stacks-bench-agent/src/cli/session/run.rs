@@ -15,6 +15,7 @@
 //! consumes.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context as _, Result};
 use clap::Args;
@@ -25,6 +26,7 @@ use crate::harnesses::codex::CodexHarness;
 use crate::session::bench::StacksBenchCli;
 use crate::session::cargo::StdCargoRunner;
 use crate::session::finalize::{self, FinalizeInputs};
+use crate::session::phase_timing::PhaseTimingsRecorder;
 use crate::session::{
     SessionLayout, analyzers, baseline, bench_experiments, db_consistency, loader, merge,
     optimizers, publish, triage,
@@ -256,20 +258,68 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
         preflight::ensure_publish_wiring(env.ctx).await?;
     }
 
+    // Phase-timing recorder: wraps every phase call and rewrites
+    // `<session>/results/timings.json` atomically after each phase
+    // completes. A session that crashes mid-pipeline leaves a
+    // partial file carrying every phase that finished — useful for
+    // triaging hung or aborted sessions. Phase 0a + 0b accumulate
+    // under `baseline`; Phase 1.8 accumulates with Phase 3 under
+    // `bench`; Phase 3.5 accumulates with Phase 4 under `finalize`
+    // (the canonical key set on `SessionRecord.phase_durations_secs`).
+    let mut timings = PhaseTimingsRecorder::new(env.layout.timings_json());
+
+    let t = Instant::now();
     let archive_outputs = phase_0a_archive_baseline(&env)?;
+    timings.record("baseline", t.elapsed())?;
+
+    let t = Instant::now();
     phase_0_baseline(&env, &archive_outputs)?;
+    timings.record("baseline", t.elapsed())?;
+
+    let t = Instant::now();
     phase_1_triage(&env).await?;
+    timings.record("triage", t.elapsed())?;
+
+    let t = Instant::now();
     phase_1_5_analyzers(&env).await?;
+    timings.record("analysis", t.elapsed())?;
+
+    let t = Instant::now();
     phase_1_7_merge(&env).await?;
+    timings.record("merge", t.elapsed())?;
+
+    let t = Instant::now();
     phase_1_8_calibration(&env)?;
+    timings.record("bench", t.elapsed())?;
+
+    let t = Instant::now();
     phase_2_optimizers(&env).await?;
+    timings.record("optimize", t.elapsed())?;
+
+    let t = Instant::now();
     phase_3_bench_experiments(&env)?;
+    timings.record("bench", t.elapsed())?;
+
+    let t = Instant::now();
     phase_3_5_results_analyzer(&env).await?;
+    timings.record("finalize", t.elapsed())?;
+
+    let t = Instant::now();
     phase_4_finalize(&env)?;
+    timings.record("finalize", t.elapsed())?;
+
     if env.args.publish_accepted_prs {
+        let t = Instant::now();
         phase_5_publish(&env).await?;
+        timings.record("publish", t.elapsed())?;
     }
     if env.args.archive {
+        // Phase 6 archive is not in the canonical key set — it
+        // freezes the session for posterity rather than producing
+        // session-internal artifacts. Excluded from `timings.json`
+        // so the archived `SessionRecord.phase_durations_secs`
+        // reflects work done DURING the session, not the archival
+        // step itself.
         phase_6_archive(&env)?;
     }
     session_end_cleanup(&env)?;
