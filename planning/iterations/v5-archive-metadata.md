@@ -131,17 +131,20 @@ errors out.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `just test example_config` passes against the current
+- [x] `just test example_config` passes against the current
       `assets/example.config.toml`.
-- [ ] A deliberate `[bogus_section]` injection into the template
-      makes the test fail with a clear error (manual verification).
+- [x] A deliberate `[bogus_section]` injection into the template
+      makes the test fail with a clear error (manual verification:
+      injected `[bogus_section]`, ran the test, observed the
+      `TOML parse error at line 335` with the valid-stanzas
+      enumeration; restored cleanly).
 
 **Tests:**
 
@@ -304,8 +307,9 @@ artifacts — independent of `SessionRecord`'s versioning.
 
 In-process / unit:
 
-- [ ] `assets/example.config.toml` deserializes into `Settings`
-      without error.
+- [x] `assets/example.config.toml` deserializes into `Settings`
+      without error (Phase 1 —
+      `tests/example_config.rs::example_config_template_parses_into_settings`).
 - [ ] Phase timing: `timings.json` produced by a full-pipeline run;
       `SessionRecord.phase_durations_secs` mirrors it.
 - [ ] Publish feedback: `pr_url` / `issue_url` flow from GitHub API
