@@ -249,30 +249,6 @@ richer than the current per-session views.
 the four sections above against a fixture ledger.
 `--out reports/<iso-week>.md` writes to disk; stdout stays empty.
 
-<a id="0038-prompt-example-concretization"></a>
-
-### Prompt Example Concretization
-
-- **id:** `0038-prompt-example-concretization`
-- **status:** `backlog`
-- **priority:** `low`
-- **source:** v2 Phase 2 (schema-example lint) deferred analyzer.md markers
-  because its output examples use `"..."` placeholder values that don't
-  satisfy the schema's enum constraint.
-
-**Problem:** `analyzer.md`'s two output-example fences (accepted + rejected)
-use literal `"selection_lens": "..."` and `"lens_disposition.lens": "..."`
-placeholders. Those strings don't validate against `analysis.schema.json`,
-so the v2 schema-example lint cannot cover them without prompt-prose edits.
-
-**Scope:** Replace the `"..."` placeholders with concrete realistic enum
-values (e.g. `"tx_latency"`) and add the `<!-- lint:example schema="analysis"
--->` markers. Audit that the concretized values don't subtly bias the
-analyzer toward any one lens.
-
-**Acceptance:** `analyzer.md`'s two output examples carry the marker and
-pass `sbagent prompt lint` schema validation.
-
 ## Scheduled — see iteration docs
 
 The following item IDs are owned by an active iteration; full specs
@@ -289,3 +265,7 @@ live there, not here.
   [`0043-history-report`](#0043-history-report); pick up after `0033`.
   (Prologue closed `0021-preflight-v2` as superseded by v3's per-session
   source clone — see [archive/superseded/0021-preflight-v2.md](archive/superseded/0021-preflight-v2.md).)
+- `0044-evidence-backed-verification` -
+  [v7: Evidence-Backed Verification](iterations/v7-evidence-backed-verification.md).
+  Also owns `0038-prompt-example-concretization` as a Phase 2 prompt-lint
+  cleanup.
