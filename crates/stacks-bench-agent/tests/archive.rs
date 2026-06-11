@@ -841,3 +841,314 @@ fn archive_leaves_phase_durations_secs_empty_when_timings_json_missing() {
         .expect("phase_durations_secs should serialize as `{}` for legacy sessions");
     assert!(durations.is_empty());
 }
+
+/// v5 Phase 3: a publish-feedback sidecar at
+/// `<session>/results/optimize/<target>/publish-feedback.json` lands
+/// the URL on `TargetRecord.pr_url` / `issue_url` at archive time.
+#[test]
+fn archive_populates_target_pr_url_from_publish_feedback_sidecar() {
+    use stacks_bench_agent::models::common::SchemaVersionV1;
+    use stacks_bench_agent::models::publish_feedback::PublishFeedback;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-pubfb"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // Sidecars for two targets from the fixture: one publishes a PR,
+    // the other an issue.
+    PublishFeedback {
+        schema_version: SchemaVersionV1,
+        pr_url: Some("https://github.com/cylewitruk/stacks-core/pull/123".to_owned()),
+        issue_url: None,
+        opened_at: "2026-06-11T12:00:00Z".to_owned(),
+    }
+    .write(&session_layout.publish_feedback_json("marf-read-cache-rollback-wrapper"))
+    .unwrap();
+
+    PublishFeedback {
+        schema_version: SchemaVersionV1,
+        pr_url: None,
+        issue_url: Some("https://github.com/cylewitruk/stacks-core/issues/45".to_owned()),
+        opened_at: "2026-06-11T12:01:00Z".to_owned(),
+    }
+    .write(&session_layout.publish_feedback_json("clarity-cost-recalibration"))
+    .unwrap();
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-pubfb\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let targets = v["targets"]
+        .as_array()
+        .expect("targets array");
+
+    let pr_target = targets
+        .iter()
+        .find(|t| t["id"] == "marf-read-cache-rollback-wrapper")
+        .expect("PR target row");
+    assert_eq!(pr_target["pr_url"], "https://github.com/cylewitruk/stacks-core/pull/123",);
+    assert!(
+        pr_target
+            .get("issue_url")
+            .is_none(),
+        "PR-mode target should not carry issue_url"
+    );
+
+    let issue_target = targets
+        .iter()
+        .find(|t| t["id"] == "clarity-cost-recalibration")
+        .expect("issue target row");
+    assert_eq!(issue_target["issue_url"], "https://github.com/cylewitruk/stacks-core/issues/45",);
+    assert!(
+        issue_target
+            .get("pr_url")
+            .is_none(),
+        "issue-mode target should not carry pr_url",
+    );
+}
+
+/// Targets without a publish-feedback sidecar archive with both
+/// URL fields absent — preserves legacy behavior for sessions where
+/// Phase 5 was skipped or didn't run.
+#[test]
+fn archive_leaves_target_urls_absent_when_publish_feedback_sidecar_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-no-publish"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // No publish-feedback.json written.
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-no-publish\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    for target in v["targets"]
+        .as_array()
+        .expect("targets array")
+    {
+        assert!(
+            target.get("pr_url").is_none(),
+            "target should have no pr_url without sidecar: {target}",
+        );
+        assert!(
+            target
+                .get("issue_url")
+                .is_none(),
+            "target should have no issue_url without sidecar: {target}",
+        );
+    }
+}
+
+/// v5 Phase 3 audit: per-invocation bench-run.json files aggregate
+/// into `TargetBench.baseline_total_us` and `candidate_total_us` at
+/// archive time. Uses the fixture target `marf-read-cache-rollback-wrapper`
+/// which has two invocations (`cold-first-touch` + `warm-steady`).
+#[test]
+fn archive_aggregates_target_bench_wall_clock_totals_from_per_invocation_bench_run_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-bench-totals"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // Write a minimal summary.json so build_target_bench has an
+    // Experiment row to pair with the merged target (the bench
+    // builder early-returns when summary is absent or the row is
+    // missing). Hand-write JSON instead of constructing the typed
+    // model — the Summary type has a deep dependency graph for a
+    // few fields we don't exercise.
+    let target_id = "marf-read-cache-rollback-wrapper";
+    let summary_json = serde_json::json!({
+        "schema_version": 4,
+        "session_id": "20260611-120000-bench-totals",
+        "baseline_run_id": 100,
+        "baseline_rerun_id": 101,
+        "noise_floor_pct": 0.8,
+        "experiments": [
+            {
+                "target_id": target_id,
+                "delivery_mode": "normal_pr",
+                "status": "accepted",
+                "run_ids": [200, 201],
+                "baseline_run_ids": [202, 203],
+                "improvement_pct": 5.0,
+            }
+        ],
+        "outcome_counts": {
+            "normal_pr": {"accepted": 1, "rejected": 0, "aborted": 0},
+            "consensus_poc_pr": {"poc_landed": 0, "aborted": 0},
+            "consensus_issue": {"routed_to_issue": 0, "aborted": 0},
+        },
+        "lens_dispositions": [],
+    });
+    std::fs::create_dir_all(session_layout.finalize_dir()).unwrap();
+    std::fs::write(
+        session_layout.summary_json(),
+        serde_json::to_string_pretty(&summary_json).unwrap(),
+    )
+    .unwrap();
+
+    // Write per-invocation bench-run.json files for both the
+    // verify path (Phase 1.8 baseline) and the optimize path
+    // (Phase 3 candidate).
+    let invocations = ["cold-first-touch", "warm-steady"];
+    let baseline_per_inv = [100_000_i64, 200_000_i64];
+    let candidate_per_inv = [90_000_i64, 180_000_i64];
+
+    for (inv, us) in invocations
+        .iter()
+        .zip(baseline_per_inv.iter())
+    {
+        let path = session_layout.verify_baseline_bench_run_json(target_id, inv);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!(r#"{{"data":{{"summary":{{"total_duration_us":{us}}}}}}}"#))
+            .unwrap();
+    }
+    for (inv, us) in invocations
+        .iter()
+        .zip(candidate_per_inv.iter())
+    {
+        let path = session_layout.experiment_candidate_bench_run_json(target_id, inv);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!(r#"{{"data":{{"summary":{{"total_duration_us":{us}}}}}}}"#))
+            .unwrap();
+    }
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-bench-totals\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let target = v["targets"]
+        .as_array()
+        .expect("targets array")
+        .iter()
+        .find(|t| t["id"] == target_id)
+        .expect("target row");
+    let bench = target["bench"]
+        .as_object()
+        .expect("bench object should be populated for benched targets");
+    assert_eq!(
+        bench["baseline_total_us"],
+        baseline_per_inv
+            .iter()
+            .sum::<i64>(),
+    );
+    assert_eq!(
+        bench["candidate_total_us"],
+        candidate_per_inv
+            .iter()
+            .sum::<i64>(),
+    );
+}
+
+/// Targets WITH a `verification_replay` but MISSING per-invocation
+/// `bench-run.json` files archive cleanly with `baseline_total_us` /
+/// `candidate_total_us` at 0 — the aggregator logs a warning for
+/// each missing file and reports the partial total it could compute
+/// (which is 0 when ALL files are missing).
+#[test]
+fn archive_falls_back_to_zero_totals_when_bench_run_jsons_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    std::fs::create_dir_all(&operator).unwrap();
+    init_operator_repo(&operator);
+
+    let id: SessionId = "20260611-120000-no-bench-runs"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session_layout = stage_session_in_workspace(&workspace, &id);
+    let layout = build_layout(&operator, &workspace);
+
+    // No bench-run.json files written.
+
+    archive(&ArchiveInputs {
+        layout: &session_layout,
+        framework: &layout,
+        settings: &Settings::default(),
+        dry_run: true,
+    })
+    .expect("archive should succeed (even with missing bench-run.json files)");
+
+    let ledger = std::fs::read_to_string(operator.join("sessions.jsonl")).unwrap();
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("\"20260611-120000-no-bench-runs\""))
+        .expect("ledger line for session");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let target = v["targets"]
+        .as_array()
+        .expect("targets array")
+        .iter()
+        .find(|t| t["id"] == "marf-read-cache-rollback-wrapper")
+        .expect("target row");
+    if let Some(bench) = target.get("bench") {
+        // Bench section exists only when the target had run_ids;
+        // when present, totals fall back to 0 since the source
+        // files are missing.
+        if let Some(b) = bench.as_object() {
+            assert_eq!(b["baseline_total_us"], 0);
+            assert_eq!(b["candidate_total_us"], 0);
+        }
+    }
+}

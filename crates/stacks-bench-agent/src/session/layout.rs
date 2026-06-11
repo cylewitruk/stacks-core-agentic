@@ -116,6 +116,16 @@ impl SessionLayout {
             .join("timings.json")
     }
 
+    /// `results/optimize/<target>/publish-feedback.json` — per-target
+    /// sidecar carrying the GitHub URL Phase 5 publish produced.
+    /// Written by `session::publish::push` after `create_pr` /
+    /// `create_issue` returns; read by archive. See
+    /// [`crate::models::publish_feedback::PublishFeedback`].
+    pub fn publish_feedback_json(&self, target_id: &str) -> PathBuf {
+        self.experiment_dir(target_id)
+            .join("publish-feedback.json")
+    }
+
     /// `results/baseline/bench-run.json`.
     pub fn baseline_bench_run_json(&self) -> PathBuf {
         self.baseline_dir()

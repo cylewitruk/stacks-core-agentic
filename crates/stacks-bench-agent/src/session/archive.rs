@@ -33,6 +33,7 @@ use std::time::SystemTime;
 use std::{fs, io};
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use serde_json::Value;
 
 use crate::analyzed_rejections::now_utc_iso8601;
 use crate::build_info::{SBAGENT_VERSION, sbagent_git_sha};
@@ -814,6 +815,19 @@ fn build_target_records(
             .merged_from
             .first()
             .map_or_else(|| "unknown".to_owned(), |mf| mf.family_id.clone());
+        // Publish feedback sidecar: written by `publish::push` after
+        // the GitHub API call returns successfully. `None` for any
+        // target whose publish was skipped (no `--publish-accepted-prs`)
+        // or didn't run (aborted before Phase 5), and for sessions
+        // that predate the publish-feedback contract.
+        let publish_feedback = crate::models::publish_feedback::PublishFeedback::read_optional(
+            &layout.publish_feedback_json(&target.id),
+        )
+        .with_context(|| format!("loading publish-feedback.json for target `{}`", target.id))?;
+        let (pr_url, issue_url) = publish_feedback
+            .map(|pf| (pf.pr_url, pf.issue_url))
+            .unwrap_or((None, None));
+
         rows.push(TargetRecord {
             id: target.id.clone(),
             family_id,
@@ -826,11 +840,10 @@ fn build_target_records(
             // populates from `optimize/<target>/coordinator-provenance.json`
             // (Pass 1c provenance sidecar). `None` for any target whose
             // optimizer never committed (aborted before commit, or
-            // session predates the sidecar). `pr_url` / `issue_url`
-            // still wait on publish-feedback integration.
+            // session predates the sidecar).
             head_sha: exp.and_then(|e| e.head_sha.clone()),
-            pr_url: None,
-            issue_url: None,
+            pr_url,
+            issue_url,
             bench,
         });
     }
@@ -865,8 +878,63 @@ fn derive_target_status(
     }
 }
 
+/// Sum `data.summary.total_duration_us` across the bench-run.json
+/// files written under `dir` for each invocation in `invocations`.
+/// Missing or unparseable files contribute zero with a warning —
+/// the partial total is more useful for the operator than silently
+/// returning zero or failing the archive.
+fn sum_bench_run_total_us(
+    dir: &dyn Fn(&str) -> std::path::PathBuf,
+    invocations: &[crate::models::common::BenchInvocation],
+) -> i64 {
+    let mut total: i64 = 0;
+    for inv in invocations {
+        let path = dir(&inv.id);
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "archive: bench-run.json missing at {} — wall-clock total aggregation will be \
+                     partial",
+                    path.display()
+                );
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "archive: reading {} failed ({e}); wall-clock total aggregation will be \
+                     partial",
+                    path.display(),
+                );
+                continue;
+            }
+        };
+        let parsed: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "archive: parsing {} failed ({e}); wall-clock total aggregation will be \
+                     partial",
+                    path.display(),
+                );
+                continue;
+            }
+        };
+        // Envelope shape: `{data: {summary: {total_duration_us: N}}}`.
+        let us = parsed
+            .get("data")
+            .and_then(|d| d.get("summary"))
+            .and_then(|s| s.get("total_duration_us"))
+            .and_then(|v| v.as_i64());
+        if let Some(n) = us {
+            total = total.saturating_add(n);
+        }
+    }
+    total
+}
+
 fn build_target_bench(
-    _layout: &SessionLayout,
+    layout: &SessionLayout,
     target: &crate::models::targets::MergedTarget,
     exp: Option<&Experiment>,
     summary: Option<&Summary>,
@@ -903,16 +971,40 @@ fn build_target_bench(
         .improvement_pct
         .unwrap_or(0.0);
     let passes = improvement >= noise_floor;
-    // The wallclock totals are NOT in the summary row — they live in
-    // per-run `bench-run.json`. v1 leaves them zero; aggregating would
-    // require parsing every `run-<n>/bench-run.json` and isn't
-    // load-bearing for the ledger's primary use case (leaderboard /
-    // timeline). Future work item.
+
+    // Wallclock totals: aggregate `data.summary.total_duration_us`
+    // across per-invocation `bench-run.json` files for both the
+    // baseline (Phase 1.8 calibration → `verify/<target>/<inv>/`) and
+    // candidate (Phase 3 bench → `optimize/<target>/<inv>/`) runs.
+    //
+    // Targets without `verification_replay` (the full-range fallback
+    // path) have no per-invocation files; totals stay at 0. That
+    // gap is documented as a known limitation — the canonical
+    // post-Pass-1c flow always emits `verification_replay`, so the
+    // missing-totals case only arises for legacy sessions or
+    // explicitly-unstructured one-off runs.
+    let (baseline_total_us, candidate_total_us) = if let Some(vr) = target
+        .verification_replay
+        .as_ref()
+    {
+        let baseline_total = sum_bench_run_total_us(
+            &|inv_id| layout.verify_baseline_bench_run_json(&target.id, inv_id),
+            &vr.invocations,
+        );
+        let candidate_total = sum_bench_run_total_us(
+            &|inv_id| layout.experiment_candidate_bench_run_json(&target.id, inv_id),
+            &vr.invocations,
+        );
+        (baseline_total, candidate_total)
+    } else {
+        (0, 0)
+    };
+
     Some(TargetBench {
         baseline_run_ids,
         candidate_run_ids,
-        baseline_total_us: 0,
-        candidate_total_us: 0,
+        baseline_total_us,
+        candidate_total_us,
         improvement_pct: improvement,
         passes_noise_floor: passes,
     })

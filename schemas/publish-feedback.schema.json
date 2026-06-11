@@ -1,0 +1,41 @@
+{
+  "$defs": {
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "v1 of the publish-feedback sidecar.",
+  "properties": {
+    "issue_url": {
+      "description": "Issue HTML URL, set for `ConsensusIssue` delivery mode.\n`None` when the target opened a PR instead.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "opened_at": {
+      "description": "ISO 8601 UTC timestamp at which the GitHub API call returned\nsuccess.",
+      "type": "string"
+    },
+    "pr_url": {
+      "description": "PR HTML URL, set for `NormalPr` / `ConsensusPocPr` delivery\nmodes. `None` when the target opened an issue instead.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    }
+  },
+  "required": [
+    "schema_version",
+    "opened_at"
+  ],
+  "title": "PublishFeedback",
+  "type": "object"
+}

@@ -24,6 +24,7 @@ use crate::models::analyze::Analysis;
 use crate::models::candidates::Candidates;
 use crate::models::coordinator_provenance::CoordinatorProvenance;
 use crate::models::optimizer_report::OptimizerReport;
+use crate::models::publish_feedback::PublishFeedback;
 use crate::models::results_analysis::ResultsAnalysis;
 use crate::models::session_record::SessionRecord;
 use crate::models::source::SourceJson;
@@ -55,6 +56,7 @@ pub fn generate_all() -> Result<Vec<SchemaEntry>> {
         entry::<ResultsAnalysis>("results-analysis.schema.json")?,
         entry::<SourceJson>("source.schema.json")?,
         entry::<Timings>("timings.schema.json")?,
+        entry::<PublishFeedback>("publish-feedback.schema.json")?,
     ])
 }
 

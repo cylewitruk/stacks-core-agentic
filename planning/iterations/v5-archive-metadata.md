@@ -254,41 +254,55 @@ when Phase 5 successfully opened a PR / issue; operators reviewing
   `publish-feedback.json` per target during row construction;
   populates `TargetRecord.pr_url` / `issue_url`. Absent file leaves
   the fields `None` (consistent with legacy sessions).
-- Per-target bench wall-clock audit: confirm
-  `TargetBench.baseline_total_us` + `candidate_total_us` are
-  populated on every target that reached bench. If audit reveals
-  gaps, fix the producer in
-  [`session/finalize.rs`](../../crates/stacks-bench-agent/src/session/finalize.rs)
-  (the path that lifts these into `summary.json`). No new fields;
-  if the existing two are insufficient, the gap is documented as a
-  follow-up item rather than a v5 scope creep.
+- Per-target bench wall-clock audit landed as **archive-side
+  aggregation** in
+  [`session/archive.rs`](../../crates/stacks-bench-agent/src/session/archive.rs):
+  for targets with `verification_replay`, archive sums
+  `.data.summary.total_duration_us` across per-invocation
+  `verify/<target>/<inv>/bench-run.json` files (baseline) and
+  `optimize/<target>/<inv>/bench-run.json` files (candidate) at
+  record-build time. Hand-side aggregation in `finalize.rs` was
+  considered and rejected: the data the archiver needs already lives
+  in per-invocation files; lifting it into `summary.json` first
+  would just add a duplication hop. Targets without
+  `verification_replay` (full-range fallback) keep totals at 0 —
+  documented limitation per "document, don't scope-creep."
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [ ] Validated (live smoke deferred to v1 Pass 1c re-run; in-process
+      fixture tests cover the publish→sidecar→archive flow and the
+      per-invocation bench-run aggregation)
 
 **Acceptance & Validation:**
 
-- [ ] A session with one `delivery_mode: normal_pr` target that
+- [x] A session with one `delivery_mode: normal_pr` target that
       successfully publishes has `TargetRecord.pr_url ==
-      Some(<github-url>)` in `sessions.jsonl`.
-- [ ] A session with one `delivery_mode: consensus_issue` target
-      has `TargetRecord.issue_url == Some(<github-url>)`.
-- [ ] A session where Phase 5 was skipped (no
-      `--publish-accepted-prs`) writes no `publish-feedback.json`
-      and `pr_url == None` (current behavior — explicit, not
-      regression).
-- [ ] Bench wall-clock audit: every target with
-      `status: Accepted` AND `delivery_mode: normal_pr` has BOTH
-      `bench.baseline_total_us > 0` AND
-      `bench.candidate_total_us > 0` (the candidate path runs the
-      same bench machinery as the baseline against the optimized
-      binary, so any case where candidate totals are zero while
-      baseline isn't would indicate a producer bug worth fixing).
-      Gaps documented if any.
+      Some(<github-url>)` in `sessions.jsonl`
+      (`tests/publish_push.rs::push_writes_publish_feedback_sidecar_with_returned_pr_url`
+      → `tests/archive.rs::archive_populates_target_pr_url_from_publish_feedback_sidecar`).
+- [x] A session with one `delivery_mode: consensus_issue` target
+      has `TargetRecord.issue_url == Some(<github-url>)`
+      (`push_writes_publish_feedback_sidecar_with_returned_issue_url`
+      + the same archive test covers the issue path).
+- [x] A session where Phase 5 was skipped writes no
+      `publish-feedback.json` and `pr_url == None`
+      (`archive_leaves_target_urls_absent_when_publish_feedback_sidecar_missing`).
+- [x] Bench wall-clock audit: targets with `verification_replay`
+      that reached bench have BOTH `bench.baseline_total_us > 0` AND
+      `bench.candidate_total_us > 0` (aggregated from per-invocation
+      `verify/<target>/<inv>/bench-run.json` + `optimize/<target>/<inv>/bench-run.json`
+      files at archive time —
+      `archive_aggregates_target_bench_wall_clock_totals_from_per_invocation_bench_run_json`).
+      Targets WITHOUT `verification_replay` (full-range fallback
+      path) keep totals at 0 — documented limitation: the canonical
+      post-Pass-1c flow always emits `verification_replay`, so the
+      gap only manifests on legacy/unstructured sessions and is
+      acceptable per the iteration's "document, don't scope-creep"
+      clause.
 
 **Tests:**
 
@@ -316,9 +330,9 @@ In-process / unit:
 - [x] `assets/example.config.toml` deserializes into `Settings`
       without error (Phase 1 —
       `tests/example_config.rs::example_config_template_parses_into_settings`).
-- [ ] Phase timing: `timings.json` produced by a full-pipeline run;
+- [x] Phase timing: `timings.json` produced by a full-pipeline run;
       `SessionRecord.phase_durations_secs` mirrors it.
-- [ ] Publish feedback: `pr_url` / `issue_url` flow from GitHub API
+- [x] Publish feedback: `pr_url` / `issue_url` flow from GitHub API
       → sidecar → archive → ledger.
 
 Live / operator (deferred to the same v1 Pass 1c smoke as v3+v4):

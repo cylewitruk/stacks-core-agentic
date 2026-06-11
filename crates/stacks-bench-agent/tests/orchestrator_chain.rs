@@ -304,7 +304,7 @@ impl GhClient for ChainGh {
             .push(GhCall::IssueExists);
         Ok(false)
     }
-    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<()> {
+    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<String> {
         self.calls
             .lock()
             .push(GhCall::CreatePr {
@@ -312,22 +312,22 @@ impl GhClient for ChainGh {
                 draft: args.draft,
                 label_count: args.labels.len(),
             });
-        Ok(())
+        Ok(format!("https://github.com/{}/pull/1", args.repo))
     }
     async fn create_issue<'a>(
         &'a self,
-        _: &'a str,
+        repo: &'a str,
         _: &'a [String],
         title: &'a str,
         body: &'a str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         self.calls
             .lock()
             .push(GhCall::CreateIssue {
                 title: title.to_owned(),
                 body_has_trace: body.contains("<!-- agentic-"),
             });
-        Ok(())
+        Ok(format!("https://github.com/{repo}/issues/1"))
     }
 }
 

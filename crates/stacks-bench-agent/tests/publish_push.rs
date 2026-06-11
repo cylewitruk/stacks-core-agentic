@@ -135,7 +135,7 @@ impl GhClient for FakeGh {
             });
         Ok(self.issue_exists_returns)
     }
-    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<()> {
+    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<String> {
         self.calls
             .lock()
             .push(Call::CreatePr {
@@ -146,7 +146,9 @@ impl GhClient for FakeGh {
                 labels: args.labels.to_vec(),
                 title: args.title.to_owned(),
             });
-        Ok(())
+        // Canned URL — tests assert this propagates to the
+        // publish-feedback.json sidecar.
+        Ok(format!("https://github.com/{}/pull/1", args.repo))
     }
     async fn create_issue<'a>(
         &'a self,
@@ -154,7 +156,7 @@ impl GhClient for FakeGh {
         labels: &'a [String],
         title: &'a str,
         body: &'a str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         self.calls
             .lock()
             .push(Call::CreateIssue {
@@ -163,7 +165,7 @@ impl GhClient for FakeGh {
                 title: title.to_owned(),
                 body: body.to_owned(),
             });
-        Ok(())
+        Ok(format!("https://github.com/{repo}/issues/1"))
     }
 }
 
@@ -439,6 +441,82 @@ async fn push_skips_issue_when_issue_already_exists() {
             .iter()
             .any(|c| matches!(c, Call::CreateIssue { .. })),
         "no issue should be created when issue_exists returned true"
+    );
+}
+
+/// v5 Phase 3: every successful `create_pr` call writes a
+/// `publish-feedback.json` sidecar carrying the URL the fake
+/// returned. Archive picks the URL up from there.
+#[tokio::test]
+async fn push_writes_publish_feedback_sidecar_with_returned_pr_url() {
+    use stacks_bench_agent::models::publish_feedback::PublishFeedback;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let id = id();
+    let (layout, sl) = stage(&tmp, &id);
+    let token = write_token(&tmp);
+    let cfg = config_with(token);
+    let gh = FakeGh::default();
+    push(&PushInputs {
+        layout: &sl,
+        framework: &layout,
+        config: &cfg,
+        gh: &gh,
+    })
+    .await
+    .expect("push");
+
+    // Both PR targets should have a sidecar with pr_url set.
+    for target_id in ["marf-read-cache-rollback-wrapper", "clarity-cost-recalibration"] {
+        let path = sl.publish_feedback_json(target_id);
+        assert!(path.is_file(), "expected publish-feedback.json at {}", path.display());
+        let pf = PublishFeedback::read_optional(&path)
+            .expect("publish-feedback.json should parse")
+            .expect("sidecar must exist");
+        assert!(
+            pf.pr_url
+                .as_deref()
+                .is_some_and(|u| u.contains("/pull/1")),
+            "pr_url should be the canned URL from FakeGh: {pf:?}",
+        );
+        assert!(pf.issue_url.is_none(), "PR-mode target must not set issue_url");
+        assert!(!pf.opened_at.is_empty(), "opened_at should be filled");
+    }
+}
+
+/// `create_issue` flow writes a sidecar carrying `issue_url`.
+#[tokio::test]
+async fn push_writes_publish_feedback_sidecar_with_returned_issue_url() {
+    use stacks_bench_agent::models::publish_feedback::PublishFeedback;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let id = id();
+    let (layout, sl) = stage(&tmp, &id);
+    let token = write_token(&tmp);
+    let cfg = config_with(token);
+    let gh = FakeGh::default();
+    push(&PushInputs {
+        layout: &sl,
+        framework: &layout,
+        config: &cfg,
+        gh: &gh,
+    })
+    .await
+    .expect("push");
+
+    // The consensus_issue target should have a sidecar with
+    // issue_url set, not pr_url.
+    let path = sl.publish_feedback_json("marf-layout-redesign");
+    assert!(path.is_file(), "expected publish-feedback.json for the issue target");
+    let pf = PublishFeedback::read_optional(&path)
+        .expect("parse")
+        .expect("present");
+    assert!(pf.pr_url.is_none(), "issue target must not carry pr_url");
+    assert!(
+        pf.issue_url
+            .as_deref()
+            .is_some_and(|u| u.contains("/issues/1")),
+        "issue_url should be the canned URL from FakeGh: {pf:?}",
     );
 }
 

@@ -674,17 +674,22 @@ pub trait GhClient: Send + Sync {
         repo: &str,
         trace_tag: &str,
     ) -> impl std::future::Future<Output = Result<bool>> + Send;
+    /// Returns the PR's HTML URL on success — the caller writes it
+    /// into `<session>/results/optimize/<target>/publish-feedback.json`
+    /// so archive can land it on `TargetRecord.pr_url`.
     fn create_pr<'a>(
         &'a self,
         args: CreatePrArgs<'a>,
-    ) -> impl std::future::Future<Output = Result<()>> + Send + 'a;
+    ) -> impl std::future::Future<Output = Result<String>> + Send + 'a;
+    /// Returns the issue's HTML URL on success — same plumbing as
+    /// `create_pr` but lands on `TargetRecord.issue_url`.
     fn create_issue<'a>(
         &'a self,
         repo: &'a str,
         labels: &'a [String],
         title: &'a str,
         body: &'a str,
-    ) -> impl std::future::Future<Output = Result<()>> + Send + 'a;
+    ) -> impl std::future::Future<Output = Result<String>> + Send + 'a;
 }
 
 /// Default impl: git ops shell out to `git`; GitHub API ops go through
@@ -772,7 +777,7 @@ impl GhClient for StdGhClient {
         Ok(!page.items.is_empty())
     }
 
-    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<()> {
+    async fn create_pr<'a>(&'a self, args: CreatePrArgs<'a>) -> Result<String> {
         let (owner, repo_name) = split_repo(args.repo)?;
         let pr = self
             .api
@@ -792,8 +797,12 @@ impl GhClient for StdGhClient {
                 .await
                 .with_context(|| format!("octocrab add_labels for PR #{}", pr.number))?;
         }
-        println!("{}", pr.html_url);
-        Ok(())
+        // Print for operator-visible feedback during the command's
+        // run AND return the URL so the caller can write the
+        // publish-feedback sidecar.
+        let url = pr.html_url.to_string();
+        println!("{url}");
+        Ok(url)
     }
 
     async fn create_issue<'a>(
@@ -802,7 +811,7 @@ impl GhClient for StdGhClient {
         labels: &'a [String],
         title: &'a str,
         body: &'a str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let (owner, repo_name) = split_repo(repo)?;
         let issue = self
             .api
@@ -813,8 +822,9 @@ impl GhClient for StdGhClient {
             .send()
             .await
             .with_context(|| format!("octocrab issues create for {repo}"))?;
-        println!("{}", issue.html_url);
-        Ok(())
+        let url = issue.html_url.to_string();
+        println!("{url}");
+        Ok(url)
     }
 }
 
@@ -1056,7 +1066,7 @@ async fn push_pr<G: GhClient>(
         );
     }
     let head = format!("{head_owner}:{branch}");
-    inputs
+    let pr_url = inputs
         .gh
         .create_pr(CreatePrArgs {
             repo: &inputs
@@ -1071,7 +1081,23 @@ async fn push_pr<G: GhClient>(
             title: &title,
             body: &body,
         })
-        .await
+        .await?;
+    // Write the publish-feedback sidecar BEFORE returning so a
+    // crash in a subsequent target's publish doesn't lose this
+    // target's URL. Archive reads this file to populate
+    // `TargetRecord.pr_url`.
+    crate::models::publish_feedback::PublishFeedback {
+        schema_version: crate::models::common::SchemaVersionV1,
+        pr_url: Some(pr_url),
+        issue_url: None,
+        opened_at: crate::analyzed_rejections::now_utc_iso8601(),
+    }
+    .write(
+        &inputs
+            .layout
+            .publish_feedback_json(&target.id),
+    )?;
+    Ok(())
 }
 
 async fn push_issue<G: GhClient>(
@@ -1108,7 +1134,7 @@ async fn push_issue<G: GhClient>(
         .iter()
         .map(|s| (*s).to_owned())
         .collect();
-    inputs
+    let issue_url = inputs
         .gh
         .create_issue(
             &inputs
@@ -1118,7 +1144,19 @@ async fn push_issue<G: GhClient>(
             &title,
             &body_with_trace,
         )
-        .await
+        .await?;
+    crate::models::publish_feedback::PublishFeedback {
+        schema_version: crate::models::common::SchemaVersionV1,
+        pr_url: None,
+        issue_url: Some(issue_url),
+        opened_at: crate::analyzed_rejections::now_utc_iso8601(),
+    }
+    .write(
+        &inputs
+            .layout
+            .publish_feedback_json(&target.id),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

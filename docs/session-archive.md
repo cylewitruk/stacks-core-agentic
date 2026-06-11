@@ -121,8 +121,8 @@ follow-up:
 | `finished_at` | Latest mtime under `sessions/<id>/`. | Same manifest source. |
 | `phase_durations_secs` | Populated from `<session>/results/timings.json`, written incrementally by `cli/session/run.rs` after each phase completes. Legacy sessions (no `timings.json`) archive with an empty `{}` — landed v5 Phase 2. | — |
 | `targets[].head_sha` | Populated from `summary.json.experiments[].head_sha` (which finalize reads from the coordinator-provenance sidecar). `None` for targets whose optimizer never committed. | — landed 2026-05-21. |
-| `targets[].pr_url` | `None`. | Populated by publish push outputs. |
-| `bench.baseline_total_us` / `candidate_total_us` | `0`. | Aggregated across per-run `bench-run.json` files. |
+| `targets[].pr_url` / `issue_url` | Populated from `<session>/results/optimize/<target>/publish-feedback.json`, written by Phase 5 publish after each successful `octocrab.create_pr` / `create_issue` call. `None` when Phase 5 was skipped, when the target didn't reach publish, or for legacy sessions that predate the sidecar contract — landed v5 Phase 3. | — |
+| `bench.baseline_total_us` / `candidate_total_us` | Aggregated at archive time from per-invocation `verify/<target>/<inv>/bench-run.json` (baseline calibration) + `optimize/<target>/<inv>/bench-run.json` (candidate bench) via `.data.summary.total_duration_us`. Targets with a `verification_replay` get real totals; targets without it (full-range fallback path) keep totals at 0 — landed v5 Phase 3. | — |
 
 None of these are load-bearing for the ledger's primary use case
 (leaderboard / timeline). They're audit nice-to-haves.
