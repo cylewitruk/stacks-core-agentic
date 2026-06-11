@@ -13,6 +13,7 @@ use crate::layout::Layout;
 use crate::settings::Settings;
 
 pub mod check;
+pub mod history;
 pub mod init;
 pub mod preflight;
 pub mod prompt;
@@ -48,6 +49,11 @@ pub enum Command {
     /// installed, agent harnesses compatible, and committed JSON Schemas in
     /// sync with the typed models.
     Check(check::CheckArgs),
+
+    /// Read-only views over the archived `sessions.jsonl` ledger.
+    /// `list` renders a per-session leaderboard; future `show <id>`
+    /// renders per-session detail.
+    History(history::HistoryArgs),
 
     /// One-shot bootstrap for a fresh operator directory: seed bundled
     /// prompt / schema / query / context templates, drop a
@@ -267,6 +273,7 @@ pub async fn dispatch(args: CliArgs) -> Result<()> {
     let ctx = CliContext::from_args(&args)?;
     match args.command {
         Command::Check(a) => check::run(a, &ctx).await,
+        Command::History(a) => history::run(a, &ctx).await,
         Command::Init(_) => unreachable!("handled before CliContext build"),
         Command::Prompt(a) => prompt::run(a, &ctx).await,
         Command::Publish(a) => publish::run(a, &ctx).await,

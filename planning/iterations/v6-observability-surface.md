@@ -274,30 +274,54 @@ on stdout without writing `jq` queries.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
+- [x] Core implementation
+- [x] Unit/integration tests
 - [ ] Reviewed
 - [ ] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent history list` against a 3-session fixture prints
+- [x] `sbagent history list` against a 3-session fixture prints
       a 3-row table with the canonical column set; total wall-clock
       matches the sum of `phase_durations_secs` per session.
-- [ ] Output is pure ASCII — no glyphs, no emoji, no ANSI escape
+- [x] Output is pure ASCII — no glyphs, no emoji, no ANSI escape
       codes when stdout is piped (fixture tests assert byte-for-byte
       equality against a checked-in expected output).
-- [ ] `--limit 2` truncates to the 2 most-recent sessions.
-- [ ] `--since 2026-W23` filters by ISO week (or `2026-06-01` by
-      date — accept both).
-- [ ] Empty ledger prints "no sessions archived yet" and exits 0
-      (not an error).
+- [x] `--limit 2` truncates to the 2 most-recent sessions.
+- [x] `--since 2026-W23` filters by ISO week (Monday-of-week
+      cutoff via a hand-rolled days-from-civil round-trip; no
+      new deps). `--since 2026-06-01` filters by calendar date.
+      Both forms covered.
+- [x] Empty ledger prints "no sessions archived yet" and exits 0
+      (not an error). Missing-file path also takes this branch,
+      mirroring the typed reader's `Ok(empty report)` contract.
 
 **Tests:**
 
 - [tests/history_list.rs](../../crates/stacks-bench-agent/tests/history_list.rs)
-  (new) — `CARGO_BIN_EXE_sbagent` invocations against a fixture
+  (new) — 6 `CARGO_BIN_EXE_sbagent` invocations against a fixture
   operator dir with a hand-rolled `sessions.jsonl`.
+- 8 unit tests under
+  [src/cli/history.rs](../../crates/stacks-bench-agent/src/cli/history.rs)
+  covering the `mm:ss` / `hh:mm:ss` wall-clock formatter, the
+  `YYYY-MM-DD` validator, the `YYYY-Www` parser, ISO week
+  conversion (incl. cross-year week-1 cases), and the
+  days-from-civil round-trip.
+
+**Notes / design decisions worth review:**
+
+- **`TargetStatus::Failed` folds into the `Ab` (aborted) bucket.**
+  Phase 3's spec defines exactly three target counts (`A/R/Ab`);
+  `Failed` represents the same "non-accept, non-reject" outcome
+  shape, so collapsing it keeps the column honest without adding
+  a fourth count the spec doesn't budget for. Documented inline.
+- **Color is status-column only**, lit only when stdout is a TTY
+  AND `NO_COLOR` is unset. Test forces `NO_COLOR=1` belt-and-
+  braces; `Command::output()` already pipes stdout so the no-color
+  path triggers regardless.
+- **No new deps.** Date arithmetic uses an inline Howard Hinnant
+  days-from-civil implementation (~25 lines). Avoids pulling in
+  `chrono`/`jiff` for two date formats.
 
 ### Phase 4: `sbagent history show <session-id>`
 
