@@ -1,9 +1,9 @@
 # Design: Preflight V2
 
 - **id:** `0021-preflight-v2`
-- **status:** `backlog`
+- **status:** `planned` (likely → `superseded` after v6's prologue audit)
 - **priority:** `medium`
-- **backlog:** [0021-preflight-v2](../backlog.md#0021-preflight-v2)
+- **iteration:** [v6: Observability Surface](../iterations/v6-observability-surface.md) — prologue rescope. Two remaining checks are expected to be subsumed by v3's per-session fetch + `source.json` SHA pinning. If the audit confirms, this design moves to `archive/superseded/`.
 
 ## Problem
 

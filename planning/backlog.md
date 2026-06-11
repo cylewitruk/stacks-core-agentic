@@ -22,24 +22,6 @@ smoke run.
 **Acceptance:** The next smoke produces less operator correction, with no schema
 or handoff regressions.
 
-<a id="0021-preflight-v2"></a>
-
-### Preflight V2
-
-- **id:** `0021-preflight-v2`
-- **status:** `backlog`
-- **priority:** `medium`
-- **design:** [design/0021-preflight-v2.md](design/0021-preflight-v2.md)
-
-**Problem:** Session-start preflight catches several drift classes but still
-misses branch-ref divergence and network-fetch freshness.
-
-**Scope:** Add targeted preflight checks, unless the ephemeral source clone
-redesign makes them obsolete first.
-
-**Acceptance:** A stale local branch ref or unfetched upstream state fails
-before expensive session phases.
-
 <a id="0025-named-phases"></a>
 
 ### Named Phases Over Numbered Phases
@@ -214,22 +196,6 @@ event-version safeguards.
 **Acceptance:** Operator-free runs cannot exceed configured PR, cadence, or
 failure thresholds.
 
-<a id="0036-observability-surface"></a>
-
-### Observability Surface
-
-- **id:** `0036-observability-surface`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0036-observability-surface.md](design/0036-observability-surface.md)
-
-**Problem:** Operators need a compact dashboard once sessions become regular.
-
-**Scope:** Add history/report rendering and optional weekly reports.
-
-**Acceptance:** A markdown report summarizes sessions, PRs, outcomes, and time
-to merge.
-
 <a id="0037-triage-anchor-benchmarks"></a>
 
 ### Triage Anchor Benchmarks
@@ -281,3 +247,6 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
+- `0021-preflight-v2` (prologue: rescope/close as superseded by v3),
+  `0036-observability-surface` —
+  [v6: Observability Surface](iterations/v6-observability-surface.md).

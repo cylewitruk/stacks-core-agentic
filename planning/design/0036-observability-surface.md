@@ -1,9 +1,9 @@
 # Design: Observability Surface
 
 - **id:** `0036-observability-surface`
-- **status:** `backlog`
+- **status:** `planned`
 - **priority:** `low`
-- **backlog:** [0036-observability-surface](../backlog.md#0036-observability-surface)
+- **iteration:** [v6: Observability Surface](../iterations/v6-observability-surface.md)
 - **source:** [assets/autonomous-roadmap.md](../../assets/autonomous-roadmap.md)
 
 ## Problem
