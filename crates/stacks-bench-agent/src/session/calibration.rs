@@ -222,8 +222,8 @@ pub(crate) fn require_invocations(target: &MergedTarget) -> Result<&[BenchInvoca
 mod tests {
     use super::*;
     use crate::models::common::{
-        BenchSamples, Bucket, DeliveryMode, ExpectedSignal, Hotspot, ImprovementVector,
-        ProfilerMode, Risk, SelectionLens, SignalDirection, VerificationReplay,
+        BenchSamples, Bucket, DeliveryMode, EvidenceQuery, ExpectedSignal, Hotspot,
+        ImprovementVector, ProfilerMode, Risk, SelectionLens, SignalDirection, VerificationReplay,
     };
     use crate::models::targets::{MergedFrom, MergedTarget};
 
@@ -269,6 +269,14 @@ mod tests {
             },
             files: vec!["x.rs".to_owned()],
             evidence: "e".to_owned(),
+            evidence_queries: vec![EvidenceQuery {
+                purpose: "prove span movement".to_owned(),
+                sql_path: "queries/span_run_drift.sql".into(),
+                params: Default::default(),
+                output_path: "queries/span-run-drift.csv".to_owned(),
+                key_observation: "baseline p95 self_wall_us = 1000".to_owned(),
+                supports_invocations: vec!["cold".to_owned()],
+            }],
             proposed_change: "p".to_owned(),
             expected_improvement: ImprovementVector {
                 tx_latency: 0.0,

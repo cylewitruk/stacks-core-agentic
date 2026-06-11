@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "family_id": "marf-read-pattern",
   "status": "accepted",
   "selection_lens": "commit_time",
@@ -24,6 +24,19 @@
         "stackslib/src/chainstate/stacks/index/marf.rs"
       ],
       "evidence": "Block traces show the same MARF subtree under RollbackWrapper. Convergent with dlmm-router-contract-family on the same fix.",
+      "evidence_queries": [
+        {
+          "purpose": "Confirm RollbackWrapper::lookup dominates the warm block sample.",
+          "sql_path": "queries/span_run_drift.sql",
+          "params": {
+            "run_id": "100",
+            "span_name": "RollbackWrapper::lookup"
+          },
+          "output_path": "analysis/marf-read-pattern/queries/rollback-wrapper-drift.csv",
+          "key_observation": "baseline p95 self_wall_us = 980000us across warm-steady samples",
+          "supports_invocations": ["warm-steady"]
+        }
+      ],
       "proposed_change": "Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).",
       "expected_improvement": {
         "tx_latency": 1.0,

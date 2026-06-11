@@ -10,7 +10,8 @@ use stacks_bench_agent::harnesses::{AgentHarness, InvokeInputs, InvokeOutputs};
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::models::common::{
-    BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, Risk, SchemaVersionV3,
+    BreakageClass, Bucket, DeliveryMode, EvidenceQuery, Hotspot, ImprovementVector, Risk,
+    SchemaVersionV4,
 };
 use stacks_bench_agent::models::targets::{
     MergeMethod, MergedFrom, MergedTarget, OptimizationTargets,
@@ -275,7 +276,7 @@ fn stage_framework_and_session(
         .unwrap();
 
     let targets_doc = OptimizationTargets {
-        schema_version: SchemaVersionV3,
+        schema_version: SchemaVersionV4,
         session_id: "20260507-104400".to_owned(),
         baseline_run_id: 100,
         baseline_rerun_id: 101,
@@ -359,6 +360,18 @@ fn target(id: &str, delivery_mode: DeliveryMode, poc_scope: Option<Vec<&str>>) -
         },
         files: vec!["x.rs".to_owned()],
         evidence: "e".to_owned(),
+        evidence_queries: if matches!(delivery_mode, DeliveryMode::NormalPr) {
+            vec![EvidenceQuery {
+                purpose: "prove span movement".to_owned(),
+                sql_path: "queries/span_run_drift.sql".into(),
+                params: Default::default(),
+                output_path: "queries/span-run-drift.csv".to_owned(),
+                key_observation: "baseline p95 self_wall_us = 1000".to_owned(),
+                supports_invocations: vec!["warm-steady".to_owned()],
+            }]
+        } else {
+            vec![]
+        },
         proposed_change: "p".to_owned(),
         expected_improvement: ImprovementVector {
             tx_latency: 1.0,

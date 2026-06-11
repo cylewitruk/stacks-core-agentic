@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
 use crate::models::common::{
-    BreakageClass, Bucket, Hotspot, ImprovementVector, KEBAB_PATTERN, LensDispositionStatus, Risk,
-    SchemaVersionV3, SelectionLens, VerificationReplay,
+    BreakageClass, Bucket, EvidenceQuery, Hotspot, ImprovementVector, KEBAB_PATTERN,
+    LensDispositionStatus, Risk, SchemaVersionV4, SelectionLens, VerificationReplay,
+    validate_evidence_queries_for_replay,
 };
 
 /// Top-level shape of `analysis.json`. Untagged: serde tries
@@ -67,8 +68,8 @@ impl ValidateModel for Analysis {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptedAnalysis {
-    /// Constant: 3.
-    pub schema_version: SchemaVersionV3,
+    /// Constant: 4.
+    pub schema_version: SchemaVersionV4,
     /// Family id (matches the candidate's `id`).
     #[schemars(regex(pattern = KEBAB_PATTERN))]
     pub family_id: String,
@@ -141,8 +142,8 @@ pub enum AcceptedStatusTag {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RejectedAnalysis {
-    /// Constant: 3.
-    pub schema_version: SchemaVersionV3,
+    /// Constant: 4.
+    pub schema_version: SchemaVersionV4,
     /// Family id (matches the candidate's `id`).
     #[schemars(regex(pattern = KEBAB_PATTERN))]
     pub family_id: String,
@@ -197,6 +198,11 @@ pub struct AnalyzerTarget {
     pub files: Vec<String>,
     /// Trace + code evidence.
     pub evidence: String,
+    /// Structured DB evidence the analyzer used to identify this target.
+    /// Required on non-consensus targets; consensus targets may omit it
+    /// because they do not reach the benchmark/result-analysis phases.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_queries: Vec<EvidenceQuery>,
     /// Concrete proposed change.
     pub proposed_change: String,
     /// Three-axis honest improvement estimate.
@@ -307,6 +313,12 @@ impl ValidateModel for AnalyzerTarget {
                 );
             }
         }
+        validate_evidence_queries_for_replay(
+            &self.evidence_queries,
+            self.verification_replay
+                .as_ref(),
+            !self.consensus_breaking,
+        )?;
         Ok(())
     }
 }

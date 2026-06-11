@@ -75,7 +75,7 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     check_schema_version(
         &layout.optimization_targets_json(),
         "merge/optimization-targets.json",
-        3,
+        4,
         &mut report,
     );
     check_schema_version(&layout.summary_json(), "finalize/summary.json", 4, &mut report);

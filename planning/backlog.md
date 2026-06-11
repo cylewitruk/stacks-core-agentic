@@ -265,7 +265,7 @@ live there, not here.
   [`0043-history-report`](#0043-history-report); pick up after `0033`.
   (Prologue closed `0021-preflight-v2` as superseded by v3's per-session
   source clone — see [archive/superseded/0021-preflight-v2.md](archive/superseded/0021-preflight-v2.md).)
-- `0044-evidence-backed-verification` -
+- `0044-evidence-backed-verification` — shipped via
   [v7: Evidence-Backed Verification](iterations/v7-evidence-backed-verification.md).
-  Also owns `0038-prompt-example-concretization` as a Phase 2 prompt-lint
+  Also closed `0038-prompt-example-concretization` as a Phase 2 prompt-lint
   cleanup.

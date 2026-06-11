@@ -533,9 +533,9 @@ mod tests {
         AcceptedAnalysis, AcceptedStatusTag, AnalyzerTarget, LensDisposition,
     };
     use crate::models::common::{
-        BenchInvocation, BenchSamples, Bucket, ExpectedSignal, Hotspot, ImprovementVector,
-        LensDispositionStatus, ProfilerMode, Risk, SchemaVersionV3, SelectionLens, SignalDirection,
-        VerificationReplay,
+        BenchInvocation, BenchSamples, Bucket, EvidenceQuery, ExpectedSignal, Hotspot,
+        ImprovementVector, LensDispositionStatus, ProfilerMode, Risk, SchemaVersionV4,
+        SelectionLens, SignalDirection, VerificationReplay,
     };
 
     fn vr_with_n_invocations(n: usize) -> VerificationReplay {
@@ -579,6 +579,18 @@ mod tests {
             },
             files: vec!["x.rs".into()],
             evidence: "e".into(),
+            evidence_queries: if vr.is_some() {
+                vec![EvidenceQuery {
+                    purpose: "prove span movement".into(),
+                    sql_path: "queries/span_run_drift.sql".into(),
+                    params: Default::default(),
+                    output_path: "queries/span-run-drift.csv".into(),
+                    key_observation: "baseline p95 self_wall_us = 1000".into(),
+                    supports_invocations: vec!["inv-0".into()],
+                }]
+            } else {
+                vec![]
+            },
             proposed_change: "p".into(),
             expected_improvement: ImprovementVector {
                 tx_latency: 0.0,
@@ -598,7 +610,7 @@ mod tests {
 
     fn analysis_with(targets: Vec<AnalyzerTarget>) -> Analysis {
         Analysis::Accepted(AcceptedAnalysis {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             family_id: "fam-a".into(),
             status: AcceptedStatusTag::Accepted,
             selection_lens: SelectionLens::TxLatency,
@@ -645,7 +657,7 @@ mod tests {
     fn invocation_cap_skips_rejected_analyses() {
         use crate::models::analyze::{RejectedAnalysis, RejectedStatusTag};
         let a = Analysis::Rejected(RejectedAnalysis {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             family_id: "fam-a".into(),
             status: RejectedStatusTag::Rejected,
             reason: "test".into(),

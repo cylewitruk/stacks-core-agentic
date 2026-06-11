@@ -105,9 +105,26 @@ fn inject_candidate(def: &mut Value) {
     }
 }
 
-/// AnalyzerTarget consensus-routing constraints. Five rules total.
+/// AnalyzerTarget consensus-routing constraints plus benchmark-evidence
+/// requirements for non-consensus targets.
 fn inject_analyzer_target(def: &mut Value) {
     inject_consensus_routing(def);
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": { "consensus_breaking": { "const": false } },
+                "required": ["consensus_breaking"]
+            },
+            "then": {
+                "required": ["verification_replay", "evidence_queries"],
+                "properties": {
+                    "verification_replay": not_null(),
+                    "evidence_queries": { "minItems": 1 }
+                }
+            }
+        }),
+    );
 }
 
 /// AcceptedAnalysis cross-field invariants:
@@ -210,6 +227,23 @@ fn inject_merged_target(def: &mut Value) {
             },
             "then": { "properties": { "bench_eligible": { "const": true } } },
             "else": { "properties": { "bench_eligible": { "const": false } } }
+        }),
+    );
+
+    append_all_of(
+        def,
+        json!({
+            "if": {
+                "properties": { "bench_eligible": { "const": true } },
+                "required": ["bench_eligible"]
+            },
+            "then": {
+                "required": ["verification_replay", "evidence_queries"],
+                "properties": {
+                    "verification_replay": not_null(),
+                    "evidence_queries": { "minItems": 1 }
+                }
+            }
         }),
     );
 }

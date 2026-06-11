@@ -70,7 +70,7 @@ impl AgentHarness for FakeHarness {
         // analyses/<family-id>/ dir.
         let analysis = if status == "accepted" {
             serde_json::json!({
-                "schema_version": 3,
+                "schema_version": 4,
                 "family_id": family,
                 "status": "accepted",
                 "selection_lens": "tx_latency",
@@ -85,6 +85,14 @@ impl AgentHarness for FakeHarness {
                     },
                     "files": ["x.rs"],
                     "evidence": "e",
+                    "evidence_queries": [{
+                        "purpose": "prove span movement",
+                        "sql_path": "queries/span_run_drift.sql",
+                        "params": { "run_id": "100", "span_name": "x::y" },
+                        "output_path": "analysis/fake/queries/span-run-drift.csv",
+                        "key_observation": "baseline p95 self_wall_us = 1000",
+                        "supports_invocations": ["warm-steady"]
+                    }],
                     "proposed_change": "p",
                     "expected_improvement": {
                         "tx_latency": 1.0, "tenure_throughput": 0.0, "commit_time": 0.0
@@ -117,7 +125,7 @@ impl AgentHarness for FakeHarness {
             })
         } else {
             serde_json::json!({
-                "schema_version": 3,
+                "schema_version": 4,
                 "family_id": family,
                 "status": "rejected",
                 "reason": "test reject"

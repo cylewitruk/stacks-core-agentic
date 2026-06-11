@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use stacks_bench_agent::models::ToJson;
 use stacks_bench_agent::models::common::{
-    BenchInvocation, BenchSamples, Bucket, DeliveryMode, ExpectedSignal, Hotspot,
-    ImprovementVector, ProfilerMode, Risk, SchemaVersionV3, SelectionLens, SignalDirection,
+    BenchInvocation, BenchSamples, Bucket, DeliveryMode, EvidenceQuery, ExpectedSignal, Hotspot,
+    ImprovementVector, ProfilerMode, Risk, SchemaVersionV4, SelectionLens, SignalDirection,
     VerificationReplay,
 };
 use stacks_bench_agent::models::targets::{
@@ -198,6 +198,18 @@ fn default_vr() -> VerificationReplay {
 
 fn target(id: &str, mode: DeliveryMode, vr: Option<VerificationReplay>) -> MergedTarget {
     let bench_eligible = matches!(mode, DeliveryMode::NormalPr);
+    let evidence_queries = if let Some(vr) = &vr {
+        vec![EvidenceQuery {
+            purpose: "prove span movement".to_owned(),
+            sql_path: "queries/span_run_drift.sql".into(),
+            params: Default::default(),
+            output_path: "queries/span-run-drift.csv".to_owned(),
+            key_observation: "baseline p95 self_wall_us = 1000".to_owned(),
+            supports_invocations: vec![vr.invocations[0].id.clone()],
+        }]
+    } else {
+        vec![]
+    };
     MergedTarget {
         id: id.to_owned(),
         merged_from: vec![MergedFrom {
@@ -217,6 +229,7 @@ fn target(id: &str, mode: DeliveryMode, vr: Option<VerificationReplay>) -> Merge
         },
         files: vec!["x.rs".to_owned()],
         evidence: "e".to_owned(),
+        evidence_queries,
         proposed_change: "p".to_owned(),
         expected_improvement: ImprovementVector {
             tx_latency: 1.0,
@@ -240,7 +253,7 @@ fn target(id: &str, mode: DeliveryMode, vr: Option<VerificationReplay>) -> Merge
 
 fn make_targets(targets: Vec<MergedTarget>) -> OptimizationTargets {
     OptimizationTargets {
-        schema_version: SchemaVersionV3,
+        schema_version: SchemaVersionV4,
         session_id: "20260507-104400".to_owned(),
         baseline_run_id: 100,
         baseline_rerun_id: 101,

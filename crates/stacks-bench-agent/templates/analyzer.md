@@ -132,6 +132,41 @@ Drop any target whose `target_span` is:
 If a target's `proposed_change` is too vague for an implementer to act on
 without re-investigating, you have not drilled deep enough.
 
+# Evidence Provenance
+
+For every non-consensus target, include `evidence_queries[]`. This is the
+replayable DB trail the results-analyzer uses after candidate benchmarks run.
+Log every query you rely on for the mechanism claim, not only large traces.
+
+Each row must include:
+
+- `purpose`: why this query matters.
+- `sql_path`: bundled logical query path, exactly `queries/<name>.sql`
+  from `{{ queries_dir }}`.
+- `params`: string values you used for query parameters.
+- `output_path`: session-relative output path under
+  `analysis/{{ family_id }}/queries/`.
+- `key_observation`: numeric, specific signal extracted from the output
+  (for example, `baseline span p95 self_wall_us = 18400us across 9/10 samples`).
+- `supports_invocations`: ids from this target's
+  `verification_replay.invocations[]` that this evidence supports.
+
+Example row:
+
+```json
+{
+  "purpose": "Confirm RollbackWrapper::lookup dominates warm tx replay.",
+  "sql_path": "queries/span_run_drift.sql",
+  "params": {
+    "run_id": "{{ baseline_run_id }}",
+    "span_name": "RollbackWrapper::lookup"
+  },
+  "output_path": "analysis/{{ family_id }}/queries/rollback-wrapper-drift.csv",
+  "key_observation": "baseline p95 self_wall_us = 18400us across 9/10 samples",
+  "supports_invocations": ["warm-steady"]
+}
+```
+
 # Lens Disposition
 
 `lens_disposition.lens` must equal the candidate's `selection_lens`.
@@ -328,24 +363,32 @@ tx execution and materialized at block commit.
 
 For accepted analyses:
 
+<!-- lint:example schema="analysis" -->
+
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "family_id": "{{ family_id }}",
-  "selection_lens": "...",
   "status": "accepted",
-  "lens_disposition": { "lens": "...", "status": "addressed" },
-  "targets": []
+  "selection_lens": "tx_latency",
+  "lens_disposition": {
+    "lens": "tx_latency",
+    "status": "not_actionable",
+    "reason": "trace signal is real but the hot span is consensus-fixed VM primitive cost"
+  },
+  "targets": [],
+  "global_materiality_note": "No action for this family beyond the documented blocker."
 }
 ```
 
 For rejected analyses:
 
+<!-- lint:example schema="analysis" -->
+
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "family_id": "{{ family_id }}",
-  "selection_lens": "...",
   "status": "rejected",
   "reason": "specific code-level reason"
 }

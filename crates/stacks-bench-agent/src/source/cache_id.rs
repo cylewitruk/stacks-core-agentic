@@ -214,8 +214,7 @@ mod tests {
 
     #[test]
     fn derive_cache_id_caps_total_length_at_64() {
-        let very_long =
-            "https://very-long-host.example.com/very-long-owner-name/very-long-repository-name-\
+        let very_long = "https://very-long-host.example.com/very-long-owner-name/very-long-repository-name-\
              that-keeps-going-and-going.git";
         let id = derive_cache_id(very_long);
         assert!(id.len() <= 64, "id `{id}` exceeds 64 chars (len={})", id.len());

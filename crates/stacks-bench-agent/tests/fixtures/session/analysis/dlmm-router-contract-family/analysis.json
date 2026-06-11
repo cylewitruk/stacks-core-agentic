@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "family_id": "dlmm-router-contract-family",
   "status": "accepted",
   "selection_lens": "tx_latency",
@@ -24,6 +24,19 @@
         "stackslib/src/clarity_vm/database/mod.rs"
       ],
       "evidence": "All three representative txs trace through RollbackWrapper::lookup → marf::read with the same hot subtree. Self-wall is dominated by repeated reads of the same key set.",
+      "evidence_queries": [
+        {
+          "purpose": "Confirm MARF read span dominates DLMM router tx replay.",
+          "sql_path": "queries/span_run_drift.sql",
+          "params": {
+            "run_id": "100",
+            "span_name": "marf::read"
+          },
+          "output_path": "analysis/dlmm-router-contract-family/queries/marf-read-drift.csv",
+          "key_observation": "baseline p95 self_wall_us = 1240000us across cold-first-touch and warm-steady samples",
+          "supports_invocations": ["cold-first-touch", "warm-steady"]
+        }
+      ],
       "proposed_change": "Add a per-tenure read-through cache around RollbackWrapper::lookup keyed by (block_id, key).",
       "expected_improvement": {
         "tx_latency": 4.2,

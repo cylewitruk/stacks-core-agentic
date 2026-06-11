@@ -1212,8 +1212,8 @@ mod tests {
     use super::*;
     use crate::models::analyze::Analysis;
     use crate::models::common::{
-        BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, LensDispositionEntry,
-        LensDispositionStatus, Risk, SchemaVersionV3, SchemaVersionV4, SelectionLens,
+        BreakageClass, Bucket, DeliveryMode, EvidenceQuery, Hotspot, ImprovementVector,
+        LensDispositionEntry, LensDispositionStatus, Risk, SchemaVersionV4, SelectionLens,
     };
     use crate::models::summary::{
         ConsensusIssueCounts, ConsensusPocPrCounts, Experiment, ExperimentStatus, NormalPrCounts,
@@ -1246,7 +1246,7 @@ mod tests {
 
     fn fixture_targets() -> OptimizationTargets {
         OptimizationTargets {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             session_id: "20260511-063216".into(),
             baseline_run_id: 4,
             baseline_rerun_id: 4,
@@ -1275,6 +1275,14 @@ mod tests {
                         "stackslib/src/chainstate/stacks/index/sqlite_side_store.rs".into(),
                     ],
                     evidence: "Repeated REPLACE INTO ...".into(),
+                    evidence_queries: vec![EvidenceQuery {
+                        purpose: "prove commit span movement".into(),
+                        sql_path: "queries/span_run_drift.sql".into(),
+                        params: Default::default(),
+                        output_path: "queries/span-run-drift.csv".into(),
+                        key_observation: "baseline p95 self_wall_us = 1000".into(),
+                        supports_invocations: vec!["cold-first-touch".into()],
+                    }],
                     proposed_change: "Batch REPLACE INTO into transactions of 256 rows".into(),
                     expected_improvement: ImprovementVector {
                         tx_latency: 0.0,
@@ -1320,6 +1328,7 @@ mod tests {
                     },
                     files: vec!["clarity/src/vm/functions/tuples.rs".into()],
                     evidence: "Tuple-get charges LookupVariableSize for the whole tuple".into(),
+                    evidence_queries: vec![],
                     proposed_change: "Borrow-aware path that charges per selected field".into(),
                     expected_improvement: ImprovementVector {
                         tx_latency: 12.0,

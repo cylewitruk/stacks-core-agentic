@@ -1,9 +1,9 @@
 //! Bundled triage / analyzer SQL queries + on-disk seeding helpers.
 //!
-//! The 17 `.sql` files under `<repo>/queries/` (orientation,
-//! candidate-ranking, drilldown) plus the operator-facing `README.md`
-//! are embedded into the binary via `include_str!`. [`seed_to`] writes
-//! them to the operator's
+//! The bundled `.sql` files under `<repo>/queries/` (orientation,
+//! candidate-ranking, drilldown, results comparison) plus the operator-facing
+//! `README.md` are embedded into the binary via `include_str!`. [`seed_to`]
+//! writes them to the operator's
 //! [`LayoutSettings::queries_dir`](crate::settings::LayoutSettings::queries_dir) on
 //! `sbagent init` and at every CLI startup (don't-replace); [`sync`]
 //! rewrites them unconditionally; [`drift`] reports any operator-disk
@@ -22,9 +22,10 @@
 //! could read `<framework>/queries/*.sql`. Post-bundle, the operator
 //! dir alone is enough.
 
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
-use std::path::Path;
+use std::path::{Component, Path};
 
 use anyhow::{Context as _, Result};
 
@@ -39,6 +40,15 @@ pub const BUNDLED_QUERIES: &[(&str, &str)] = &[
         include_str!("../../../queries/baseline_empty_block_breakdown.sql"),
     ),
     ("block_timing_breakdown.sql", include_str!("../../../queries/block_timing_breakdown.sql")),
+    (
+        "compare_block_timing_between_runs.sql",
+        include_str!("../../../queries/compare_block_timing_between_runs.sql"),
+    ),
+    ("compare_run_summary.sql", include_str!("../../../queries/compare_run_summary.sql")),
+    (
+        "compare_spans_between_runs.sql",
+        include_str!("../../../queries/compare_spans_between_runs.sql"),
+    ),
     ("profiler_trace_block.sql", include_str!("../../../queries/profiler_trace_block.sql")),
     ("profiler_trace_tx.sql", include_str!("../../../queries/profiler_trace_tx.sql")),
     ("run_summary.sql", include_str!("../../../queries/run_summary.sql")),
@@ -64,6 +74,29 @@ pub const BUNDLED_QUERIES: &[(&str, &str)] = &[
     ("tx_type_distribution.sql", include_str!("../../../queries/tx_type_distribution.sql")),
     ("txs_for_contract.sql", include_str!("../../../queries/txs_for_contract.sql")),
 ];
+
+/// Returns true when `path` names a bundled SQL query using the stable logical
+/// form `queries/<name>.sql`.
+///
+/// This validator intentionally accepts only bundled `.sql` files, not the
+/// operator-facing `README.md`, absolute paths, or sandbox-relative paths. It
+/// is used by analyzer evidence models so hallucinated query names fail during
+/// model validation before any benchmark work starts.
+pub fn is_bundled_query_logical_path(path: &Path) -> bool {
+    let mut components = path.components();
+    let Some(Component::Normal(dir)) = components.next() else {
+        return false;
+    };
+    let Some(Component::Normal(file)) = components.next() else {
+        return false;
+    };
+    if components.next().is_some() || dir != OsStr::new("queries") {
+        return false;
+    }
+    BUNDLED_QUERIES
+        .iter()
+        .any(|(name, _)| name.ends_with(".sql") && file == OsStr::new(name))
+}
 
 /// Result of a [`seed_to`] call. Same shape as
 /// [`crate::schemas::SeedReport`].

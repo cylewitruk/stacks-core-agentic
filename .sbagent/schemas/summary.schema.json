@@ -414,8 +414,8 @@
       ],
       "type": "object"
     },
-    "SchemaVersionV3": {
-      "const": 3,
+    "SchemaVersionV4": {
+      "const": 4,
       "type": "integer"
     },
     "SelectionLens": {
@@ -484,12 +484,40 @@
       "description": "Demo-friendly aggregate counts by (delivery_mode, status)."
     },
     "schema_version": {
-      "$ref": "#/$defs/SchemaVersionV3",
-      "description": "Constant: 3."
+      "$ref": "#/$defs/SchemaVersionV4",
+      "description": "Constant: 4."
     },
     "session_id": {
       "description": "Session this artifact belongs to.",
       "type": "string"
+    },
+    "source_branch": {
+      "description": "See [`Summary::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_fetched_at": {
+      "description": "See [`Summary::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_sha": {
+      "description": "See [`Summary::source_url`].",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "description": "Source-provenance fields copied from\n`<session>/results/source.json` at finalize. Populated only on\npost-v3-cutover sessions; absent on legacy paths. See\n[`crate::models::source::SourceJson`].",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

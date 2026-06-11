@@ -86,7 +86,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     // Empty-input shortcut: emit valid empty targets, skip LLM, validate.
     if accepted_count == 0 {
         let empty = OptimizationTargets {
-            schema_version: crate::models::common::SchemaVersionV3,
+            schema_version: crate::models::common::SchemaVersionV4,
             session_id: candidates.session_id.clone(),
             baseline_run_id: candidates.baseline_run_id,
             baseline_rerun_id: candidates.baseline_rerun_id,
@@ -312,6 +312,8 @@ pub fn validate_merge_output(
     let mut bucket_by_pair: BTreeMap<(String, usize), Bucket> = BTreeMap::new();
     let mut consensus_by_pair: BTreeMap<(String, usize), (bool, Option<BreakageClass>)> =
         BTreeMap::new();
+    let mut evidence_by_pair: BTreeMap<(String, usize), Vec<crate::models::common::EvidenceQuery>> =
+        BTreeMap::new();
     for a in accepted {
         accepted_family_ids.insert(a.family_id.clone());
         for (i, t) in a.targets.iter().enumerate() {
@@ -319,6 +321,7 @@ pub fn validate_merge_output(
             expected_pairs.insert(key.clone());
             bucket_by_pair.insert(key.clone(), t.bucket);
             consensus_by_pair.insert(key.clone(), (t.consensus_breaking, t.breakage_class));
+            evidence_by_pair.insert(key.clone(), t.evidence_queries.clone());
         }
     }
 
@@ -415,6 +418,39 @@ pub fn validate_merge_output(
                 t.id,
                 signatures.len(),
                 merged_sig
+            );
+        }
+    }
+
+    // Evidence provenance passthrough: the merge phase may group targets, but
+    // it must not invent or drop analyzer query trails. Results analysis
+    // relies on this being the exact union of contributing targets' evidence.
+    for t in &targets.targets {
+        // Duplicate evidence from multiple contributors is still one evidence
+        // item; set equality intentionally collapses repeated rows.
+        let expected: BTreeSet<_> = t
+            .merged_from
+            .iter()
+            .flat_map(|mf| {
+                evidence_by_pair
+                    .get(&(mf.family_id.clone(), mf.target_index))
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+            })
+            .collect();
+        let actual: BTreeSet<_> = t
+            .evidence_queries
+            .iter()
+            .cloned()
+            .collect();
+        if actual != expected {
+            bail!(
+                "merge: evidence provenance mismatch on target `{}` (expected exact union of \
+                 contributor evidence_queries: {}, got {})",
+                t.id,
+                expected.len(),
+                actual.len()
             );
         }
     }
@@ -524,14 +560,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn detects_evidence_provenance_mismatch() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let mut targets = make_targets_doc(vec![merged_target_for(
+            "merged-1",
+            Bucket::BlockProcessing,
+            vec![("fam-a", 0)],
+            false,
+            None,
+        )]);
+        targets.targets[0].evidence_queries[0].key_observation =
+            "invented observation not present in contributor".to_owned();
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        let err =
+            validate_merge_output(&targets, &accepted).expect_err("expected evidence mismatch");
+        assert!(
+            err.to_string()
+                .contains("evidence provenance mismatch"),
+            "got: {err}"
+        );
+    }
+
     fn make_accepted_with_targets(
         family_id: &str,
         targets: Vec<AnalyzerTarget>,
     ) -> AcceptedAnalysis {
         use crate::models::analyze::{AcceptedStatusTag, LensDisposition};
-        use crate::models::common::{LensDispositionStatus, SchemaVersionV3, SelectionLens};
+        use crate::models::common::{LensDispositionStatus, SchemaVersionV4, SelectionLens};
         AcceptedAnalysis {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             family_id: family_id.to_owned(),
             status: AcceptedStatusTag::Accepted,
             selection_lens: SelectionLens::TxLatency,
@@ -580,7 +645,10 @@ mod tests {
         consensus_breaking: bool,
         breakage_class: Option<BreakageClass>,
     ) -> AnalyzerTarget {
-        use crate::models::common::{Hotspot, ImprovementVector, Risk};
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        use crate::models::common::{EvidenceQuery, Hotspot, ImprovementVector, Risk};
         AnalyzerTarget {
             target_span: target_span.to_owned(),
             bucket,
@@ -594,6 +662,18 @@ mod tests {
             },
             files: vec!["x.rs".to_owned()],
             evidence: "e".to_owned(),
+            evidence_queries: if consensus_breaking {
+                vec![]
+            } else {
+                vec![EvidenceQuery {
+                    purpose: "prove span movement".to_owned(),
+                    sql_path: PathBuf::from("queries/span_run_drift.sql"),
+                    params: BTreeMap::from([("span".to_owned(), target_span.to_owned())]),
+                    output_path: "queries/span-run-drift.csv".to_owned(),
+                    key_observation: "baseline p95 self_wall_us = 1000".to_owned(),
+                    supports_invocations: vec!["warm-steady".to_owned()],
+                }]
+            },
             proposed_change: "p".to_owned(),
             expected_improvement: ImprovementVector {
                 tx_latency: 1.0,
@@ -629,6 +709,18 @@ mod tests {
             .collect();
         let convergence_count = merged_from.len();
         let delivery_mode = DeliveryMode::derive(consensus_breaking, None);
+        let evidence_queries = if consensus_breaking {
+            vec![]
+        } else {
+            vec![crate::models::common::EvidenceQuery {
+                purpose: "prove span movement".to_owned(),
+                sql_path: std::path::PathBuf::from("queries/span_run_drift.sql"),
+                params: BTreeMap::from([("span".to_owned(), "x::y".to_owned())]),
+                output_path: "queries/span-run-drift.csv".to_owned(),
+                key_observation: "baseline p95 self_wall_us = 1000".to_owned(),
+                supports_invocations: vec!["warm-steady".to_owned()],
+            }]
+        };
         MergedTarget {
             id: id.to_owned(),
             merged_from,
@@ -645,6 +737,7 @@ mod tests {
             },
             files: vec!["x.rs".to_owned()],
             evidence: "e".to_owned(),
+            evidence_queries,
             proposed_change: "p".to_owned(),
             expected_improvement: ImprovementVector {
                 tx_latency: 1.0,
@@ -667,10 +760,10 @@ mod tests {
     }
 
     fn make_targets_doc(targets: Vec<crate::models::targets::MergedTarget>) -> OptimizationTargets {
-        use crate::models::common::SchemaVersionV3;
+        use crate::models::common::SchemaVersionV4;
         use crate::models::targets::MergeMethod;
         OptimizationTargets {
-            schema_version: SchemaVersionV3,
+            schema_version: SchemaVersionV4,
             session_id: "x".to_owned(),
             baseline_run_id: 100,
             baseline_rerun_id: 101,

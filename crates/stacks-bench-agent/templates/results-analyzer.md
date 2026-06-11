@@ -12,11 +12,14 @@ Write:
 
 You must:
 
-1. Read each invocation's baseline + candidate `bench-run.json` (with rich
-   profile data) and judge whether the measured signal matches the analyzer's
-   `expected_signal` (direction first, magnitude second).
-2. Commit one verdict + confidence for the whole target. Do not punt.
-3. Write `pr_body_summary` prose Phase 5 reads verbatim into the PR body
+1. Read each invocation's baseline + candidate `bench-run.json` as the run
+   envelope: success, run id, coarse totals, and interruption status.
+2. Use the run ids and benchmark DB as the primary mechanism evidence. Replay
+   or compare the analyzer's `evidence_queries[]` for each invocation and judge
+   whether the measured signal matches `expected_signal` (direction first,
+   magnitude second).
+3. Commit one verdict + confidence for the whole target. Do not punt.
+4. Write `pr_body_summary` prose Phase 5 reads verbatim into the PR body
    (omit only when `verdict = rejected`).
 
 Do not edit source code. Do not run tests. Do not run benchmarks. Do not
@@ -37,7 +40,12 @@ Important fields:
   is the test. Match `per_invocation[].invocation_id` to these `id`s 1:1.
 - `verification_replay.suspected_spans[]` — optional hints from the analyzer
   about where the candidate's diff should move time. Use as a focus list when
-  reading profiler-kv data; not a gate.
+  choosing DB comparisons; not a gate.
+- `evidence_queries[]` — the analyzer's baseline DB evidence trail. Each row
+  names a bundled `queries/<name>.sql`, the parameters used, the CSV path the
+  analyzer wrote, the extracted `key_observation`, and the invocation ids it
+  supports. For each supported invocation, run the paired baseline-vs-candidate
+  comparison that corresponds to the same mechanism.
 
 # Optimizer report
 
@@ -56,9 +64,9 @@ Important fields:
 - Read-only checkout: `{{ base }}`
 - Output dir: `{{ output_dir }}`
 - Persistent DB: `{{ stacks_bench_data_dir }}/appdata/stacks-bench.db`
-  (read-only). The on-disk `bench-run.json` is your primary evidence; use the
-  DB only for context queries (e.g. comparing against prior sessions) and
-  log every query you ran in `db_queries[]`.
+  (read-only). The DB is the primary mechanism evidence; `bench-run.json`
+  is the envelope and coarse directional context. Log every query you ran
+  in `db_queries[]`.
 - Query catalog: `{{ queries_dir }}/` and `{{ queries_dir }}/README.md`
 - Per-invocation candidate bench outputs:
   `{{ candidate_invocations_dir }}/<invocation-id>/bench-run.json`
@@ -105,20 +113,53 @@ And one `confidence`:
 
 For each invocation in `verification_replay.invocations[]`:
 
-1. Read the candidate + baseline `bench-run.json`. Compare per-span totals
-   under `Segment: Tx Execution` (and the commit-bucket segments) using the
-   axis on `expected_signal.axis`.
-2. Compute `measured_pct = (baseline_mean - candidate_mean) / baseline_mean * 100`.
+1. Read the candidate + baseline `bench-run.json`. Confirm both succeeded,
+   were not interrupted, and carry the run ids recorded in the run-id files.
+   Treat their summary totals as coarse context only.
+2. For every `evidence_queries[]` row whose `supports_invocations[]` contains
+   this invocation id, run the closest paired comparison from the query catalog:
+   - `compare_run_summary.sql` for envelope sanity;
+   - `compare_spans_between_runs.sql` for analyzer-named spans and most
+     `tx_latency` / `commit_time` mechanisms;
+   - `compare_block_timing_between_runs.sql` for block-phase setup /
+     execution / commit movement.
+   Prefer paired queries over manually diffing two CSVs. If the analyzer's
+   baseline query was more specific than the paired catalog, re-run it for both
+   run ids and write both CSVs, then explain why.
+3. Compute `measured_pct = (baseline_mean - candidate_mean) / baseline_mean * 100`
+   from DB-backed mechanism evidence whenever possible.
    Sign convention: positive = candidate faster.
-3. Decide `matches_expected_signal`:
+4. Decide `matches_expected_signal`:
    - Direction mismatch → `false`. Always.
    - Direction match, magnitude within `tolerance_pct` of `estimate_pct`
      (when both provided) → `true`.
    - Direction match, magnitude outside tolerance → judgment call. Default
      `false` and explain in `observations`.
-4. Surface noteworthy `observations` per invocation — variance bands,
-   profiler-kv shifts on `suspected_spans`, surprising cross-span
-   compensation.
+5. Surface noteworthy `observations` per invocation — DB deltas on the
+   analyzer evidence, suspected-span movement, variance bands visible in the
+   query outputs, and surprising cross-span compensation.
+
+# Additional investigation
+
+If the paired comparisons are inconclusive, contradictory, or would force
+`confidence = medium | low`, run a small number of additional read-only DB
+queries before finalizing. Use this to validate the chosen verdict, not to
+query until a preferred verdict looks stronger. Keep the investigation
+targeted; cap it at five additional queries unless you justify the overage in
+`observations`:
+
+- inspect nearby spans, parent/child spans, or same-context sibling spans;
+- compare per-block/per-tx variance for the affected invocation;
+- check whether another phase absorbed the expected gain;
+- verify sample counts and outliers before calling a signal noise.
+
+Use bundled queries when possible. If you write ad hoc SQL, save its CSV output
+under `analyze/<target>/queries/`, log it in `db_queries[]`, and explain in
+`observations` why the catalog query was insufficient.
+
+Additional investigation may strengthen any verdict. If it conclusively shows
+no mechanism movement, reject with high confidence rather than punting to
+medium.
 
 # Output contract
 
@@ -151,6 +192,9 @@ won't read the JSON. One screen, max.
   Pass 1c is per-invocation interpretation. If the candidate gained 8% on
   one invocation and lost 3% on another, "average 2.5%" is wrong; the
   per-invocation shape is the signal.
+- **Don't treat `bench-run.json` as rich profile evidence.** It is the run
+  envelope. Use the DB and paired query outputs for span / block / Clarity-cost
+  claims.
 - **Don't override the analyzer's hypothesis on a direction win alone.**
   If `expected_signal.direction = improves` and measured = +6%, that's a
   pass even if the magnitude doesn't match `estimate_pct` exactly.

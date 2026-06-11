@@ -1163,8 +1163,9 @@ async fn push_issue<G: GhClient>(
 mod tests {
     use super::*;
     use crate::models::common::{
-        BenchInvocation, BenchSamples, Bucket, ExpectedSignal, Hotspot, ImprovementVector,
-        ProfilerMode, Risk, SchemaVersionV4, SelectionLens, SignalDirection, VerificationReplay,
+        BenchInvocation, BenchSamples, Bucket, EvidenceQuery, ExpectedSignal, Hotspot,
+        ImprovementVector, ProfilerMode, Risk, SchemaVersionV4, SelectionLens, SignalDirection,
+        VerificationReplay,
     };
     use crate::models::results_analysis::Confidence;
     use crate::models::summary::{
@@ -1216,6 +1217,14 @@ mod tests {
             },
             files: vec!["x.rs".into()],
             evidence: "e".into(),
+            evidence_queries: vec![EvidenceQuery {
+                purpose: "prove span movement".into(),
+                sql_path: "queries/span_run_drift.sql".into(),
+                params: Default::default(),
+                output_path: "queries/span-run-drift.csv".into(),
+                key_observation: "baseline p95 self_wall_us = 1000".into(),
+                supports_invocations: vec!["warm-steady".into()],
+            }],
             proposed_change: "p".into(),
             expected_improvement: ImprovementVector {
                 tx_latency: 0.0,

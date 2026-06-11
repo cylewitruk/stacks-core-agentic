@@ -210,6 +210,51 @@
         }
       ]
     },
+    "EvidenceQuery": {
+      "additionalProperties": false,
+      "description": "Analyzer DB evidence that supports a target's mechanism hypothesis.\n\nThe analyzer writes query outputs under its analysis directory, records the\nbundled query it ran, the parameter values it used, the output path it\nwrote, and the specific observation it extracted. Merge carries this trail\nthrough to `optimization-targets.json`; the results-analyzer replays or\ncompares it against candidate runs.",
+      "properties": {
+        "key_observation": {
+          "description": "Numeric, specific observation extracted from the query output.",
+          "type": "string"
+        },
+        "output_path": {
+          "description": "Analysis-output-relative path where the query result was written.",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Parameter values used by the analyzer when it ran the query.",
+          "type": "object"
+        },
+        "purpose": {
+          "description": "Why this query matters for the target.",
+          "type": "string"
+        },
+        "sql_path": {
+          "description": "Stable logical path of the bundled SQL file, always\n`queries/<name>.sql`.",
+          "type": "string"
+        },
+        "supports_invocations": {
+          "description": "Invocation ids this evidence supports.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "purpose",
+        "sql_path",
+        "output_path",
+        "key_observation",
+        "supports_invocations"
+      ],
+      "type": "object"
+    },
     "ExpectedSignal": {
       "additionalProperties": false,
       "description": "Per-invocation hypothesis: what the analyzer expects the measurement\nto show. Direction is the LOAD-BEARING piece (results-analyzer judges\nshape consistency first); magnitude is advisory (`estimate_pct`\noptional; tolerance optional). Splitting the qualitative claim from\nthe quantitative one lets the analyzer commit to direction while\nbeing honest about uncertain magnitudes (\"warm should improve;\ncould be 5% or 50% depending on working-set hit rate\").",
@@ -660,6 +705,34 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "bench_eligible": {
+                "const": true
+              }
+            },
+            "required": [
+              "bench_eligible"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_queries": {
+                "minItems": 1
+              },
+              "verification_replay": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "verification_replay",
+              "evidence_queries"
+            ]
+          }
         }
       ],
       "description": "One merged optimization target.",
@@ -717,6 +790,13 @@
         "evidence": {
           "description": "Synthesized evidence.",
           "type": "string"
+        },
+        "evidence_queries": {
+          "description": "Structured analyzer DB evidence carried through from contributors.\nRequired on benchmark-eligible targets and consumed by the\nresults-analyzer to replay the analyzer's mechanism trail.",
+          "items": {
+            "$ref": "#/$defs/EvidenceQuery"
+          },
+          "type": "array"
         },
         "expected_improvement": {
           "$ref": "#/$defs/ImprovementVector",
@@ -883,8 +963,8 @@
         }
       ]
     },
-    "SchemaVersionV3": {
-      "const": 3,
+    "SchemaVersionV4": {
+      "const": 4,
       "type": "integer"
     },
     "SelectionLens": {
@@ -1004,8 +1084,8 @@
       "type": "array"
     },
     "schema_version": {
-      "$ref": "#/$defs/SchemaVersionV3",
-      "description": "Constant: 3."
+      "$ref": "#/$defs/SchemaVersionV4",
+      "description": "Constant: 4."
     },
     "session_id": {
       "description": "Session this artifact belongs to.",

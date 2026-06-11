@@ -7,18 +7,19 @@ structured query trail and the results-analyzer prompt overweights
 analyzer's baseline evidence replayable and makes Phase 3.5 judge
 mechanism movement from the benchmark DB, not from pooled run summaries.
 
-> **Status:** planned.
+> **Status:** shipped.
 >
-> Goal: harden the Pass 1c judgment loop before live smoke. This is prompt +
-> schema + query-catalog work; no changes to benchmark execution or publish
-> routing.
+> Shipped: analyzer evidence provenance is typed and carried through merge,
+> paired DB comparison queries are bundled, and the results-analyzer prompt now
+> treats `bench-run.json` as the run envelope while using DB-backed mechanism
+> evidence for judgment. Live operator validation remains with `0019`.
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0038-prompt-example-concretization` | supporting prompt-lint cleanup | planned |
-| `0044-evidence-backed-verification` | primary | planned |
+| `0038-prompt-example-concretization` | supporting prompt-lint cleanup | shipped |
+| `0044-evidence-backed-verification` | primary | shipped |
 
 ## Why
 
@@ -109,22 +110,29 @@ and what signal it extracted.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Analyzer output without evidence queries on a `normal_pr` target
+- [x] Analyzer output without evidence queries on a `normal_pr` target
       fails validation with a clear message.
-- [ ] `supports_invocations[]` referencing an unknown invocation id fails
+- [x] `supports_invocations[]` referencing an unknown invocation id fails
       validation.
-- [ ] A hallucinated `sql_path` outside `queries/` or absent from the bundled
+- [x] A hallucinated `sql_path` outside `queries/` or absent from the bundled
       query catalog fails validation.
-- [ ] Merge preserves evidence queries from analyzer targets into merged
+- [x] Merge preserves evidence queries from analyzer targets into merged
       targets without dropping or inventing provenance.
-- [ ] Regenerated schemas and bundled mirrors are in sync.
+- [x] Regenerated schemas and bundled mirrors are in sync.
+
+**Notes:**
+
+- `EvidenceQuery` landed in `models/common.rs`; analysis and
+  optimization-targets now carry `schema_version: 4`.
+- Merge validation now requires the exact union of contributor
+  `evidence_queries[]`, so the prompt contract is backed by a Rust gate.
 
 **Tests:**
 
@@ -157,21 +165,26 @@ and what signal it extracted.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent prompt lint` passes.
-- [ ] Marked analyzer output examples validate against
+- [x] `sbagent prompt lint` passes.
+- [x] Marked analyzer output examples validate against
       `analysis.schema.json`.
-- [ ] Prompt text tells the analyzer to log every query it relies on, not
+- [x] Prompt text tells the analyzer to log every query it relies on, not
       only "large traces".
-- [ ] `0038-prompt-example-concretization` acceptance is satisfied: analyzer
+- [x] `0038-prompt-example-concretization` acceptance is satisfied: analyzer
       examples no longer use schema-invalid placeholder enum values and the
       marked examples pass schema-example lint.
+
+**Notes:**
+
+- The accepted/rejected analyzer examples are now concrete v4 JSON and are
+  covered by schema-example lint markers.
 
 **Tests:**
 
@@ -199,28 +212,32 @@ with one query instead of manually diffing two CSVs.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Each new query has parameter documentation and a runnable `sqlite3`
+- [x] Each new query has parameter documentation and a runnable `sqlite3`
       example.
-- [ ] Minimum validation floor: every new SQL file is run through `sqlite3`
-      in CI or a checked-in test harness. Prefer a small migration-backed
-      fixture DB; if that is too expensive, record an explicit syntax probe
-      command and distinguish syntax errors from expected missing-table errors.
-- [ ] `queries/README.md` no longer describes the catalog as triage-only; it
+- [x] Every new SQL file is run through `sqlite3` in the checked-in
+      `tests/query_syntax.rs` harness against a minimal in-memory schema.
+- [x] `queries/README.md` no longer describes the catalog as triage-only; it
       names analyzer and results-analyzer usage.
+
+**Notes:**
+
+- Added `compare_run_summary.sql`, `compare_spans_between_runs.sql`, and
+  `compare_block_timing_between_runs.sql`.
+- `tests/query_syntax.rs` runs the paired queries through `sqlite3` against a
+  minimal in-memory schema.
 
 **Tests:**
 
-- Prefer a lightweight SQLite fixture test if practical. Otherwise add a
-  checked-in syntax-probe test / script that runs every new SQL file through
-  `sqlite3` and distinguishes parser errors from expected missing-table
-  errors.
+- [query_syntax.rs](../../crates/stacks-bench-agent/tests/query_syntax.rs)
+  runs the paired comparison queries through `sqlite3` against a minimal
+  in-memory schema.
 
 ### Phase 4: Results-Analyzer Prompt Rewrite
 
@@ -244,19 +261,19 @@ evidence.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Prompt no longer calls `bench-run.json` primary evidence.
-- [ ] Prompt explicitly maps each `EvidenceQuery.supports_invocations[]` entry
+- [x] Prompt no longer calls `bench-run.json` primary evidence.
+- [x] Prompt explicitly maps each `EvidenceQuery.supports_invocations[]` entry
       to the result-analyzer's paired comparison work.
-- [ ] Prompt still requires `results-analysis.json` to satisfy the existing
+- [x] Prompt still requires `results-analysis.json` to satisfy the existing
       schema and to log every DB query in `db_queries[]`.
-- [ ] `sbagent prompt lint` passes.
+- [x] `sbagent prompt lint` passes.
 
 **Tests:**
 
@@ -279,19 +296,27 @@ before live smoke.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] A fixture analyzer output with evidence provenance survives merge.
-- [ ] Rendered results-analyzer prompt contains enough structured context to
+- [x] A fixture analyzer output with evidence provenance survives merge.
+- [x] Rendered results-analyzer prompt contains enough structured context to
       replay analyzer evidence against candidate runs.
-- [ ] Existing Pass 1c fixture tests still pass after schema bumps.
-- [ ] Schema-parity fixtures and bundled schema mirrors are regenerated after
+- [x] Existing Pass 1c fixture tests still pass after schema bumps.
+- [x] Schema-parity fixtures and bundled schema mirrors are regenerated after
       the v4 schema bumps from Phase 1.
+
+**Notes:**
+
+- Fixture analyses now carry `evidence_queries[]`; the merge fixture carries
+  the contributor union.
+- `prompts::tests::results_analyzer_prompt_uses_db_evidence_hierarchy`
+  asserts the rendered handoff includes the evidence trail, paired query
+  instructions, run-id paths, and no stale primary-evidence wording.
 
 **Tests:**
 
@@ -300,11 +325,11 @@ before live smoke.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache`.
-- [ ] `just test --summary --no-sccache`.
-- [ ] `sbagent prompt lint` covers the updated analyzer/results-analyzer
-      templates.
-- [ ] Manual review of one rendered analyzer prompt and one rendered
+- [x] `just lint --no-sccache`.
+- [x] `just test --summary --no-sccache`.
+- [x] `sbagent prompt lint` covers the updated analyzer/results-analyzer
+      templates in both bundled and seeded prompt directories.
+- [x] Manual review of one rendered analyzer prompt and one rendered
       results-analyzer prompt confirms the evidence hierarchy:
       DB-backed mechanism evidence first, `bench-run.json` as envelope.
 

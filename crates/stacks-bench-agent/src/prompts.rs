@@ -1003,6 +1003,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn results_analyzer_prompt_uses_db_evidence_hierarchy() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+        let mut p = ResultsAnalyzerPrompt::synthetic_for_lint();
+        p.target_json = serde_json::json!({
+            "id": "marf-read-cache-rollback-wrapper",
+            "evidence_queries": [{
+                "purpose": "Confirm MARF read span dominates warm replay.",
+                "sql_path": "queries/span_run_drift.sql",
+                "params": { "run_id": "100", "span_name": "marf::read" },
+                "output_path": "analysis/fam/queries/marf-read-drift.csv",
+                "key_observation": "baseline p95 self_wall_us = 1240000us",
+                "supports_invocations": ["warm-steady"]
+            }],
+            "verification_replay": {
+                "rationale": "warm replay",
+                "invocations": [{
+                    "id": "warm-steady",
+                    "label": "warm",
+                    "expected_signal": { "axis": "tx_latency", "direction": "improves" }
+                }]
+            }
+        })
+        .to_string();
+
+        let rendered = render("results-analyzer", &p, tmp.path()).expect("render");
+        for expected in [
+            "The DB is the primary mechanism evidence",
+            "`bench-run.json` as the run",
+            "is the envelope and coarse directional context",
+            "evidence_queries[]",
+            "queries/span_run_drift.sql",
+            "compare_spans_between_runs.sql",
+        ] {
+            assert!(rendered.contains(expected), "missing `{expected}`:\n{rendered}");
+        }
+        assert!(
+            !rendered.contains("bench-run.json` is your primary evidence"),
+            "stale primary-evidence wording survived:\n{rendered}"
+        );
+    }
+
     /// Every bundled template parses + renders cleanly under MiniJinja
     /// strict mode against its struct's field set. Replaces the previous
     /// Askama compile-time drift check; same coverage, now at test time.

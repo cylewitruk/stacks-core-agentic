@@ -9,16 +9,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ValidateModel;
 use crate::models::common::{
-    BreakageClass, Bucket, DeliveryMode, Hotspot, ImprovementVector, KEBAB_PATTERN,
-    LensDispositionEntry, LensDispositionStatus, Risk, SchemaVersionV3, VerificationReplay,
+    BreakageClass, Bucket, DeliveryMode, EvidenceQuery, Hotspot, ImprovementVector, KEBAB_PATTERN,
+    LensDispositionEntry, LensDispositionStatus, Risk, SchemaVersionV4, VerificationReplay,
+    validate_evidence_queries_for_replay,
 };
 
 /// Top-level shape of `optimization-targets.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizationTargets {
-    /// Constant: 3.
-    pub schema_version: SchemaVersionV3,
+    /// Constant: 4.
+    pub schema_version: SchemaVersionV4,
     /// Session this artifact belongs to.
     pub session_id: String,
     /// Baseline run id (matches `<results>/baseline-run-id`).
@@ -131,6 +132,11 @@ pub struct MergedTarget {
     pub files: Vec<String>,
     /// Synthesized evidence.
     pub evidence: String,
+    /// Structured analyzer DB evidence carried through from contributors.
+    /// Required on benchmark-eligible targets and consumed by the
+    /// results-analyzer to replay the analyzer's mechanism trail.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_queries: Vec<EvidenceQuery>,
     /// Canonical proposed change.
     pub proposed_change: String,
     /// Per-axis median improvement across contributors.
@@ -289,6 +295,13 @@ impl ValidateModel for MergedTarget {
                 self.id
             );
         }
+        validate_evidence_queries_for_replay(
+            &self.evidence_queries,
+            self.verification_replay
+                .as_ref(),
+            self.bench_eligible,
+        )
+        .with_context(|| format!("target `{}`", self.id))?;
         Ok(())
     }
 }

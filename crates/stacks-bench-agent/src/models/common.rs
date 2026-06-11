@@ -5,6 +5,9 @@
 //! the three-axis improvement vector, the hotspot record, and the lens
 //! disposition propagated from analysis through merge into summary.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+
 use anyhow::{Context as _, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -192,18 +195,17 @@ pub const SCHEMA_VERSION_V2: u32 = 2;
 /// Pass 1c's `results-analysis.json`.
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
-/// Schema version sentinel for v3 artifacts. Carried by `analysis.json`
-/// and `optimization-targets.json` — the artifacts that gained Pass
-/// 1c semantics: analyzer-emitted `verification_replay` with one or
-/// more `BenchInvocation`s, and finalize/summary fields sourced from
-/// `results-analysis.json`. `summary.json` rode this version
-/// transitionally before bumping to v4 alongside source provenance.
+/// Schema version sentinel for v3 artifacts. Previously carried by
+/// `analysis.json` and `optimization-targets.json` for the Pass 1c
+/// targeted-replay cutover. Kept so older schemas and fixtures can name
+/// the historical artifact version.
 pub const SCHEMA_VERSION_V3: u32 = 3;
 
 /// Schema version sentinel for v4 artifacts. Carried by `summary.json`,
 /// which gains the four source-provenance fields (`source_url`,
 /// `source_branch`, `source_sha`, `source_fetched_at`) populated from
-/// `source.json` at session start.
+/// `source.json` at session start, and by v7's `analysis.json` /
+/// `optimization-targets.json` evidence-provenance cutover.
 pub const SCHEMA_VERSION_V4: u32 = 4;
 
 /// Kebab-case identifier regex applied to family ids, target ids, and
@@ -643,6 +645,120 @@ impl ValidateModel for VerificationReplay {
         }
         Ok(())
     }
+}
+
+/// Analyzer DB evidence that supports a target's mechanism hypothesis.
+///
+/// The analyzer writes query outputs under its analysis directory, records the
+/// bundled query it ran, the parameter values it used, the output path it
+/// wrote, and the specific observation it extracted. Merge carries this trail
+/// through to `optimization-targets.json`; the results-analyzer replays or
+/// compares it against candidate runs.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceQuery {
+    /// Why this query matters for the target.
+    pub purpose: String,
+    /// Stable logical path of the bundled SQL file, always
+    /// `queries/<name>.sql`.
+    pub sql_path: PathBuf,
+    /// Parameter values used by the analyzer when it ran the query.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    /// Analysis-output-relative path where the query result was written.
+    pub output_path: String,
+    /// Numeric, specific observation extracted from the query output.
+    pub key_observation: String,
+    /// Invocation ids this evidence supports.
+    #[schemars(length(min = 1))]
+    pub supports_invocations: Vec<String>,
+}
+
+impl ValidateModel for EvidenceQuery {
+    fn validate_model(&self) -> Result<()> {
+        if self.purpose.trim().is_empty() {
+            bail!("evidence_query.purpose must be non-blank");
+        }
+        if !crate::queries::is_bundled_query_logical_path(&self.sql_path) {
+            bail!(
+                "evidence_query.sql_path = {} must name a bundled SQL query as \
+                 `queries/<name>.sql`",
+                self.sql_path.display()
+            );
+        }
+        if self
+            .output_path
+            .trim()
+            .is_empty()
+        {
+            bail!("evidence_query.output_path must be non-blank");
+        }
+        if self
+            .key_observation
+            .trim()
+            .is_empty()
+        {
+            bail!("evidence_query.key_observation must be non-blank");
+        }
+        if self
+            .supports_invocations
+            .is_empty()
+        {
+            bail!("evidence_query.supports_invocations must be non-empty");
+        }
+        Ok(())
+    }
+}
+
+/// Validate a target's analyzer evidence against its verification replay.
+///
+/// `required` should be true only for benchmark-eligible targets. Consensus
+/// targets may omit evidence because they do not reach Phase 1.8 / 3 / 3.5,
+/// but any evidence they do carry is still structurally validated.
+pub fn validate_evidence_queries_for_replay(
+    evidence_queries: &[EvidenceQuery],
+    verification_replay: Option<&VerificationReplay>,
+    required: bool,
+) -> Result<()> {
+    if required && evidence_queries.is_empty() {
+        bail!("bench-eligible target must carry at least one evidence_query");
+    }
+
+    let invocation_ids = verification_replay.map(|vr| {
+        vr.invocations
+            .iter()
+            .map(|inv| inv.id.as_str())
+            .collect::<BTreeSet<_>>()
+    });
+
+    for (i, q) in evidence_queries
+        .iter()
+        .enumerate()
+    {
+        q.validate_model()
+            .with_context(|| format!("evidence_queries[{i}]"))?;
+        if let Some(ids) = &invocation_ids {
+            for id in &q.supports_invocations {
+                if !ids.contains(id.as_str()) {
+                    bail!(
+                        "evidence_queries[{i}].supports_invocations references unknown invocation \
+                         id {:?}",
+                        id
+                    );
+                }
+            }
+        } else if !q
+            .supports_invocations
+            .is_empty()
+        {
+            bail!(
+                "evidence_queries[{i}] cannot reference invocations when verification_replay is \
+                 absent"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// One row in [`InvocationRunIds`] — pairs an invocation `id` (from the
@@ -1208,5 +1324,70 @@ mod tests {
         assert!(is_valid_invocation_id("a-b"));
         assert!(!is_valid_invocation_id("a_b")); // underscore not allowed
         assert!(!is_valid_invocation_id("a b")); // space not allowed
+    }
+
+    fn evidence_query() -> EvidenceQuery {
+        EvidenceQuery {
+            purpose: "prove span movement".into(),
+            sql_path: "queries/span_run_drift.sql".into(),
+            params: BTreeMap::new(),
+            output_path: "queries/span-run-drift.csv".into(),
+            key_observation: "baseline p95 self_wall_us = 1000".into(),
+            supports_invocations: vec!["warm-steady".into()],
+        }
+    }
+
+    #[test]
+    fn evidence_query_accepts_bundled_query_logical_path() {
+        evidence_query()
+            .validate_model()
+            .expect("bundled SQL logical path accepted");
+    }
+
+    #[test]
+    fn evidence_query_rejects_paths_outside_bundled_query_catalog() {
+        for bad in [
+            "span_run_drift.sql",
+            "queries/README.md",
+            "queries/not-in-bundle.sql",
+            "../queries/span_run_drift.sql",
+            "/tmp/span_run_drift.sql",
+        ] {
+            let mut q = evidence_query();
+            q.sql_path = bad.into();
+            let e = q
+                .validate_model()
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("queries/<name>.sql"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn evidence_query_rejects_unknown_supported_invocation() {
+        let replay = VerificationReplay {
+            rationale: "test".into(),
+            invocations: vec![invocation("warm-steady")],
+            suspected_spans: None,
+        };
+        let mut q = evidence_query();
+        q.supports_invocations = vec!["missing-invocation".into()];
+        let e = validate_evidence_queries_for_replay(&[q], Some(&replay), true)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("unknown invocation id"), "{e}");
+    }
+
+    #[test]
+    fn evidence_queries_required_when_requested() {
+        let replay = VerificationReplay {
+            rationale: "test".into(),
+            invocations: vec![invocation("warm-steady")],
+            suspected_spans: None,
+        };
+        let e = validate_evidence_queries_for_replay(&[], Some(&replay), true)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("evidence_query"), "{e}");
     }
 }

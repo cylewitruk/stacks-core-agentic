@@ -2281,6 +2281,7 @@ mod tests {
             },
             files: vec!["x.rs".to_owned()],
             evidence: "e".to_owned(),
+            evidence_queries: vec![],
             proposed_change: "p".to_owned(),
             expected_improvement: ImprovementVector {
                 tx_latency: 1.0,

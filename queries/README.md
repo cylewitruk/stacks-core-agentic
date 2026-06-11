@@ -1,9 +1,11 @@
-# Triage Queries
+# Benchmark DB Query Catalog
 
-A small library of SQLite queries the triage agent can run against the
-`stacks-bench` SQLite database to refine signal beyond the top-50 profiler
-JSON snapshot. Each file is parameterized with sqlite3 named placeholders
-(`:run_id`, `:span_id`, `:limit`, ...).
+A small library of SQLite queries agents can run against the `stacks-bench`
+SQLite database. Triage and analyzer agents use single-run queries to refine
+candidate mechanisms; the results-analyzer uses paired baseline-vs-candidate
+queries to verify whether the optimizer moved the predicted mechanism. Each
+file is parameterized with sqlite3 named placeholders (`:run_id`, `:span_id`,
+`:baseline_run_id`, ...).
 
 ## Source
 
@@ -77,6 +79,28 @@ Each query's header comment lists its parameters and a runnable example.
 7. **Cross-run trend.** [`span_run_drift.sql`](span_run_drift.sql) — when 2+
    runs exist, surfaces spans whose recent baseline is moving.
 
+## Results-analyzer paired comparisons
+
+Phase 3.5 receives one baseline run id and one candidate run id per analyzer
+invocation. Use the paired queries below before judging
+`matches_expected_signal`:
+
+1. **Envelope sanity.** [`compare_run_summary.sql`](compare_run_summary.sql) —
+   confirms both runs exist and compares coarse wall / block / tx totals. Treat
+   this as the run envelope, not the mechanism proof.
+2. **Wall-time axes.**
+   [`compare_spans_between_runs.sql`](compare_spans_between_runs.sql) compares
+   analyzer-named spans and is the primary mechanism check for `tx_latency` and
+   most `commit_time` findings.
+3. **Block-phase axes.**
+   [`compare_block_timing_between_runs.sql`](compare_block_timing_between_runs.sql)
+   compares setup / execution / commit / total time per block. Use it to
+   corroborate commit-bucket or whole-block hypotheses.
+
+All paired queries use the same sign convention as `results-analysis.json`:
+positive `improvement_pct` means the candidate is faster / cheaper than the
+baseline.
+
 ## Query catalog
 
 | File                                    | Purpose                                                                                  | Params                                                                     |
@@ -87,6 +111,9 @@ Each query's header comment lists its parameters and a runnable example.
 | `top_spans_by_call_count.sql`           | High-frequency spans (cache / dedup candidates).                                         | `:run_id`, `:limit`                                                        |
 | `block_timing_breakdown.sql`            | Avg setup / execution / commit per block; commit-overhead baseline.                      | `:run_id`                                                                  |
 | `baseline_empty_block_breakdown.sql`    | Avg per-stage cost of processing an empty block (irreducible floor).                     | `:run_id`                                                                  |
+| `compare_run_summary.sql`               | Baseline-vs-candidate coarse run envelope comparison.                                    | `:baseline_run_id`, `:candidate_run_id`                                     |
+| `compare_spans_between_runs.sql`        | Baseline-vs-candidate profiler-span comparison for one analyzer-named span.              | `:baseline_run_id`, `:candidate_run_id`, `:span_name`                       |
+| `compare_block_timing_between_runs.sql` | Baseline-vs-candidate setup / execution / commit / total timing comparison.              | `:baseline_run_id`, `:candidate_run_id`                                     |
 | `tx_type_distribution.sql`              | Cheap workload context: tx-type counts and total time.                                   | `:run_id`                                                                  |
 | `top_contract_calls.sql`                | Top Clarity contract-functions by total wall time.                                       | `:run_id`, `:limit`                                                        |
 | `top_clarity_consumers_by_contract.sql` | Top Clarity-budget consumers per contract.function (5-axis breakdown + per-block max).   | `:run_id`, `:limit`                                                        |

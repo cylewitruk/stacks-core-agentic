@@ -165,7 +165,7 @@ fn block_validation_forces_poc_implementable_false() {
     // + poc_implementable=true, which the injected rule must reject.
     let validator = schema_for("analysis.schema.json");
     let value = json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "family_id": "x-fam",
         "status": "accepted",
         "selection_lens": "tx_latency",
@@ -281,7 +281,7 @@ fn lens_disposition_reason_rejects_null() {
 /// (target is non-consensus).
 fn accepted_analysis_template() -> Value {
     json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "family_id": "x-fam",
         "status": "accepted",
         "selection_lens": "tx_latency",
@@ -296,6 +296,14 @@ fn accepted_analysis_template() -> Value {
             },
             "files": ["x.rs"],
             "evidence": "e",
+            "evidence_queries": [{
+                "purpose": "prove span movement",
+                "sql_path": "queries/span_run_drift.sql",
+                "params": { "run_id": "1", "span_name": "x::y" },
+                "output_path": "analysis/x-fam/queries/span-run-drift.csv",
+                "key_observation": "baseline p95 self_wall_us = 1000",
+                "supports_invocations": ["warm-steady"]
+            }],
             "proposed_change": "p",
             "expected_improvement": {
                 "tx_latency": 1.0, "tenure_throughput": 0.0, "commit_time": 0.0
