@@ -213,6 +213,42 @@ baseline measurements for every promoted representative.
 **Acceptance:** Analyzer, optimizer, and verification can compare against the
 same anchor recipe and cache regime.
 
+<a id="0043-history-report"></a>
+
+### History Report (Markdown)
+
+- **id:** `0043-history-report`
+- **status:** `backlog`
+- **priority:** `low`
+- **source:** v6 Phase 5 (deferred); see
+  [iterations/v6-observability-surface.md](iterations/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
+
+**Problem:** Operators have `sbagent history list` + `show` (v6) but no
+single document they can commit / share / paste into a weekly digest.
+
+**Scope:** Add `sbagent history report [--since <ref>] [--out <path>]`.
+Default `--since` is "the most recent ISO week with archived sessions";
+default `--out` is stdout. Markdown sections:
+
+- **Summary**: session count, target outcome rollup, total wall-clock
+  across the period.
+- **Per-session table**: same columns as `history list`, rendered as a
+  markdown table.
+- **PRs opened**: bulleted list of `pr_url`s grouped by session.
+- **Issues opened**: bulleted list of `issue_url`s.
+
+**Promotion trigger:** Best picked up AFTER
+[`0033-maintain-command`](#0033-maintain-command) lands. `0033` adds
+GitHub-side reconciliation (open / merged / closed / stale PR state) to
+the event log. Without it, the report can only render "PR opened" —
+which `history list` already does. With it, the report gains the
+merged-vs-open dimension that makes a weekly digest meaningfully
+richer than the current per-session views.
+
+**Acceptance:** Default invocation produces a markdown document with
+the four sections above against a fixture ledger.
+`--out reports/<iso-week>.md` writes to disk; stdout stays empty.
+
 <a id="0038-prompt-example-concretization"></a>
 
 ### Prompt Example Concretization
@@ -247,7 +283,9 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
-- `0036-observability-surface` —
+- `0036-observability-surface` — shipped via
   [v6: Observability Surface](iterations/v6-observability-surface.md).
+  Phase 5 (markdown report) deferred to
+  [`0043-history-report`](#0043-history-report); pick up after `0033`.
   (Prologue closed `0021-preflight-v2` as superseded by v3's per-session
   source clone — see [archive/superseded/0021-preflight-v2.md](archive/superseded/0021-preflight-v2.md).)

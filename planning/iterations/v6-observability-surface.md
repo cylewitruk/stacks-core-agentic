@@ -8,19 +8,21 @@ data easy to consume: `sbagent history list` for the leaderboard,
 prologue to close out the now-superseded `0021-preflight-v2`
 planning debt before the next iteration uses preflight as a hook.
 
-> **Status:** planned.
+> **Status:** shipped (Phases 1–4). Phase 5 (markdown report)
+> deferred to
+> [`0043-history-report`](../backlog.md#0043-history-report) —
+> best promoted after `0033-maintain-command` lands so the report
+> gains the open/merged/closed PR dimension it currently lacks.
 >
 > Scoped tight on purpose — v5 already shipped the data; v6 just
-> reads it back. No new artifacts, no new sidecars. The Stretch
-> phase (weekly report) is genuinely optional and may move to a
-> follow-up.
+> reads it back. No new artifacts, no new sidecars.
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
 | `0021-preflight-v2` | prologue (rescope/close) | shipped (superseded by v3) |
-| `0036-observability-surface` | primary | planned |
+| `0036-observability-surface` | primary | shipped (Phases 1–4) |
 
 ## Why
 
@@ -358,85 +360,78 @@ breakdown + per-target detail in a single command.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
+- [x] Core implementation
+- [x] Unit/integration tests
 - [ ] Reviewed
 - [ ] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent history show <known-id>` against the fixture
+- [x] `sbagent history show <known-id>` against the fixture
       session prints the three sections in order with correct
       values.
-- [ ] Output is pure ASCII — no glyphs, no Unicode box-drawing,
-      no ANSI escape codes when stdout is piped (fixture test
-      asserts byte-for-byte equality against a checked-in
-      expected output, same shape as Phase 3's test).
-- [ ] An unknown session id exits 1 with the documented error
-      message.
-- [ ] `NO_COLOR=1 sbagent history show <id>` suppresses color
-      escape codes even on a TTY.
-- [ ] Phase durations bar chart proportional to the values: a
+- [x] Output is pure ASCII — no glyphs, no Unicode box-drawing,
+      no ANSI escape codes when stdout is piped. Byte-for-byte
+      equality against a `#[rustfmt::skip]`'d raw-string fixture
+      (rustfmt happily injects line-continuations into ordinary
+      string literals — caught on first lint pass, fixed by raw
+      string).
+- [x] An unknown session id exits 1 with the documented error
+      message (includes the offending id and points at
+      `sbagent history list`).
+- [x] `NO_COLOR=1 sbagent history show <id>` suppresses color
+      escape codes. Caveat: `Command::output()` already pipes
+      stdout, so the TTY-layer gate also engages — the env-var
+      assertion is the orthogonal contract bullet.
+- [x] Phase durations bar chart proportional to the values: a
       session with `optimize=1200, baseline=295` shows the
-      optimize bar roughly 4x the baseline bar (assert by hash-
-      character count, not by visual eyeball).
+      optimize bar roughly 4x the baseline bar — asserted by
+      hash-character count (60 vs 15 = exact 4x at
+      `BAR_WIDTH=60`).
 
 **Tests:**
 
-- Extend `tests/history_list.rs` (or new `tests/history_show.rs`)
-  with the show flow + NO_COLOR assertion + unknown-id
-  rejection.
+- [tests/history_show.rs](../../crates/stacks-bench-agent/tests/history_show.rs)
+  (new) — 4 integration tests: byte-equality default, unknown-id
+  rejection, proportional bars, NO_COLOR no-ANSI.
 
-**Notes:** Phase 4 is where the rendering library choice matters.
-The standard Rust pick for terminal tables is `comfy-table` or
-`tabled`. If using either, configure the ASCII-only preset (e.g.
-`comfy-table::presets::ASCII_FULL`) so the output stays in the
-scriptable contract — no Unicode box-drawing in the default
-table style. Bars are simply `"#".repeat(n)`; no crate needed.
+**Notes / design decisions worth review:**
 
-### Phase 5 (Stretch): `sbagent history report`
+- **Inline rendering, no table crate.** Spec mentions
+  `comfy-table::presets::ASCII_FULL` as a fallback if a table
+  crate is used; the implementation uses plain padded `write!`
+  calls. Adds no dep and keeps the byte-equality fixture
+  trivially predictable.
+- **`BAR_WIDTH = 60` unconditionally.** Spec calls for
+  `min(terminal_width, 60)`; for piped output (the contract that
+  matters here) 60 is the correct ceiling, and adding a
+  terminal-size dep just to handle narrow-TTY-wrap cosmetics
+  isn't worth it for v6.
+- **Sub-second phases render as `< 1s` with no bar**, exactly per
+  spec. Phases ≥1s with a tiny ratio get at least one `#` so the
+  row stays visible.
+- **`delivery_mode` rendered via explicit `match`**, not via
+  `format!("{:?}", ...).to_lowercase()` — keeps the rendered
+  values pinned to the schema's snake_case representation.
 
-**Goal:** A markdown report aggregating recent sessions, suitable
-for committing to `<operator>/reports/<iso-week>.md`.
+**Bug worth flagging while it's fresh:** the first rustfmt pass
+mangled the byte-equality expected-output literal by inserting
+`\` line-continuations + trailing spaces mid-string. Switching to
+a raw string + `#[rustfmt::skip]` kept the bytes verbatim.
 
-**Scope:**
+### Phase 5 (Stretch): `sbagent history report` — DEFERRED
 
-- New `sbagent history report [--since <ref>] [--out <path>]`
-  sub-subcommand. Default `--since` is "the most recent ISO week
-  with archived sessions"; default `--out` is stdout.
-- Markdown sections:
-  - **Summary**: session count, target outcome rollup, total
-    wall-clock spent across the period.
-  - **Per-session table**: same columns as `history list` but
-    rendered as a markdown table.
-  - **PRs opened**: bulleted list of `pr_url`s grouped by session.
-  - **Issues opened**: bulleted list of `issue_url`s.
-- No GitHub-side reconciliation (open/merged/closed status) —
-  that's `0033-maintain-command`. The report renders WHAT the
-  archived ledger knows, nothing more.
+Extracted to
+[`0043-history-report`](../backlog.md#0043-history-report) on
+2026-06-11. Rationale: without `0033-maintain-command`'s
+GitHub-side reconciliation (open / merged / closed / stale PR
+state), a markdown report can only render "PR opened" — which
+`history list` already covers in the terminal. Promoting the
+report after `0033` lands lets it carry the merged-vs-open
+dimension that makes a weekly digest meaningfully richer than
+the v6 views.
 
-**Status:**
-
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
-
-**Acceptance & Validation:**
-
-- [ ] Default invocation produces a markdown document with the
-      five sections above against a fixture ledger.
-- [ ] `--out reports/2026-W24.md` writes to disk; stdout stays
-      empty.
-
-**Tests:**
-
-- Extend the history test file with a `report` flow.
-
-**Notes:** Phase 5 is the explicitly-stretchable phase. Skip it if
-the v6 implementation budget gets tight — a markdown report is
-just `history show` repeated and joined, so the deferred work is
-small and can roll into v7 cleanly.
+Phases 1–4 are the v6 delivery.
 
 ## Final Validation
 
@@ -444,11 +439,12 @@ In-process / unit:
 
 - [x] `0021-preflight-v2` closed or shrunken with the change
       reflected in `backlog.md` + design archive location.
-- [ ] Ledger reader handles v1 + v2 + v3 records on the same file.
-- [ ] `history list` table renders against the fixture ledger.
-- [ ] `history show` per-session detail renders the three
+- [x] Ledger reader handles v1 + v2 + v3 records on the same file.
+- [x] `history list` table renders against the fixture ledger.
+- [x] `history show` per-session detail renders the three
       sections.
-- [ ] (Stretch) `history report` renders markdown.
+- ~~(Stretch) `history report` renders markdown.~~ — deferred to
+  [`0043-history-report`](../backlog.md#0043-history-report).
 
 Live / operator (not blocking v6 ship):
 
@@ -457,8 +453,9 @@ Live / operator (not blocking v6 ship):
       archived sessions). Confirms the data v5 produces reads
       cleanly through the v6 reader against a non-fixture file.
 
-Code-side ships once Phases 1-4 land. Phase 5 ships when it's
-ready (or rolls to v7).
+Code-side shipped with Phases 1–4. Phase 5 (markdown report)
+extracted to `0043-history-report`, to be promoted after
+`0033-maintain-command` lands.
 
 ## Non-Goals
 
@@ -473,8 +470,12 @@ ready (or rolls to v7).
 
 - v7 candidate: `0033-maintain-command` — needs the v6 ledger
   reader as foundation. Reconciling PR state with GitHub gives
-  the report the open/merged/closed dimension it currently
-  lacks.
+  the deferred report the open/merged/closed dimension it
+  currently lacks.
+- [`0043-history-report`](../backlog.md#0043-history-report) —
+  the extracted Phase 5 (markdown report). Best promoted as a
+  v7 stretch (or v8 primary) immediately after `0033` lands so
+  the report can carry PR state, not just "PR opened".
 - `0030-event-log-skeleton` — adds the event-history projection
   that makes target dedup + fix-signature tracking trivial.
   Substantial; warrants its own iteration.
