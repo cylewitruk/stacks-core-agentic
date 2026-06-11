@@ -14,6 +14,7 @@ pub mod clean;
 pub mod db_consistency;
 pub mod finalize;
 pub mod layout;
+pub mod ledger_reader;
 pub mod loader;
 pub mod merge;
 pub mod optimizers;

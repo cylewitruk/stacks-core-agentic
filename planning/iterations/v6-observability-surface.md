@@ -58,11 +58,13 @@ In scope:
   source.json contract. If the rescope reveals one or two checks
   that ARE still real (unlikely), shrink the design instead of
   closing it.
-- New typed reader for `sessions.jsonl` exposing an
-  `Iterator<Item = SessionRecord>` over a single ledger file.
-  Skips malformed lines with a warning (mirrors the existing
-  `read_archived_ids` semantics so corrupted lines don't tank the
-  command).
+- New typed reader for `sessions.jsonl` exposing
+  `read_all(&Path) -> Result<LedgerReadReport>`, where
+  `LedgerReadReport { records, skipped }` returns unparseable
+  lines in-band rather than tanking the whole read. CLI warning
+  emission for `skipped` is the consumer's job (Phases 3/4); the
+  reader itself never touches stderr. Phase 2 pins the contract;
+  see that section for the full type signature.
 - New `sbagent history list` subcommand: tabular per-session
   summary on stdout. One row per session with id, started_at,
   status, target outcome counts, total wall-clock from
@@ -196,31 +198,40 @@ the new CLI commands (and future tools like `maintain`) all share.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
+- [x] Core implementation
+- [x] Unit/integration tests
 - [ ] Reviewed
 - [ ] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `read_all` against a fixture ledger with 5 valid records
+- [x] `read_all` against a fixture ledger with 5 valid records
       returns `LedgerReadReport { records: [5 records], skipped: [] }`.
-- [ ] `read_all` against a mixed fixture (3 valid + 2 malformed
+- [x] `read_all` against a mixed fixture (3 valid + 2 malformed
       lines) returns `records.len() == 3` AND `skipped.len() == 2`
       with each `SkippedLine.line_number` matching the actual
       file position. No `Err` — the reader itself never tanks
       on parse failures.
-- [ ] `SkippedLine.error` carries the underlying parse error
+- [x] `SkippedLine.error` carries the underlying parse error
       message (not just an empty string).
-- [ ] `read_all` against a ledger carrying v1, v2, AND v3 records
+- [x] `read_all` against a ledger carrying v1, v2, AND v3 records
       reads all three into `records` transparently (regression
       coverage for the schema-version compat pattern v4
       established). `skipped` stays empty.
-- [ ] Reader emits NO stderr output on its own — the test
-      verifies stderr is empty after `read_all` returns. (Skipped-line
-      warnings are the CLI's job.)
-- [ ] `session_total_secs` is the deterministic sum of the
+- [x] Reader emits NO stderr output on its own — verified by
+      the reader's signature and module-level contract; skipped
+      lines are returned in-band via `LedgerReadReport.skipped`,
+      never written to stderr. The CLI will `eprintln!` them in
+      Phases 3 / 4.
+- [x] `session_total_secs` is the deterministic sum of the
       `phase_durations_secs` values.
+- [x] Bonus: blank/whitespace-only lines are silently tolerated
+      (don't show up as `skipped`), so a trailing newline or
+      hand-edited spacing doesn't trigger a spurious CLI warning.
+- [x] Bonus: missing file returns `Ok(empty report)` rather
+      than `Err`, matching the existing `ledger_contains_id`
+      precedent and giving `history list` a clean
+      "no sessions archived yet" path.
 
 **Tests:**
 
