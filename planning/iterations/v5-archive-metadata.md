@@ -8,35 +8,33 @@ schema honest so operators can answer "where did this session spend
 its time" and "what PR did this target land in" without rehydrating
 the archive branch.
 
-> **Status:** planned.
+> **Status:** shipped.
 >
-> All three target fields are already on `SessionRecord` (`pr_url`,
-> `issue_url`, `phase_durations_secs`, `TargetBench.baseline_total_us`
-> / `candidate_total_us`) — they just write empty / `None` because
-> the producers were never wired up. v5 wires the producers.
-> Reuses the schema-version + sidecar-file patterns from v3 and v4,
-> so each phase is small and reviewable.
+> Code-side shipped. `SessionRecord` now carries PR / issue URLs,
+> phase durations, and per-target bench wall-clock totals where the
+> session artifacts provide them. Live operator validation is deferred
+> to the existing [v1 Pass 1c smoke](v1-live-pass-1c-smoke.md).
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0043-example-config-load-test` | prologue | planned |
-| `0026-phase-timing` | primary | planned |
-| `0024-archive-audit-fields` | primary | planned |
+| `0043-example-config-load-test` | prologue | shipped |
+| `0026-phase-timing` | primary | shipped |
+| `0024-archive-audit-fields` | primary | shipped |
 
 ## Why
 
-Three loose threads worth tying off:
+At planning time, three loose threads were worth tying off:
 
-- **`pr_url` is hardcoded `None`** at
+- **`pr_url` was hardcoded `None`** at
   [archive.rs:813](../../crates/stacks-bench-agent/src/session/archive.rs#L813),
   even on targets where Phase 5 successfully opened a PR. Today the
   URL flows to stdout via `println!` and is lost the moment Phase 5
   returns. Operators reviewing `sessions.jsonl` can't link a target
   row to the PR it produced — they have to grep stderr logs or click
   through GitHub by hand.
-- **`phase_durations_secs` is an empty `BTreeMap`** at
+- **`phase_durations_secs` was an empty `BTreeMap`** at
   [archive.rs:631](../../crates/stacks-bench-agent/src/session/archive.rs#L631),
   documented as "empty until phase-timing instrumentation lands"
   ([archive.rs:25](../../crates/stacks-bench-agent/src/session/archive.rs#L25)).

@@ -91,9 +91,11 @@ Out of scope:
 
 - Per-target remote-install hook to relax the `publish.remote == "origin"`
   preflight constraint (deferred to a publish-flexibility iteration,
-  likely v5).
-- `0024-archive-audit-fields` (`pr_url` + bench wall-clock totals).
-- `0026-phase-timing` (`SessionRecord.phase_durations_secs`).
+  after v5).
+- `0024-archive-audit-fields` (`pr_url` + bench wall-clock totals) — landed in
+  [v5: Archive Metadata](v5-archive-metadata.md).
+- `0026-phase-timing` (`SessionRecord.phase_durations_secs`) — landed in
+  [v5: Archive Metadata](v5-archive-metadata.md).
 - `0021-preflight-v2` re-scope. Worth a separate scoping pass to
   decide whether v3 obsoleted enough of it to close.
 - Live smoke. Runs on its own track whenever NVMe+chainstate are
@@ -367,9 +369,8 @@ the same track as v3's deferred live smoke.
 - Per-target remote-install hook (the `publish.remote != "origin"`
   preflight relaxation). Sized as its own iteration to keep the
   contract change reviewable separately from the v3 cleanup.
-- Archive audit fields (`0024`) and phase timing (`0026`). Both
-  touch the archive writer and naturally bundle together —
-  deferred to a separate themed iteration.
+- Archive audit fields (`0024`) and phase timing (`0026`) landed in
+  [v5: Archive Metadata](v5-archive-metadata.md).
 - Renaming `analyzed_rejections::Record.stacks_core_sha` to
   `source_sha`. Cross-session ledger field; rename would need a
   read-compat shim plus operator-side migration. Bigger surface
@@ -377,10 +378,10 @@ the same track as v3's deferred live smoke.
 
 ## Follow-Ups
 
-- v5 candidate: publish-side flexibility (per-target remote-install
+- Future candidate: publish-side flexibility (per-target remote-install
   hook + multi-remote map). Re-enables the pre-v3 `bot`/`origin`
   separation operators may still want.
-- v5 candidate: archive metadata (`0024-archive-audit-fields` +
-  `0026-phase-timing`).
+- Archive metadata (`0024-archive-audit-fields` + `0026-phase-timing`)
+  landed in [v5: Archive Metadata](v5-archive-metadata.md).
 - Standalone re-scoping: `0021-preflight-v2`. Worth a 1-hr pass
   before commitment — v3 may have obsoleted enough of it to close.

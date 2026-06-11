@@ -434,9 +434,8 @@ Move v2 to `shipped` once both live bullets above are checked.
 
 - `0021-preflight-v2` if the disk preflight reveals other drift classes worth
   the same fail-early treatment.
-- `0026-phase-timing` becomes the natural next target — `workspace prune`
-  surfaces session age, which makes per-phase durations the next observability
-  win.
+- `0026-phase-timing` landed in
+  [v5: Archive Metadata](v5-archive-metadata.md).
 - `0038-prompt-example-concretization` — concretize the `"..."` placeholder
   values in `analyzer.md`'s two output examples so they validate against
   `analysis.schema.json` and can carry the schema-example marker. Splits

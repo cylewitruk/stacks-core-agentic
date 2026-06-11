@@ -281,6 +281,3 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
-- `0024-archive-audit-fields`, `0026-phase-timing`,
-  `0043-example-config-load-test` —
-  [v5: Archive Metadata](iterations/v5-archive-metadata.md).

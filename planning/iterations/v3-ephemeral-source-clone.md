@@ -509,9 +509,8 @@ live bullets above are checked.
 
 ## Follow-Ups
 
-- `0026-phase-timing` — once `source.json` is in place, session timing
-  instrumentation can surface fetch-vs-clone-vs-checkout times as
-  separate Phase 0 sub-steps for the operator dashboard.
+- `0026-phase-timing` — landed in
+  [v5: Archive Metadata](v5-archive-metadata.md).
 - `0033-maintain-command` — the post-cutover `source.json` makes
   maintenance's PR-state reconciliation against a specific source SHA
   trivial (each PR points at the exact upstream commit it was authored
