@@ -3,7 +3,7 @@
 - **id:** `0024-archive-audit-fields`
 - **status:** `shipped`
 - **completed:** `2026-06-11`
-- **iteration:** [v5: Archive Metadata](../../iterations/v5-archive-metadata.md)
+- **iteration:** [v5: Archive Metadata](v5-archive-metadata.md)
 
 ## Problem
 

@@ -362,8 +362,8 @@ Live / operator:
 
 ## Follow-Ups
 
-- `0019-prompt-hardening-live-smoke` remains as an ongoing calibration bucket
-  for additional live sessions. The first smoke produced narrow fixes rather
-  than a broad prompt rewrite.
+- `0019-prompt-hardening-live-smoke` moved into
+  [v8: Smoke-Informed Prompt Hardening](../../iterations/v8-smoke-informed-prompt-hardening.md).
+  The first smoke produced narrow fixes plus the calibration basis for v8.
 - Possible future item: add a Rust helper for executing catalog queries and
   writing CSVs if agents repeatedly make shell/SQLite mistakes.

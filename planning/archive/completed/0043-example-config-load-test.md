@@ -3,7 +3,7 @@
 - **id:** `0043-example-config-load-test`
 - **status:** `shipped`
 - **completed:** `2026-06-11`
-- **iteration:** [v5: Archive Metadata](../../iterations/v5-archive-metadata.md)
+- **iteration:** [v5: Archive Metadata](v5-archive-metadata.md)
 
 ## Problem
 

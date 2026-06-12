@@ -320,7 +320,7 @@ preflight error when free space is obviously insufficient.
     path explicit.
   - Operator-readable footer: bytes that would be freed, even in dry-run.
 - Preflight: add a `check_free_disk` step inside the existing session preflight
-  ([planning/archive/completed/0013-preflight-v1.md](../archive/completed/0013-preflight-v1.md)
+  ([planning/archive/completed/0013-preflight-v1.md](0013-preflight-v1.md)
   context). Warn-only by default (default `preflight.min_free_gib = None`);
   the operator opts into a hard-fail by setting the config. When set and
   violated, the error body includes the exact suggested
@@ -418,10 +418,10 @@ v2 is shipped.
 
 - Parallel optimizer fan-out or shared checkout pools.
 - Cross-session memory or PR-state reconciliation
-  ([0028-optimizer-memory](../backlog.md#0028-optimizer-memory),
-  [0033-maintain-command](../backlog.md#0033-maintain-command)).
+  ([0028-optimizer-memory](../../backlog.md#0028-optimizer-memory),
+  [0033-maintain-command](../../backlog.md#0033-maintain-command)).
 - Schema or agent-prompt prose rewrites driven by the live smoke
-  ([0019-prompt-hardening-live-smoke](../backlog.md#0019-prompt-hardening-live-smoke)).
+  ([0019-prompt-hardening-live-smoke](../../iterations/v8-smoke-informed-prompt-hardening.md)).
 
 ## Follow-Ups
 

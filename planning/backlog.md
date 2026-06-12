@@ -4,24 +4,6 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Candidate Items
 
-<a id="0019-prompt-hardening-live-smoke"></a>
-
-### Prompt Hardening From Live Smoke
-
-- **id:** `0019-prompt-hardening-live-smoke`
-- **status:** `backlog`
-- **priority:** `medium`
-
-**Problem:** Prompt lint verifies rendering, but not judgment quality. The
-results-analyzer prompt in particular needs live proof against real
-`bench-run.json` shapes.
-
-**Scope:** Patch only prompt text and prompt-facing examples exposed by the
-smoke run.
-
-**Acceptance:** The next smoke produces less operator correction, with no schema
-or handoff regressions.
-
 <a id="0025-named-phases"></a>
 
 ### Named Phases Over Numbered Phases
@@ -75,23 +57,6 @@ optimizer agents once enough session history exists.
 
 **Acceptance:** A new session can avoid at least one previously rejected or
 already-attempted target through durable memory.
-
-<a id="0029-sync-commit-push"></a>
-
-### Sync Commit / Push Convenience
-
-- **id:** `0029-sync-commit-push`
-- **status:** `backlog`
-- **priority:** `low`
-
-**Problem:** Operator bundle sync and committing pushed operator changes are
-still separate manual steps.
-
-**Scope:** Add ergonomic `sbagent sync --commit/--push` behavior if it stays
-useful after live sessions.
-
-**Acceptance:** Operator bundle updates can be synced and shipped with one
-explicit command.
 
 ## Autonomous Closed-Loop Items
 
@@ -221,7 +186,7 @@ same anchor recipe and cache regime.
 - **status:** `backlog`
 - **priority:** `low`
 - **source:** v6 Phase 5 (deferred); see
-  [archive/completed/v6-observability-surface.md](archive/completed/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
+  [v6 archive](archive/completed/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
 
 **Problem:** Operators have `sbagent history list` + `show` (v6) but no
 single document they can commit / share / paste into a weekly digest.
@@ -281,6 +246,31 @@ safe fallback for nested supervised smoke runs.
 or per-phase sandbox grants. Do not move auth tokens into session scratch unless
 the token is proven inaccessible to agent tools and logs.
 
+<a id="0047-analyzer-estimate-calibration"></a>
+
+### Analyzer Estimate Calibration
+
+- **id:** `0047-analyzer-estimate-calibration`
+- **status:** `backlog`
+- **priority:** `low`
+- **source:** v8 planning / smoke session `20260611-172955`.
+
+**Problem:** Analyzer expected-signal magnitude estimates can be badly off even
+when the optimized result is a clean, direction-matching win. In the smoke
+session, `rollback-wrapper-at-block-read-cache` expected roughly `6%` and
+measured `+27.22%`.
+
+**Scope:** Calibrate analyzer guidance for estimating expected improvement
+magnitude once there is enough session history to compare estimates against
+verification results. Keep this separate from results-analyzer verdict policy.
+
+**Acceptance:** Analyzer output gives more realistic magnitude ranges without
+making results-analyzer confidence depend on forecast accuracy.
+
 ## Scheduled — see iteration docs
 
-No active iteration currently owns backlog items.
+The following item IDs are owned by an active iteration; full specs
+live there, not here.
+
+- `0019-prompt-hardening-live-smoke` —
+  [v8: Smoke-Informed Prompt Hardening](iterations/v8-smoke-informed-prompt-hardening.md).

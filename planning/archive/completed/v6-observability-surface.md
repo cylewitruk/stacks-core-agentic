@@ -119,9 +119,9 @@ shrunken design (if one or two checks survive the v3 audit).
   lock. The drift mode `0021` named ("operator forgot to fetch +
   bump") is impossible by construction. Expected verdict:
   superseded.
-- Update [planning/backlog.md](../backlog.md) to remove `0021`'s
+- Update [planning/backlog.md](../../backlog.md) to remove `0021`'s
   entry (or shrink it). Move the design doc to
-  [planning/archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)
+  [planning/archive/superseded/0021-preflight-v2.md](../superseded/0021-preflight-v2.md)
   with a one-line "superseded by v3 per-session source clone"
   header note.
 
@@ -152,7 +152,7 @@ unnecessary. `ensure_cache` force-updates the bare cache's
 `clone_session_checkout` clones from that just-refreshed ref; the
 resolved SHA pins durably into `source.json`. No operator-side
 branch ref to drift, no operator-side fetch step to forget. See
-[archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)
+[archive/superseded/0021-preflight-v2.md](../superseded/0021-preflight-v2.md)
 for the full audit note.
 
 ### Phase 2: Typed Ledger Reader
