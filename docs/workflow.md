@@ -23,6 +23,12 @@ the same parameters and the same lock. `cargo nextest` runs (in
 optimizer phase) are serialized across parallel optimizers via the
 test lock to avoid port/dir conflicts.
 
+Vocabulary note: Phase 0 is the **discovery pass** (legacy command/path name:
+`baseline`), Phase 1.8 produces the per-target **target calibration baseline**,
+and Phase 3 runs the optimized **verification bench**. Legacy artifact and
+schema names such as `baseline/`, `baseline_run_id`, and
+`candidate_run_ids.json` are stable contracts and are not renamed.
+
 ## Pipeline phases
 
 Each phase is a typed `sbagent` subcommand that takes `--session-id`
@@ -41,16 +47,16 @@ benchmark, and publish artifacts for that target.
 
 | Phase | Command | Reads | Writes (in `<session>/results`) |
 | --- | --- | --- | --- |
-| 0a | (runs at session start; no standalone command) | per-session source checkout at `<workspace>/sessions/<id>/repos/<cache_id>/` (materialized from `[source]` + the shared bare cache), HEAD pinned in `results/source.json` | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent baseline / calibration / candidate invocation uses this archived path; no silent rebuild fallback. |
-| 0b | `sbagent session baseline run` OR `sbagent session baseline import` | `config.toml` (range fields), or existing run id(s) in stacks-bench DB | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}`. Single `bench run` invocation; rerun id aliased to run id; `noise-floor-pct` sources from `triage.single_run_noise_floor_pct` (default 1%). |
-| 1 | `sbagent session triage run` | baseline artifacts | `triage/{candidates.json, candidates.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id, queries/, drilldowns/}` |
+| 0a | (runs at session start; no standalone command) | per-session source checkout at `<workspace>/sessions/<id>/repos/<cache_id>/` (materialized from `[source]` + the shared bare cache), HEAD pinned in `results/source.json` | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent discovery-pass, calibration, and verification invocation uses this archived path; no silent rebuild fallback. |
+| 0b | `sbagent session baseline run` OR `sbagent session baseline import` | `config.toml` (range fields), or existing run id(s) in stacks-bench DB | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}`. Discovery-pass artifact set. Single `bench run` invocation; rerun id aliased to run id; `noise-floor-pct` sources from `triage.single_run_noise_floor_pct` (default 1%). |
+| 1 | `sbagent session triage run` | discovery-pass artifacts | `triage/{candidates.json, candidates.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id, queries/, drilldowns/}` |
 | 1.5 | `sbagent session analysis run` | `triage/candidates.json` | `analysis/<family-id>/{analysis.json, analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
 | 1.7 | `sbagent session analysis merge` | `triage/candidates.json`, `analysis/*/analysis.json` | `merge/{optimization-targets.json, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
-| 1.8 | (runs after merge, before optimize; no standalone command) | `merge/optimization-targets.json`, `baseline/bin/stacks-bench` | `verify/<target>/<invocation-id>/bench-run.json`, `verify/<target>/baseline-run-ids.json`. Per-target calibration for every `normal_pr` target — one `stacks-bench bench run` per `verification_replay.invocations[]` entry. Pass 1c invariant: `verification_replay` is required on every `bench_eligible` target; missing → merge validation hard-fails before this phase ever runs. |
+| 1.8 | (runs after merge, before optimize; no standalone command) | `merge/optimization-targets.json`, `baseline/bin/stacks-bench` | `verify/<target>/<invocation-id>/bench-run.json`, `verify/<target>/baseline-run-ids.json`. Target calibration baseline for every `normal_pr` target — one `stacks-bench bench run` per `verification_replay.invocations[]` entry. Pass 1c invariant: `verification_replay` is required on every `bench_eligible` target; missing → merge validation hard-fails before this phase ever runs. |
 | 2 | `sbagent session optimize run` | `merge/optimization-targets.json` | `optimize/<target-id>/{prompt.md, events.jsonl, final-message.md, conversation-id, optimizer-report.json, implementation.md OR abort.md OR consensus-issue.md, nextest.log, cargo-build.log, stderr.log}` |
-| 3 | `sbagent session bench run` | per-target release binary built in Phase 2 | `optimize/<target-id>/<invocation-id>/bench-run.json`, `optimize/<target-id>/candidate-run-ids.json`, `optimize/<target-id>/bin/stacks-bench`. One `stacks-bench bench run` per invocation, mirroring Phase 1.8. |
-| 3.5 | `sbagent session analyze-results run` | `merge/optimization-targets.json`, `verify/<target>/...`, `optimize/<target>/...`, bench DB (read-only) | `analyze/<target-id>/{results-analysis.json, results-analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}`. Per-target results-analyzer agent fan-out (parallel under `analyzer.concurrency_cap`) — judges measured vs `expected_signal` and writes a typed verdict. Phase 4 sources `improvement_pct` + `status` from this file. |
-| 4 | `sbagent session finalize run` | `merge/optimization-targets.json`, `analyze/<target>/results-analysis.json`, `verify/<target>/baseline-run-ids.json`, `optimize/<target>/candidate-run-ids.json` | `finalize/{summary.json, summary.md, targets.md}`. `Experiment.improvement_pct` + `Experiment.status` sourced verbatim from each target's Phase 3.5 verdict; missing verdict → Aborted. Missing baseline file → hard error. Candidate / baseline id sets MUST match the target's VR invocation set; mismatched candidate → Aborted. |
+| 3 | `sbagent session bench run` | per-target release binary built in Phase 2 | `optimize/<target-id>/<invocation-id>/bench-run.json`, `optimize/<target-id>/candidate-run-ids.json`, `optimize/<target-id>/bin/stacks-bench`. Verification bench: one `stacks-bench bench run` per invocation, mirroring Phase 1.8. |
+| 3.5 | `sbagent session analyze-results run` | `merge/optimization-targets.json`, target calibration baseline outputs under `verify/<target>/...`, verification bench outputs under `optimize/<target>/...`, bench DB (read-only) | `analyze/<target-id>/{results-analysis.json, results-analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}`. Per-target results-analyzer agent fan-out (parallel under `analyzer.concurrency_cap`) — judges measured vs `expected_signal` and writes a typed verdict. Phase 4 sources `improvement_pct` + `status` from this file. |
+| 4 | `sbagent session finalize run` | `merge/optimization-targets.json`, `analyze/<target>/results-analysis.json`, `verify/<target>/baseline-run-ids.json`, `optimize/<target>/candidate-run-ids.json` | `finalize/{summary.json, summary.md, targets.md}`. `Experiment.improvement_pct` + `Experiment.status` sourced verbatim from each target's Phase 3.5 verdict; missing verdict → Aborted. Missing target calibration baseline file → hard error. Verification bench / target calibration baseline id sets MUST match the target's VR invocation set; mismatched verification bench → Aborted. |
 | 5 | `sbagent session publish [--dry-run]` | `merge/optimization-targets.json`, `finalize/summary.json`, `analyze/<target>/results-analysis.json` | `optimize/<target-id>/{pr,issue}-{title.txt,body.md}`; PRs/issues on GitHub. `normal_pr` targets ship only when (a) `summary.experiments[].status == Accepted`, (b) the canonical verdict is on disk + context-valid, (c) `verdict ∈ {accepted, mixed}`, and (d) `confidence >= results_analysis.confidence_floor` (default `medium`). Anything below is skipped with an explicit reason. |
 | 6 | `sbagent session archive [--dry-run]` | all session bulk + operator git repo | nothing in `<session>/results` (writes happen in the operator repo — see "Filesystem & git layout" below) |
 
@@ -76,7 +82,7 @@ the per-phase mechanics.
 | Local disk (session bulk) | All phase artifacts (events, prompts, JSON outputs, CSVs, logs) | Phases 0–4 |
 | Local disk (per-target clones) | Per-target git clone + optimizer commits + release binary | Phase 2 |
 | Local disk (archive worktree) | Transient worktree, removed at phase end | Phase 6 |
-| stacks-bench DB | New `benchmark_run` rows: one for the Phase 0b baseline, one per Phase 1.8 calibration invocation per `normal_pr` target with `verification_replay`, one per Phase 3 candidate invocation. No separate rerun row — Phase 0b aliases `rerun-id` to the single baseline run id. | Phases 0b, 1.8, 3 |
+| stacks-bench DB | New `benchmark_run` rows: one for the Phase 0b discovery pass, one per Phase 1.8 target calibration baseline invocation per `normal_pr` target with `verification_replay`, one per Phase 3 verification bench invocation. No separate rerun row — Phase 0b aliases `rerun-id` to the single discovery-pass run id. | Phases 0b, 1.8, 3 |
 | Operator repo, main branch | One new commit per archive run: `archive: ledger <id>` (appends one JSONL line to `sessions.jsonl`) | Phase 6, when not dry-run |
 | Operator repo, write-once branches | New `session/<id>` branch with the full session bulk committed under `sessions/<id>/` | Phase 6, when not dry-run |
 | Operator fork on GitHub | Push of operator-main commit + push of `session/<id>` branch | Phase 6, when not dry-run + remote configured |
@@ -87,7 +93,7 @@ maintainers can review them (`stacks-core` repo); the bot's own
 operational ledger and archive branches land where they don't pollute
 the target repo's branch listing (`stacks-core-autopilot` repo).
 
-## Walkthrough (with an existing baseline run id of 42)
+## Walkthrough (with an existing discovery-pass run id of 42)
 
 ```bash
 SESSION_ID=demo-001
@@ -120,10 +126,10 @@ calibration and Phase 3.5 results-analyzer fan-out). Phase 5
 invocations:
 
 ```bash
-# Fresh baseline (mints a YYYYMMDD-HHMMSS session id), no publish or archive:
+# Fresh discovery pass (mints a YYYYMMDD-HHMMSS session id), no publish or archive:
 sbagent session run --start-at 5000000 --count 200 --warmup 50
 
-# Reuse an existing baseline run id (skips Phase 0 baseline run):
+# Reuse an existing discovery-pass run id (skips Phase 0 discovery pass):
 sbagent session run \
   --import-baseline-run-id 42 \
   --import-baseline-rerun-id 43
@@ -150,7 +156,7 @@ enters argv, `.git/config`, or shell history.
 
 ## Top-level workflow
 
-### First optimization session: establish the baseline path
+### First optimization session: establish the discovery-pass path
 
 Goal: prove that the full pipeline runs end-to-end on a fresh agent
 VM. Output quality is secondary on the first run; what matters is
@@ -163,20 +169,20 @@ The first session should:
 2. Use `<stacks_bench.data_dir>` as the shared stacks-bench app-data
    dir (indexed chainstate persists across sessions).
 3. Set benchmark parameters explicitly on the CLI (or in
-   `config.toml`); reuse them for the baseline + every experiment.
+   `config.toml`); reuse them for the discovery pass + every experiment.
 4. Materialize the per-session source checkout from `[source]` (the
    shared bare cache makes this fast) → write `results/source.json`
-   pinning the resolved SHA. Archive the baseline `stacks-bench`
+   pinning the resolved SHA. Archive the strict `stacks-bench`
    binary built from that checkout → `baseline/bin/{stacks-bench,
    manifest.json}` (Phase 0a).
-5. Run the baseline benchmark (single invocation; rerun id aliased)
+5. Run the discovery-pass benchmark (single invocation; rerun id aliased)
    (Phase 0b).
 6. Run the triage agent → `triage/candidates.json` (Phase 1).
 7. Fan out analyzer agents → `analysis/<family-id>/analysis.json`
    (Phase 1.5).
 8. Run `sbagent session analysis merge` →
    `merge/optimization-targets.json` (Phase 1.7).
-9. Per-target targeted baseline calibration — one stacks-bench run
+9. Per-target target calibration baseline — one stacks-bench run
    per `verification_replay.invocations[]` entry on every `normal_pr`
    target → `verify/<target>/baseline-run-ids.json` +
    `verify/<target>/<invocation-id>/bench-run.json` (Phase 1.8).
@@ -184,7 +190,7 @@ The first session should:
     `optimize/<target>/implementation.md` (or `abort.md`) (Phase 2).
     Each target gets its own git clone under
     `<workspace>/optimizers/<id>/<target>/`.
-11. Build + serially benchmark each accepted target — one
+11. Build + serially run the verification bench for each accepted target — one
     `stacks-bench bench run` per invocation →
     `optimize/<target>/<invocation-id>/bench-run.json` and
     `optimize/<target>/candidate-run-ids.json` (Phase 3).
@@ -208,7 +214,7 @@ runs and artifacts land in the right places.
 
 Re-run `sbagent session run` for each subsequent session. The
 persistent stacks-bench DB at `<stacks_bench.data_dir>/appdata/stacks-bench.db`
-accumulates baseline + experiment runs across sessions, so `bench
+accumulates discovery-pass + experiment runs across sessions, so `bench
 list` / `bench show` work cross-session. The operator's
 `sessions.jsonl` ledger accumulates one line per archived session,
 indexing the full audit trail back to the matching `session/<id>`
@@ -258,7 +264,7 @@ Reject an experiment if:
 
 The final session summary should answer:
 
-1. What baseline was used?
+1. What discovery-pass and target calibration baselines were used?
 2. What targets were selected and why?
 3. What clones / branches were created? (`agentic/<id>/<target>` in
    each per-target clone; `session/<id>` on the operator repo after

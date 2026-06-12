@@ -1,15 +1,15 @@
 //! `analyze/<target-id>/results-analysis.json` — output of the
 //! post-bench results-analyzer agent (Phase 3.5).
 //!
-//! The results-analyzer runs after Phase 3 candidate bench, before
+//! The results-analyzer runs after the Phase 3 verification bench, before
 //! Phase 4 finalize. Inputs: the target's
 //! [`MergedTarget`](crate::models::targets::MergedTarget) (carries the
 //! analyzer's `verification_replay` hypothesis), the optimizer agent's
 //! [`OptimizerReport`](crate::models::optimizer_report::OptimizerReport)
-//! (claims + diff), per-invocation baseline + candidate `bench-run.json`
-//! files, bench DB (read-only), and repo context. Output: this typed
-//! verdict, which Phase 4 finalize sources as the canonical headline /
-//! per-invocation breakdown / PR-body summary for the target.
+//! (claims + diff), per-invocation target calibration baseline + verification
+//! bench `bench-run.json` files, bench DB (read-only), and repo context.
+//! Output: this typed verdict, which Phase 4 finalize sources as the canonical
+//! headline / per-invocation breakdown / PR-body summary for the target.
 //!
 //! Schema authority lives in this typed model; the committed
 //! `schemas/results-analysis.schema.json` is regenerated from these

@@ -1,4 +1,4 @@
-//! `sbagent session baseline run` — Phase 0 (baseline + rerun) entry
+//! `sbagent session baseline run` — Phase 0 discovery-pass entry
 //! point. The block range `stacks-bench` replays is overridable per
 //! invocation via flags / env vars (see
 //! [`crate::cli::session::bench_range::BenchRangeArgs`]) so the
@@ -27,7 +27,7 @@ pub struct BaselineRunArgs {
     pub range: BenchRangeArgs,
 }
 
-/// Run a fresh baseline benchmark + rerun.
+/// Run a fresh discovery-pass benchmark.
 pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId) -> Result<()> {
     let layout = SessionLayout::from_layout(&ctx.layout, session_id.clone());
 
@@ -43,7 +43,7 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         .range
         .resolve(&ctx.settings)?;
 
-    // Cargo cwd for the baseline build is the per-session source
+    // Cargo cwd for the archived-binary build is the per-session source
     // checkout. Materialize it now (fresh) or reuse the existing one
     // (resume) — same contract as `session run`'s session-start
     // materialization, just driven from the standalone command.
@@ -68,8 +68,8 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         .session_checkout
         .clone();
 
-    // Phase 0a: build + archive the baseline binary BEFORE Phase 0b
-    // bench runs. From this point on, baseline / calibration /
+    // Phase 0a: build + archive the strict binary BEFORE Phase 0b
+    // bench runs. From this point on, discovery / calibration /
     // full-range fallback all read from the archived path. Strict
     // contract: missing archived binary later = hard error.
     let archive_outputs = baseline::archive_baseline_binary(&ArchiveBinaryInputs {
@@ -77,7 +77,7 @@ pub async fn run(args: BaselineRunArgs, ctx: &CliContext, session_id: &SessionId
         stacks_core_base: &stacks_core_base,
     })?;
     eprintln!(
-        "Phase 0a: archived baseline stacks-bench binary at {} (source_sha={})",
+        "Phase 0a: archived stacks-bench binary at {} (source_sha={})",
         archive_outputs
             .archived_path
             .display(),

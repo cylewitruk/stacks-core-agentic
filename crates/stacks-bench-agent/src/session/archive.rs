@@ -951,10 +951,10 @@ fn build_target_bench(
     if candidate_run_ids.is_empty() {
         return None;
     }
-    // Pass 1a: prefer the per-target baseline run ids finalize
+    // Prefer the per-target target-calibration-baseline run ids finalize
     // ACTUALLY used (carried in `Experiment.baseline_run_ids` when
-    // Phase 1.8 calibration produced them). Fall back to the
-    // session-level baseline ids only when finalize fell back too
+    // Phase 1.8 produced them). Fall back to the session-level discovery-pass
+    // ids only when finalize fell back too
     // (target had no `verification_replay`). Without this branch
     // the ledger would claim finalize used P0 run/rerun while
     // `improvement_pct` was actually computed from targeted
@@ -974,8 +974,8 @@ fn build_target_bench(
 
     // Wallclock totals: aggregate `data.summary.total_duration_us`
     // across per-invocation `bench-run.json` files for both the
-    // baseline (Phase 1.8 calibration → `verify/<target>/<inv>/`) and
-    // candidate (Phase 3 bench → `optimize/<target>/<inv>/`) runs.
+    // target calibration baseline (Phase 1.8 → `verify/<target>/<inv>/`) and
+    // verification bench (Phase 3 → `optimize/<target>/<inv>/`) runs.
     //
     // Targets without `verification_replay` (the full-range fallback
     // path) have no per-invocation files; totals stay at 0. That

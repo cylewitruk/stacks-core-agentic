@@ -4,9 +4,9 @@
 //!
 //! Used by `cli::session::run` between preflight + Phase 0a. Every
 //! downstream phase that previously consumed
-//! `<operator>/repos/<base>/` (Phase 0a baseline build, Phase 0
-//! baseline bench cwd, Phase 1.8 calibration cwd, Phase 2 optimizer
-//! fan-out, Phase 3 candidate-bench cargo cwd) now reads
+//! `<operator>/repos/<base>/` (Phase 0a archived-binary build, Phase 0
+//! discovery-pass cwd, Phase 1.8 target-calibration cwd, Phase 2 optimizer
+//! fan-out, Phase 3 verification-bench cargo cwd) now reads
 //! [`ResolvedSource::session_checkout`].
 
 use std::path::{Path, PathBuf};

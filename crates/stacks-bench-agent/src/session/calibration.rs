@@ -1,12 +1,12 @@
-//! Phase 1.8: per-target targeted baseline calibration.
+//! Phase 1.8: per-target target calibration baseline.
 //!
 //! For each `bench_eligible` target (`delivery_mode == normal_pr`), runs
 //! every `BenchInvocation` in the target's `verification_replay` against
-//! the strict archived baseline binary from Phase 0a. The resulting
+//! the strict archived binary from Phase 0a. The resulting
 //! per-invocation baseline run-ids feed Phase 3.5's per-invocation
-//! candidate ↔ baseline pairing so numerator and denominator are both
-//! measured under matching sample sets, repetitions, warmup, and
-//! profiler mode.
+//! verification-bench ↔ target-calibration-baseline pairing so numerator and
+//! denominator are both measured under matching sample sets, repetitions,
+//! warmup, and profiler mode.
 //!
 //! Consensus-mode targets (`consensus_poc_pr` / `consensus_issue`) never
 //! reach Phase 1.8. The merge schema enforces that `verification_replay`
@@ -30,7 +30,7 @@ use crate::session::bench_experiments::strip_hex_prefix;
 /// Inputs to [`run`].
 pub struct Inputs<'a> {
     pub layout: &'a SessionLayout,
-    /// Strict archived baseline binary (Phase 0a output).
+    /// Strict archived binary (Phase 0a output).
     pub bench: &'a dyn BenchClient,
     /// Chainstate source path (`--source`).
     pub source_dir: &'a Path,
@@ -97,7 +97,7 @@ pub fn run(inputs: &Inputs<'_>) -> Result<Outputs> {
     Ok(out)
 }
 
-/// Invoke one `BenchInvocation` against the strict archived baseline
+/// Invoke one `BenchInvocation` against the strict archived binary
 /// binary. Returns the run id stacks-bench recorded.
 fn invoke_one(inputs: &Inputs<'_>, target: &MergedTarget, inv: &BenchInvocation) -> Result<i64> {
     let bench_name = format!("baseline-{}-{}", target.id, inv.id);

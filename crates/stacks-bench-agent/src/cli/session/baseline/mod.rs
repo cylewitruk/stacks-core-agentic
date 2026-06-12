@@ -1,4 +1,5 @@
-//! `sbagent session baseline ...` — Phase 0 baseline subcommands. Stubs.
+//! `sbagent session baseline ...` — Phase 0 discovery-pass subcommands.
+//! The CLI retains the legacy `baseline` name.
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -21,12 +22,12 @@ pub struct BaselineArgs {
 /// Baseline subcommands.
 #[derive(Debug, Subcommand)]
 pub enum BaselineCommand {
-    /// Run a fresh baseline benchmark + rerun.
+    /// Run a fresh discovery-pass benchmark.
     Run(run::BaselineRunArgs),
-    /// Import an existing baseline run id from the persistent stacks-bench
-    /// db.
+    /// Import an existing discovery-pass run id from the persistent
+    /// stacks-bench db.
     Import(import::BaselineImportArgs),
-    /// Clear baseline artifacts (`baseline-*`, `bench-list.json`,
+    /// Clear discovery-pass artifacts (`baseline-*`, `bench-list.json`,
     /// profiler hotspots) so the next run/import starts clean.
     Clean(clean::BaselineCleanArgs),
 }

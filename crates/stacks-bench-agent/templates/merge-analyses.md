@@ -19,8 +19,8 @@ The JSON must match `{{ optimization_targets_schema_path }}`.
 # Inputs
 
 - Session id: `{{ opt_session_id }}`
-- Baseline run id: `{{ baseline_run_id }}`
-- Baseline rerun id: `{{ baseline_rerun_id }}`
+- Discovery-pass run id: `{{ baseline_run_id }}` (legacy field name)
+- Discovery-pass rerun id: `{{ baseline_rerun_id }}` (legacy field name)
 - Noise floor pct: `{{ noise_floor_pct }}`
 - Merge model: `{{ codex_merge_model }}`
 - Bucket anchors: `{{ bucket_anchors_path }}`

@@ -45,7 +45,7 @@ If you cannot prove parity, abort. A stealth consensus break is worse than a mis
 The coordinator runs OUTSIDE the codex sandbox and owns trusted host operations:
 
 - **Git writes** — no `git add`, `git commit`, `git reset`, `git clean`, or branch ops. Informational `git status` / `git diff` are fine. The codex sandbox blocks `.git/` writes; leave modified files in the working tree. The coordinator commits after you exit using a bot identity.
-- **Benchmarking** — bench needs shadow-dir and source-chainstate access the sandbox doesn't grant. The coordinator runs Phase 3 against your binary. Do not include local-baseline or per-attempt benchmark numbers in your writeup.
+- **Benchmarking** — bench needs shadow-dir and source-chainstate access the sandbox doesn't grant. The coordinator runs the Phase 3 verification bench against your binary. Do not include local calibration-baseline or per-attempt benchmark numbers in your writeup.
 - **Retries/cleanup** — this codex invocation is **one attempt**. If it doesn't work out, emit `outcome: "aborted"` and exit cleanly.
 
 # Inner loop
@@ -98,7 +98,7 @@ If nextest fails after retries: emit `outcome: "aborted"` with `failed_gate: "ne
 
 ## Step 4 — Build the release binary
 
-So the coordinator's Phase 3 bench has it ready to use:
+So the coordinator's Phase 3 verification bench has it ready to use:
 
 ```bash
 ( cd "{{ worktree_dir }}" && cargo build --release -p stacks-bench )

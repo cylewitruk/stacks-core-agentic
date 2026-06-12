@@ -80,7 +80,8 @@ its `[section]`):
   state lives here, NOT in the operator repo
 - `[git] author_name`, `[git] author_email` (the bot's identity)
 - `[stacks_bench] source_dir`, `start_at`, `count` — required by
-  `session baseline run`. See [configuration.md](configuration.md)
+  `session baseline run` (the Phase 0 discovery pass). See
+  [configuration.md](configuration.md)
   for tuning.
 
 `[dev] framework_root` is OPTIONAL; leave it unset for operator deployments.
@@ -328,7 +329,7 @@ only for VM lifecycle. Keep the same logical command model:
    --json, --source, and block-range arguments.
 6. Copy JSON/stderr/optimization-session artifacts back to
    <layout.agent_workspace_root>/sessions/<session-id>/results/
-   (per-phase subdirs: baseline/, triage/, analysis/, merge/,
+   (per-phase subdirs: baseline/ for the discovery pass, triage/, analysis/, merge/,
    verify/, optimize/, analyze/, finalize/). The workspace path
    lives outside the operator repo by design — `sbagent session
    archive` is the boundary that commits sessions into the operator

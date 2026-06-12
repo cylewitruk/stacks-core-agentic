@@ -13,7 +13,7 @@ use crate::types::SessionId;
 /// Args for `sbagent session baseline import`.
 #[derive(Debug, Args)]
 pub struct BaselineImportArgs {
-    /// Existing run id in the stacks-bench db to import as the baseline.
+    /// Existing run id in the stacks-bench db to import as the discovery pass.
     #[clap(long)]
     pub run_id: i64,
     /// Optional companion rerun id. When omitted, the baseline run id is
@@ -49,7 +49,7 @@ pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &Sessio
         .session_checkout
         .clone();
 
-    // Phase 0a archival also runs for imported-baseline sessions —
+    // Phase 0a archival also runs for imported discovery-pass sessions —
     // downstream Phase 1.8 + Phase 3 paths need
     // `baseline/bin/stacks-bench` regardless of how Phase 0b was
     // resolved.
@@ -58,7 +58,7 @@ pub async fn run(args: BaselineImportArgs, ctx: &CliContext, session_id: &Sessio
         stacks_core_base: &stacks_core_base,
     })?;
     eprintln!(
-        "Phase 0a: archived baseline stacks-bench binary at {} (source_sha={})",
+        "Phase 0a: archived stacks-bench binary at {} (source_sha={})",
         archive_outputs
             .archived_path
             .display(),

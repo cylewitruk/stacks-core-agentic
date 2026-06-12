@@ -1,4 +1,8 @@
-//! Phase 0: baseline binary archival + baseline benchmark.
+//! Phase 0: archived binary + discovery-pass benchmark.
+//!
+//! Vocabulary note: this module, CLI command, and artifact path retain the
+//! legacy `baseline` name. Operator-facing prose calls Phase 0 the discovery
+//! pass; Phase 1.8 is the target calibration baseline.
 //!
 //! Three entry points:
 //!
@@ -8,20 +12,20 @@
 //!   start from `[source]`), copy it to
 //!   `<session>/results/baseline/bin/stacks-bench`, and write a manifest
 //!   carrying source sha + dirty-worktree flag + build metadata. Downstream
-//!   baseline / calibration / full-range fallback paths all read from this
+//!   discovery / calibration / full-range fallback paths all read from this
 //!   archived path via the strict-binary contract. Runs BEFORE Phase 0b
 //!   (whether fresh baseline or imported).
-//! - [`run`] → Phase 0b. One `stacks-bench bench run` invocation against the
-//!   archived binary, then the rerun id is aliased to the run id (no second
-//!   `bench` invocation under Pass 1a — see the superseded Pass 1a plan under
-//!   `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step
-//!   B). The noise floor falls back to
+//! - [`run`] → Phase 0b discovery pass. One `stacks-bench bench run` invocation
+//!   against the archived binary, then the rerun id is aliased to the run id
+//!   (no second `bench` invocation under Pass 1a — see the superseded Pass 1a
+//!   plan under `planning/archive/superseded/0017-pass-1c-historical-plan.md`,
+//!   Sub-step B). The noise floor falls back to
 //!   `settings.triage.single_run_noise_floor_pct`. Serialized via BENCH_LOCK,
 //!   then captures bench-list + profiler hotspots metadata.
-//! - [`import`] → `scripts/import-baseline.sh` — reconstructs the baseline
-//!   artifact set from existing run ids in the persistent stacks-bench db.
-//!   Phase 0a still runs (Phase 1.8 needs the archived binary regardless of how
-//!   Phase 0b was resolved).
+//! - [`import`] → `scripts/import-baseline.sh` — reconstructs the
+//!   discovery-pass artifact set from existing run ids in the persistent
+//!   stacks-bench db. Phase 0a still runs (Phase 1.8 needs the archived binary
+//!   regardless of how Phase 0b was resolved).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,7 +56,7 @@ pub struct ArchiveBinaryInputs<'a> {
 pub struct ArchiveBinaryOutputs {
     /// Absolute path to the archived binary under
     /// `<session>/results/baseline/bin/stacks-bench`. This is the
-    /// path every downstream "use the baseline binary" code path
+    /// path every downstream "use the archived binary" code path
     /// reads from.
     pub archived_path: PathBuf,
     /// Per-session source checkout HEAD sha at archive time (matches
@@ -61,7 +65,7 @@ pub struct ArchiveBinaryOutputs {
 }
 
 /// Phase 0a: build + archive the `stacks-bench` binary that the rest
-/// of the session uses as the deterministic baseline reference. Runs
+/// of the session uses as the deterministic benchmark reference. Runs
 /// BEFORE Phase 0b's first bench invocation. See
 /// `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step A.
 ///
@@ -173,7 +177,7 @@ pub fn archive_baseline_binary(inputs: &ArchiveBinaryInputs<'_>) -> Result<Archi
     Ok(ArchiveBinaryOutputs { archived_path, source_sha })
 }
 
-/// Inputs to a fresh baseline benchmark.
+/// Inputs to a fresh discovery-pass benchmark.
 pub struct RunInputs<'a> {
     /// The session layout (must already exist; results dir is created here).
     pub layout: &'a SessionLayout,

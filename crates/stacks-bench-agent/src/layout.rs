@@ -178,9 +178,9 @@ pub struct Layout {
 
 impl Layout {
     /// Resolve [`Layout::agent_workspace_root`] or return a clear error.
-    /// Required post-v3-cutover by every phase that consumes the
-    /// per-session source checkout (Phase 0a baseline build, Phase 2
-    /// optimizer fan-out, Phase 3 candidate bench cargo cwd) — those
+    /// Required by every phase that consumes the per-session source checkout
+    /// (Phase 0a archived-binary build, Phase 2 optimizer fan-out, Phase 3
+    /// verification-bench cargo cwd) — those
     /// callsites compute paths under `<agent_workspace_root>/sessions/<id>/`.
     pub fn require_agent_workspace_root(&self) -> Result<&Path> {
         self.agent_workspace_root

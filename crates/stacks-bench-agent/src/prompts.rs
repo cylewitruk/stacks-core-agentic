@@ -474,7 +474,7 @@ pub struct TriagePrompt {
     pub stacks_bench_data_dir: String,
     /// Stacks-core checkout root.
     pub base: String,
-    /// Baseline run id resolved earlier in the session.
+    /// Discovery-pass run id resolved earlier in the session.
     pub baseline_run_id: String,
     /// Baseline rerun id resolved earlier in the session.
     pub baseline_rerun_id: String,
@@ -526,7 +526,7 @@ pub struct AnalyzerPrompt {
     pub queries_dir: String,
     /// Per-session pre-rendered triage query outputs.
     pub triage_queries_dir: String,
-    /// Baseline run id (for drilldown queries).
+    /// Discovery-pass run id (for drilldown queries).
     pub baseline_run_id: String,
     /// Absolute path to bucket-anchors.md.
     pub bucket_anchors_path: String,
@@ -557,7 +557,7 @@ pub struct MergePrompt {
     pub opt_session_id: String,
     /// Absolute path to the session results dir.
     pub opt_session_dir: String,
-    /// Baseline run id.
+    /// Discovery-pass run id.
     pub baseline_run_id: String,
     /// Baseline rerun id.
     pub baseline_rerun_id: String,
@@ -633,7 +633,7 @@ impl Prompt for OptimizerPrompt {
 }
 
 /// Phase 3.5 — results-analyzer agent context. One instance per
-/// `bench_eligible` target whose Phase 3 candidate bench produced
+/// `bench_eligible` target whose Phase 3 verification bench produced
 /// run-ids.
 #[derive(Serialize)]
 pub struct ResultsAnalyzerPrompt {
@@ -654,14 +654,16 @@ pub struct ResultsAnalyzerPrompt {
     /// JSON-serialized optimizer report (`Implemented` variant only —
     /// targets with `Aborted` reports never reach Phase 3.5).
     pub optimizer_report_json: String,
-    /// Per-target dir holding per-invocation candidate bench outputs
+    /// Per-target dir holding per-invocation verification bench outputs
     /// (`<dir>/<invocation-id>/bench-run.json`).
     pub candidate_invocations_dir: String,
-    /// Per-target dir holding per-invocation baseline bench outputs.
+    /// Per-target dir holding per-invocation target calibration baseline
+    /// outputs.
     pub baseline_invocations_dir: String,
     /// Absolute path to the candidate `InvocationRunIds` JSON.
     pub candidate_run_ids_path: String,
-    /// Absolute path to the baseline `InvocationRunIds` JSON.
+    /// Absolute path to the target calibration baseline `InvocationRunIds`
+    /// JSON.
     pub baseline_run_ids_path: String,
     /// Absolute path to results-analysis.schema.json.
     pub results_analysis_schema_path: String,

@@ -1,7 +1,7 @@
 //! Per-invocation overrides for the block range `stacks-bench` replays.
 //!
 //! These four knobs control which slice of chain history Phase 0
-//! (baseline + rerun) and Phase 3 (per-target experiment benches)
+//! (discovery pass) and Phase 3 (per-target verification benches)
 //! operate on. They're identical between phases — candidate selection
 //! during triage / analysis must talk about the same blocks the
 //! experiments end up measuring.

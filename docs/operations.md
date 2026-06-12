@@ -113,7 +113,7 @@ phase to re-run:
 | `triage/candidates.json` or `triage/final-message.md` | `sbagent session triage run` |
 | `analysis/<family-id>/analysis.json` | `sbagent session analysis run` |
 | `merge/optimization-targets.json` or `merge/final-message.md` | `sbagent session analysis merge` |
-| `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the calibration step is inlined). To force a fresh calibration, `sbagent session bench clean` drops both the Phase 1.8 baseline and the paired Phase 3 candidate side. |
+| `verify/<target-id>/baseline-run-ids.json` or `verify/<target-id>/<invocation-id>/bench-run.json` | Phase 1.8 has no standalone command; re-run `sbagent session run` (the target calibration baseline step is inlined). To force a fresh calibration, `sbagent session bench clean` drops both the Phase 1.8 target calibration baseline and the paired Phase 3 verification bench side. |
 | `optimize/<target-id>/optimizer-report.json` (the typed authoritative report — coordinator-rendered `implementation.md` / `abort.md` companions derive from it; `consensus-issue.md` is the coordinator-written marker for `consensus_issue` targets where the optimizer is skipped) | `sbagent session optimize run` |
 | `optimize/<target-id>/candidate-run-ids.json` or `optimize/<target-id>/<invocation-id>/bench-run.json` | `sbagent session bench run` |
 | `analyze/<target-id>/results-analysis.json` | `sbagent session analyze-results run` |
@@ -131,8 +131,8 @@ To wipe a phase's artifacts before re-running, use the matching
 (`session baseline clean`, `session triage clean`, `session analysis
 clean`, `session optimize clean`, `session bench clean`, `session
 analyze-results clean`, `session finalize clean`, `publish clean`).
-`session bench clean` is paired: it drops both the Phase 3 candidate
-side under `optimize/<target>/` and the Phase 1.8 baseline-calibration
+`session bench clean` is paired: it drops both the Phase 3 verification bench
+side under `optimize/<target>/` and the Phase 1.8 target-calibration-baseline
 side under `verify/<target>/`, since the two phases share one
 invocation-id set per target.
 
@@ -237,14 +237,14 @@ the cause is one of:
 Recover by one of:
 
 1. **Wider profiler view** — re-run `bench show --profiler-hot 200`
-   (or higher) on the same baseline, then re-run triage with the
+   (or higher) on the same discovery-pass run, then re-run triage with the
    wider hotspot file. Spans below the top-50 cutoff sometimes
    contain real opportunities once the obvious ones are exhausted.
 2. **Different block range** — pick the next canonical range and
    update `stacks_bench.start_at` / `stacks_bench.count` in
    `config.toml` (`5_000_000–5_025_000` → `6_500_000–6_525_000` →
    `7_300_000–7_325_000`). Different transaction mixes light up
-   different hotspots. Run a fresh baseline against the new range
+   different hotspots. Run a fresh discovery pass against the new range
    and start a new session.
 3. **Update non-targets.md** — if analyzers keep rejecting candidates
    for the same novel reason, append it to
@@ -279,7 +279,7 @@ Phase 3.5 results-analyzer verdicts under `analyze/<target-id>/`.
   #  the operator repo by design so branch switches can't wipe it —
   #  see docs/session-archive.md.)
   #
-  # Phase 0: baseline (orchestrator-owned)
+  # Phase 0: discovery pass (orchestrator-owned; legacy path name)
   baseline/
     bench-run.json
     bench-run.stderr.log
@@ -329,13 +329,13 @@ Phase 3.5 results-analyzer verdicts under `analyze/<target-id>/`.
     optimization-targets.json   # schema: schemas/optimization-targets.schema.json
                                 # carries merged_from / convergence_count provenance
 
-  # Phase 1.8: per-target baseline calibration (orchestrator-owned)
+  # Phase 1.8: target calibration baseline (orchestrator-owned)
   verify/
     <target-id>/
       baseline-run-ids.json     # InvocationRunIds: {"entries":[
                                 # {"invocation_id","run_id"}, ...]}
       <invocation-id>/          # one per verification_replay.invocations[]
-        bench-run.json          # Phase 1.8 calibration output
+        bench-run.json          # Phase 1.8 target calibration output
         bench-run.stderr.log
 
   # Phase 2/3/3.5/5: per-target shared dir
@@ -353,7 +353,7 @@ Phase 3.5 results-analyzer verdicts under `analyze/<target-id>/`.
       candidate-run-ids.json    # InvocationRunIds, same shape as
                                 # verify/ above; written by Phase 3
       <invocation-id>/          # one per VR.invocations[]
-        bench-run.json          # Phase 3 candidate bench output
+        bench-run.json          # Phase 3 verification bench output
         bench-run.stderr.log
       pr-writer-prompt.md       # Phase 5 publish artifacts (if shipped)
       pr-writer-events.jsonl
@@ -491,7 +491,7 @@ flock "$BENCH_LOCK" \
     2> "$SESSION_DIR/chainstate-index.stderr.log"
 ```
 
-### Baseline benchmark
+### Discovery-pass benchmark
 
 ```bash
 cd "$BASE"  # per-session source checkout (see "Setup variables" above)
@@ -514,7 +514,7 @@ echo "$BASELINE_RUN_ID" > "$SESSION_DIR/baseline/run-id"
 # Phase 0b alias: rerun-id matches run-id, and rerun.json is a copy of
 # bench-run.json. No second benchmark is taken — the operator-side
 # `triage.single_run_noise_floor_pct` (default 1.0) supplies the
-# baseline noise floor instead.
+# discovery-pass noise floor instead.
 echo "$BASELINE_RUN_ID" > "$SESSION_DIR/baseline/rerun-id"
 cp "$SESSION_DIR/baseline/bench-run.json"        "$SESSION_DIR/baseline/rerun.json"
 cp "$SESSION_DIR/baseline/bench-run.stderr.log"  "$SESSION_DIR/baseline/rerun.stderr.log"

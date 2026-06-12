@@ -12,8 +12,9 @@ Write:
 
 You must:
 
-1. Read each invocation's baseline + candidate `bench-run.json` as the run
-   envelope: success, run id, coarse totals, and interruption status.
+1. Read each invocation's target calibration baseline + verification bench
+   `bench-run.json` as the run envelope: success, run id, coarse totals, and
+   interruption status.
 2. Use the run ids and benchmark DB as the primary mechanism evidence. Replay
    or compare the analyzer's `evidence_queries[]` for each invocation and judge
    whether the measured signal matches `expected_signal` (direction first,
@@ -41,11 +42,12 @@ Important fields:
 - `verification_replay.suspected_spans[]` — optional hints from the analyzer
   about where the candidate's diff should move time. Use as a focus list when
   choosing DB comparisons; not a gate.
-- `evidence_queries[]` — the analyzer's baseline DB evidence trail. Each row
+- `evidence_queries[]` — the analyzer's discovery-pass DB evidence trail. Each row
   names a bundled `queries/<name>.sql`, the parameters used, the CSV path the
   analyzer wrote, the extracted `key_observation`, and the invocation ids it
-  supports. For each supported invocation, run the paired baseline-vs-candidate
-  comparison that corresponds to the same mechanism.
+  supports. For each supported invocation, run the paired target-calibration
+  baseline vs verification-bench comparison that corresponds to the same
+  mechanism.
 
 # Optimizer report
 
@@ -68,13 +70,13 @@ Important fields:
   is the envelope and coarse directional context. Log every query you ran
   in `db_queries[]`.
 - Query catalog: `{{ queries_dir }}/` and `{{ queries_dir }}/README.md`
-- Per-invocation candidate bench outputs:
+- Per-invocation verification bench outputs:
   `{{ candidate_invocations_dir }}/<invocation-id>/bench-run.json`
-- Per-invocation baseline bench outputs:
+- Per-invocation target calibration baseline outputs:
   `{{ baseline_invocations_dir }}/<invocation-id>/bench-run.json`
-- Per-invocation candidate run ids:
+- Per-invocation verification bench run ids:
   `{{ candidate_run_ids_path }}` (InvocationRunIds JSON, `invocation_id` → `run_id`)
-- Per-invocation baseline run ids:
+- Per-invocation target calibration baseline run ids:
   `{{ baseline_run_ids_path }}` (same shape)
 - Session id: `{{ session_id }}`
 - Output schema: `{{ results_analysis_schema_path }}`
@@ -142,9 +144,10 @@ gaps.
 
 For each invocation in `verification_replay.invocations[]`:
 
-1. Read the candidate + baseline `bench-run.json`. Confirm both succeeded,
-   were not interrupted, and carry the run ids recorded in the run-id files.
-   Treat their summary totals as coarse context only.
+1. Read the verification-bench + target-calibration-baseline `bench-run.json`
+   files. Confirm both succeeded, were not interrupted, and carry the run ids
+   recorded in the run-id files. Treat their summary totals as coarse context
+   only.
 2. For every `evidence_queries[]` row whose `supports_invocations[]` contains
    this invocation id, run the closest paired comparison from the query catalog:
    - `compare_run_summary.sql` for envelope sanity;
@@ -153,11 +156,12 @@ For each invocation in `verification_replay.invocations[]`:
    - `compare_block_timing_between_runs.sql` for block-phase setup /
      execution / commit movement.
    Prefer paired queries over manually diffing two CSVs. If the analyzer's
-   baseline query was more specific than the paired catalog, re-run it for both
-   run ids and write both CSVs, then explain why.
-3. Compute `measured_pct = (baseline_mean - candidate_mean) / baseline_mean * 100`
+   discovery-pass query was more specific than the paired catalog, re-run it
+   for both run ids and write both CSVs, then explain why.
+3. Compute `measured_pct = (calibration_mean - candidate_mean) / calibration_mean * 100`
    from DB-backed mechanism evidence whenever possible.
-   Sign convention: positive = candidate faster.
+   Sign convention: positive = verification bench faster than the target
+   calibration baseline.
 4. Decide `matches_expected_signal`:
    - Direction mismatch → `false`. Always.
    - Direction match, magnitude within `tolerance_pct` of `estimate_pct`
@@ -213,7 +217,9 @@ Your `results-analysis.json` MUST:
   with `invocation_id` set verbatim and `label` copied from the source
   invocation.
 - Set `baseline_run_id` / `candidate_run_id` to the values in the run-ids
-  JSON files (cross-check both directions).
+  JSON files. `baseline_run_id` is the legacy field name for the target
+  calibration baseline run id; `candidate_run_id` is the verification-bench run
+  id. Cross-check both directions.
 - Leave `headline_improvement_pct` and `pr_body_summary` set when `verdict =
   accepted | mixed`, and unset when `verdict = rejected`.
 - Log every read-only DB query you ran in `db_queries[]` with a one-line
@@ -242,7 +248,7 @@ won't read the JSON. One screen, max.
 - **Don't accept a target where the per-invocation shape contradicts the
   mechanism story.** A cache-hit fix that gains on cold-first-touch and
   not on warm-steady is mechanism mismatch — `mixed` or `rejected`.
-- **Don't run benchmarks.** The candidate-bench is over. You're judging,
+- **Don't run benchmarks.** The verification bench is over. You're judging,
   not re-measuring.
 - **Don't emit prose verbosely.** `headline_rationale` is one line.
   `pr_body_summary` is a short paragraph (3-5 sentences). Operators paste

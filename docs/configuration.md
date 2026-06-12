@@ -43,7 +43,8 @@ documented inline in that file. Notable Pass 1c knobs:
   session's peak per-target disk. See [operations.md](operations.md)
   for the `workspace prune` recipe.
 
-Prefer `--count` on `session baseline run` for bounded demo runs.
+Prefer `--count` on `session baseline run` (the Phase 0 discovery pass) for
+bounded demo runs.
 Avoid `--with-pre-naka` unless benchmarking pre-Nakamoto data is
 intentional, because it can add significant chainstate copy time.
 
@@ -244,7 +245,7 @@ chmod 600 ~/.codex/config.toml
 ## Optional MCP configuration for stacks-bench
 
 Useful after the direct CLI loop works. Point Codex at the
-**archived** baseline binary that Phase 0a writes per session — it
+**archived** `stacks-bench` binary that Phase 0a writes per session — it
 lives outside the per-session source checkout and persists for the
 lifetime of the session dir, so MCP startup doesn't pay a build
 cost.

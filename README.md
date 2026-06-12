@@ -3,10 +3,11 @@
 Autonomous, benchmark-driven optimization framework for `stacks-core`.
 
 `sbagent` runs a four-tier Codex-agent pipeline (triage → analyze →
-merge → optimize) over a `stacks-bench` baseline, fans out optimizers
-into per-target git clones, serially benchmarks each candidate under
-a cross-process lock, and (optionally) ships the accepted results as
-draft PRs or issues on GitHub. **This repo is the tool**; the
+merge → optimize) over a discovery-pass `stacks-bench` run, fans out
+optimizers into per-target git clones, serially runs target calibration
+baselines and verification benches under a cross-process lock, and
+(optionally) ships the accepted results as draft PRs or issues on
+GitHub. **This repo is the tool**; the
 operational lifecycle (target stacks-core pin, schedule, event log,
 summaries) lives in a separate operator repo bootstrapped by
 `sbagent init`. The reference operator at
@@ -130,7 +131,7 @@ sbagent session run                        # full pipeline (mints session id)
 sbagent session validate --session-id ID
 sbagent session tail [--session-id ID]
 
-sbagent session baseline run|import|clean  # phase 0
+sbagent session baseline run|import|clean  # phase 0 discovery pass
 sbagent session triage   run|clean         # phase 1
 sbagent session analysis run|merge|clean   # phase 1.5 + 1.7
 sbagent session optimize run|clean         # phase 2
@@ -171,7 +172,7 @@ url    = "https://github.com/<bot>/stacks-core.git"
 branch = "feat/stacks-bench"
 
 [stacks_bench]
-# Required by `session baseline run`.
+# Required by `session baseline run` (the Phase 0 discovery pass).
 source_dir = "/mnt/chainstate/mainnet"
 start_at   = 5_000_000
 count      = 25_000

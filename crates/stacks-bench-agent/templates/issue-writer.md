@@ -40,7 +40,7 @@ The target carries:
   - `## Summary` — one paragraph. State the proposed consensus rule change and why it's worth proposing, both at the level a reader scanning issues will absorb. Do NOT bury the consensus nature.
   - `## Breakage class` — name the `breakage_class` and explain in one or two sentences what kind of consensus rule it touches.
   - `## Proposed change` — derived from `consensus_writeup` and `proposed_change`. Be specific about what would actually change in the code/protocol.
-  - `## Expected impact` — why this is worth doing. Cite `expected_improvement` and (when available) baseline evidence from the analyzer's `evidence` field. Be honest about uncertainty.
+  - `## Expected impact` — why this is worth doing. Cite `expected_improvement` and (when available) discovery-pass evidence from the analyzer's `evidence` field. Be honest about uncertainty.
   - `## HIP / coordination concerns` — pulled from the analyzer's writeup: who needs to upgrade, what the migration story looks like, any safety considerations. If the writeup names them, list them; if it doesn't, say so explicitly rather than fabricating.
   - `## Why an issue, not a PR` — one paragraph. State whether this is `block_validation` (bench can't exercise) or `poc_implementable: false` for another reason; this helps reviewers understand why no PoC accompanies the proposal.
   - `## Reference: target id` — `{{ target_id }}` so the issue is traceable back to the autonomous run.

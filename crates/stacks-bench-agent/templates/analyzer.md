@@ -41,7 +41,7 @@ Important fields:
 - Pre-rendered triage CSVs: `{{ triage_queries_dir }}/*.csv`
 - Stacks domain context: `{{ domain_context_path }}` — read first for scale,
   Clarity cost axes, validation-path coverage gaps, and replay terminology.
-- Baseline run id: `{{ baseline_run_id }}`
+- Discovery-pass run id: `{{ baseline_run_id }}` (legacy field name)
 - Non-targets: `{{ non_targets_path }}`
 - Bucket anchors: `{{ bucket_anchors_path }}`
 - Output schema: `{{ analysis_schema_path }}`
@@ -135,7 +135,7 @@ without re-investigating, you have not drilled deep enough.
 # Evidence Provenance
 
 For every non-consensus target, include `evidence_queries[]`. This is the
-replayable DB trail the results-analyzer uses after candidate benchmarks run.
+replayable DB trail the results-analyzer uses after verification benches run.
 Log every query you rely on for the mechanism claim, not only large traces.
 
 Each row must include:
@@ -147,7 +147,7 @@ Each row must include:
 - `output_path`: session-relative output path under
   `analysis/{{ family_id }}/queries/`.
 - `key_observation`: numeric, specific signal extracted from the output
-  (for example, `baseline span p95 self_wall_us = 18400us across 9/10 samples`).
+  (for example, `discovery-pass span p95 self_wall_us = 18400us across 9/10 samples`).
 - `supports_invocations`: ids from this target's
   `verification_replay.invocations[]` that this evidence supports.
 
@@ -162,7 +162,7 @@ Example row:
     "span_name": "RollbackWrapper::lookup"
   },
   "output_path": "analysis/{{ family_id }}/queries/rollback-wrapper-drift.csv",
-  "key_observation": "baseline p95 self_wall_us = 18400us across 9/10 samples",
+  "key_observation": "discovery-pass p95 self_wall_us = 18400us across 9/10 samples",
   "supports_invocations": ["warm-steady"]
 }
 ```
@@ -229,7 +229,8 @@ Calibration examples:
 `verification_replay` is REQUIRED on every non-consensus (bench-eligible) target.
 It carries one or more `BenchInvocation`s — each invocation is one
 self-contained `stacks-bench bench run` call that Phase 1.8 + Phase 3 + Phase
-3.5 use to compare baseline vs candidate.
+3.5 use to compare the target calibration baseline against the verification
+bench.
 
 ```json
 {
@@ -277,13 +278,13 @@ Rules:
 - `repetitions` in `[1, 200]`. Typical: 20 for txid mode, 10 for block mode.
 - `warmup` in `[0, 200]`. 0 for cold-cache signal, 10 for steady-state.
 - `profiler` is `"rich"` today (no flag changes; future variants will lower
-  profile overhead). Must match across baseline and candidate per
-  invocation — that's the flag-symmetry invariant.
+  profile overhead). Must match across the target calibration baseline and
+  verification bench per invocation — that's the flag-symmetry invariant.
 - `expected_signal` is the analyzer's prediction the results-analyzer
   (Phase 3.5) checks against:
   - `direction`: `improves` (this invocation should measure faster on
-    the chosen `axis` than baseline), `neutral` (no movement expected
-    — useful as a control invocation that pins the mechanism), or
+    the chosen `axis` than the target calibration baseline), `neutral`
+    (no movement expected — useful as a control invocation that pins the mechanism), or
     `regresses` (rare; this invocation is expected to look worse,
     e.g. when the fix trades cold-path cost for warm-path gain).
   - `estimate_pct` + `tolerance_pct` are optional; provide them when you

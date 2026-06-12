@@ -1,14 +1,14 @@
 //! DB ↔ artifact run-id consistency check.
 //!
-//! Every run-id under `sessions/<id>/results/` (baseline run/rerun,
-//! per-target verify baselines, per-target candidate run-ids) must
-//! resolve in `<stacks_bench_data_dir>/appdata/stacks-bench.db`.
+//! Every run-id under `sessions/<id>/results/` (discovery-pass run/rerun,
+//! per-target target calibration baselines, per-target verification-bench
+//! run-ids) must resolve in `<stacks_bench_data_dir>/appdata/stacks-bench.db`.
 //! Dangling refs poison finalize math, ledger emission, and PR-body
 //! provenance.
 //!
 //! Discovery is tolerant: missing artifact files are skipped (not
 //! every target has every reference type). Some dangling refs are
-//! expected (audit-only session-level baseline when every target has
+//! expected (audit-only session-level discovery pass when every target has
 //! per-target ids). Callers warn rather than block; immutable
 //! consumers (archive ledger append) should be invoked only after
 //! the operator has reviewed any warnings.
@@ -62,7 +62,7 @@ pub fn collect_dangling_run_ids(
     }
 
     for target_id in targets {
-        // Per-target verify baselines (Phase 1.8 calibration).
+        // Per-target target calibration baselines (Phase 1.8).
         let verify_path = layout.verify_baseline_run_ids_json(target_id);
         if let Ok(raw) = std::fs::read_to_string(&verify_path)
             && let Ok(ids) = serde_json::from_str::<crate::models::common::InvocationRunIds>(&raw)
@@ -77,7 +77,7 @@ pub fn collect_dangling_run_ids(
                 ));
             }
         }
-        // Per-target candidate bench run-ids (Phase 3).
+        // Per-target verification-bench run-ids (Phase 3).
         let cand_path = layout.experiment_candidate_run_ids_json(target_id);
         if let Ok(raw) = std::fs::read_to_string(&cand_path)
             && let Ok(ids) = serde_json::from_str::<crate::models::common::InvocationRunIds>(&raw)

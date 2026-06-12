@@ -1,10 +1,10 @@
 //! `sbagent session bench clean` — clear Phase 3 per-target benchmark
-//! artifacts AND the paired Phase 1.8 baseline-calibration outputs under
+//! artifacts AND the paired Phase 1.8 target-calibration-baseline outputs under
 //! `verify/<target>/`. The two phases share one invocation-id set per
-//! target (the Phase 3 candidate bench is the apples-to-apples partner
-//! of the Phase 1.8 baseline bench for the same invocation), so cleaning
-//! both sides together matches how operators rerun: a fresh `bench run`
-//! drops both. Optimizer-side outputs (implementation/abort markers,
+//! target (the Phase 3 verification bench is the apples-to-apples partner
+//! of the Phase 1.8 target calibration baseline for the same invocation), so
+//! cleaning both sides together matches how operators rerun: a fresh `bench
+//! run` drops both. Optimizer-side outputs (implementation/abort markers,
 //! subagent logs, `optimizer-report.json`) are NOT touched — those are
 //! `optimize clean`'s domain.
 
@@ -76,7 +76,7 @@ pub fn clean_with_layout(layout: &SessionLayout) -> Result<CleanReport> {
                 }
             }
 
-            // Phase 1.8 baseline-calibration side under verify/<target>/.
+            // Phase 1.8 target-calibration-baseline side under verify/<target>/.
             // The whole per-target dir is owned by Phase 1.8, so dropping
             // it wholesale handles `baseline-run-ids.json` and every
             // `<invocation-id>/` subdir in one call.

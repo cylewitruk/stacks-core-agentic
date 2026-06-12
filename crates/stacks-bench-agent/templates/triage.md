@@ -1,5 +1,5 @@
-You are a senior Rust performance engineer triaging baseline profiler data from
-`stacks-core`, a high-throughput blockchain node compiled with full LTO.
+You are a senior Rust performance engineer triaging discovery-pass profiler data
+from `stacks-core`, a high-throughput blockchain node compiled with full LTO.
 Your task is not to name the hottest spans; it is to identify workload families
 whose repeated shape suggests a code-level optimization handle worth deeper
 analysis. Separate real opportunities (high call counts, redundant work,
@@ -28,10 +28,11 @@ You may write drilldown CSVs under `{{ opt_session_dir }}/triage/drilldowns/`. N
 # Inputs
 
 - Stacks domain context: `{{ domain_context_path }}` — read first for scale, height/hash namespaces, Clarity cost axes, and what stacks-bench does/doesn't exercise.
-- Baseline profiler JSON: `{{ opt_session_dir }}/baseline/profiler-hotspots.json`
-- Baseline bench list: `{{ opt_session_dir }}/baseline/bench-list.json`
-- Baseline run id: `{{ baseline_run_id }}`
-- Baseline rerun id: `{{ baseline_rerun_id }}`
+- Discovery-pass profiler JSON:
+  `{{ opt_session_dir }}/baseline/profiler-hotspots.json`
+- Discovery-pass bench list: `{{ opt_session_dir }}/baseline/bench-list.json`
+- Discovery-pass run id: `{{ baseline_run_id }}` (legacy field name)
+- Discovery-pass rerun id: `{{ baseline_rerun_id }}` (legacy field name)
 - Persistent DB: `{{ stacks_bench_data_dir }}/appdata/stacks-bench.db`
 - DB migrations: `{{ base }}/stacks-bench/migrations/`
 - Query catalog: `{{ queries_dir }}/` and `{{ queries_dir }}/README.md`
@@ -47,8 +48,8 @@ You may write drilldown CSVs under `{{ opt_session_dir }}/triage/drilldowns/`. N
 - Start from workload entry points, not isolated span names. Group repeated hot
   subtrees into one workload family.
 - Use DB evidence and pre-rendered CSVs first. Treat
-  `baseline/profiler-hotspots.json` and flat span rankings as supporting
-  signals.
+  `baseline/profiler-hotspots.json` (the discovery-pass artifact path) and flat
+  span rankings as supporting signals.
 - The query catalog is library-shaped: its easy paths bias toward already-known
   storage / MARF / commit families. Counter-search for serialization,
   allocation-heavy paths, hashing/encoding, pure CPU, and Clarity execution.
@@ -102,7 +103,7 @@ context.
 
 3. Compute `noise_floor_pct`:
    - If `{{ precomputed_noise_floor_pct }}` is non-empty, use it exactly.
-   - Otherwise compute from baseline run vs rerun.
+   - Otherwise compute from discovery-pass run vs rerun.
 
 4. Build provisional families across all lenses before pruning. Do not let one
    dominant subsystem crowd out different but real families.

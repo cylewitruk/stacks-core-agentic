@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! results/
-//!   baseline/   {run-id, rerun-id, bench-run.json, rerun.json, *.stderr.log,
+//!   baseline/   Phase 0 discovery-pass artifacts (legacy path name):
+//!                {run-id, rerun-id, bench-run.json, rerun.json, *.stderr.log,
 //!                profiler-hotspots.json, bench-list.json}
 //!   triage/     {candidates.{json,md}, prompt.md, events.jsonl, stderr.log,
 //!                final-message.md, conversation-id,
@@ -15,8 +16,8 @@
 //!   merge/      {optimization-targets.json, prompt.md, events.jsonl,
 //!                stderr.log, final-message.md, conversation-id}
 //!   optimize/<target-id>/  one shared per-target dir; receives Phase 2
-//!                          (optimizer agent), Phase 3 (candidate bench
-//!                          outputs, `candidate-*` prefix), and Phase 5
+//!                          (optimizer agent), Phase 3 (verification bench
+//!                          outputs, legacy `candidate-*` prefix), and Phase 5
 //!                          (publish artifacts, `pr-writer-*` /
 //!                          `issue-writer-*` prefix) outputs. Audit reads
 //!                          for "what happened with target X" stay in one
@@ -91,7 +92,7 @@ impl SessionLayout {
             .to_path_buf()
     }
 
-    // ── Phase 0: baseline ────────────────────────────────────────────
+    // ── Phase 0: discovery pass (legacy path name: baseline/) ────────
 
     /// `results/baseline/`.
     pub fn baseline_dir(&self) -> PathBuf {
@@ -163,8 +164,8 @@ impl SessionLayout {
     }
 
     /// `results/baseline/noise-floor-pct` — single line with the
-    /// computed noise floor percentage, written when baseline produces
-    /// a (run, rerun) pair OR when import resolves a single-run
+    /// computed noise floor percentage, written when the discovery pass
+    /// produces a (run, rerun) pair OR when import resolves a single-run
     /// fallback. Triage reads this to render the prompt.
     pub fn baseline_noise_floor_path(&self) -> PathBuf {
         self.baseline_dir()
@@ -172,8 +173,8 @@ impl SessionLayout {
     }
 
     /// `results/baseline/bin/` — directory holding the archived
-    /// `stacks-bench` binary used by Phase 0b baseline, Phase 1.8
-    /// calibration. See Phase 0a in
+    /// `stacks-bench` binary used by Phase 0b discovery and Phase 1.8
+    /// target calibration baselines. See Phase 0a in
     /// `planning/archive/superseded/0017-pass-1c-historical-plan.md`, Sub-step
     /// A.
     pub fn baseline_bin_dir(&self) -> PathBuf {
@@ -349,7 +350,7 @@ impl SessionLayout {
             .join("optimize")
     }
 
-    // ── Phase 1.8: targeted baseline calibration (Pass 1a) ───────────
+    // ── Phase 1.8: target calibration baseline ──────────────────────
 
     /// `results/verify/` — root for per-target Phase 1.8 (and future
     /// Phase 1.9 verifier) artifacts. Separate from `optimize/`
@@ -366,7 +367,7 @@ impl SessionLayout {
             .join(target_id)
     }
 
-    /// Per-invocation baseline calibration run dir. One subdir per
+    /// Per-invocation target calibration baseline run dir. One subdir per
     /// `BenchInvocation.id` on the target's `verification_replay`.
     pub fn verify_baseline_invocation_dir(&self, target_id: &str, invocation_id: &str) -> PathBuf {
         self.verify_target_dir(target_id)
@@ -447,14 +448,15 @@ impl SessionLayout {
     /// `results/optimize/<target-id>/candidate-run-ids.json` —
     /// [`InvocationRunIds`](crate::models::common::InvocationRunIds) JSON
     /// pairing each invocation `id` with the stacks-bench `benchmark_run`
-    /// row Phase 3 produced for it. Symmetric with
+    /// row Phase 3 produced for it. The file name keeps the legacy
+    /// `candidate` term for the verification bench side. Symmetric with
     /// [`Self::verify_baseline_run_ids_json`].
     pub fn experiment_candidate_run_ids_json(&self, target_id: &str) -> PathBuf {
         self.experiment_dir(target_id)
             .join("candidate-run-ids.json")
     }
 
-    /// Per-invocation candidate bench run dir. One subdir per
+    /// Per-invocation verification bench run dir. One subdir per
     /// `BenchInvocation.id`.
     pub fn experiment_candidate_invocation_dir(
         &self,

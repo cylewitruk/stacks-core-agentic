@@ -211,12 +211,12 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
             .experiment_candidate_invocation_dir(&target.id, &inv.id);
         fs::create_dir_all(&run_dir).with_context(|| format!("creating {}", run_dir.display()))?;
         let bench_name = format!("candidate-{}-{}", target.id, inv.id);
-        // Candidate bench: same profiler-flag set as the Phase 1.8 baseline
-        // calibration this candidate's results-analyzer will compare it to.
+        // Verification bench: same profiler-flag set as the Phase 1.8 target
+        // calibration baseline this results-analyzer will compare it to.
         // Pass 1c invariant — flag symmetry within a comparison.
-        // Asymmetric profiling (e.g. lean candidate vs rich baseline) lets
-        // profile overhead bias the comparison; see
-        // [calibration.rs](super::calibration) for the matching baseline
+        // Asymmetric profiling (e.g. lean verification bench vs rich calibration
+        // baseline) lets profile overhead bias the comparison; see
+        // [calibration.rs](super::calibration) for the matching calibration baseline
         // arg construction.
         let extra = crate::session::calibration::build_invocation_args(inv);
         let mut args: Vec<&str> = vec![
@@ -281,7 +281,7 @@ fn bench_one(inputs: &Inputs<'_>, target: &MergedTarget) -> Result<TargetOutcome
 /// prefixed form.
 ///
 /// Public so `session::calibration` (Phase 1.8) can share the same
-/// stripping convention as Phase 3 candidate bench.
+/// stripping convention as Phase 3 verification bench.
 pub fn strip_hex_prefix(s: &str) -> String {
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))

@@ -121,8 +121,8 @@ pub fn render_summary_md(
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "# Session {sid}\n\n- Baseline run id: {b1}\n- Baseline rerun id: {b2}\n- Noise floor: \
-         {nf}%\n- Target catalog: [targets.md](targets.md)\n\n",
+        "# Session {sid}\n\n- Discovery-pass run id: {b1}\n- Discovery-pass rerun id: {b2}\n- \
+         Noise floor: {nf}%\n- Target catalog: [targets.md](targets.md)\n\n",
         sid = summary.session_id,
         b1 = summary.baseline_run_id,
         b2 = summary.baseline_rerun_id,
@@ -130,7 +130,7 @@ pub fn render_summary_md(
     ));
 
     if let Some(chart) = render_improvement_chart(&summary.experiments) {
-        out.push_str("## Improvement vs baseline\n\n");
+        out.push_str("## Improvement vs target calibration baseline\n\n");
         out.push_str(&chart);
         out.push('\n');
     }
@@ -281,8 +281,8 @@ pub fn render_targets_md(
         "> Catalog of merged optimization targets produced by Phase 1.7 (merge). For pass/fail \
          verdicts and benchmark deltas, see [summary.md](summary.md).\n\n",
     );
-    out.push_str(&format!("- Baseline run id: `{}`\n", targets.baseline_run_id));
-    out.push_str(&format!("- Baseline rerun id: `{}`\n", targets.baseline_rerun_id));
+    out.push_str(&format!("- Discovery-pass run id: `{}`\n", targets.baseline_run_id));
+    out.push_str(&format!("- Discovery-pass rerun id: `{}`\n", targets.baseline_rerun_id));
     out.push_str(&format!("- Noise floor: `{}%`\n", targets.noise_floor_pct));
     out.push_str(&format!("- Merge method: `{}`\n", humanize_merge_method(targets.merge_method)));
     out.push_str(&format!("- Merge model: `{}`\n\n", targets.merge_model));
@@ -933,7 +933,7 @@ fn render_improvement_chart(experiments: &[Experiment]) -> Option<String> {
     let mut out = String::new();
     out.push_str("```mermaid\n");
     out.push_str("xychart-beta\n");
-    out.push_str("    title \"Per-target improvement vs baseline (%)\"\n");
+    out.push_str("    title \"Per-target improvement vs target calibration baseline (%)\"\n");
     out.push_str(&format!("    x-axis [{labels}]\n"));
     out.push_str(&format!("    y-axis \"% improvement\" {lower} --> {upper}\n"));
     out.push_str(&format!("    bar [{bars}]\n"));
@@ -942,8 +942,9 @@ fn render_improvement_chart(experiments: &[Experiment]) -> Option<String> {
 }
 
 /// Render the Phase 3.5 verdict block for one target: the agent's
-/// `headline_rationale`, a per-invocation table (label, baseline +
-/// candidate run-ids linked to their bench-run.json files, measured
+/// `headline_rationale`, a per-invocation table (label, target calibration
+/// target-calibration-baseline + verification-bench run-ids linked to their
+/// bench-run.json files, measured
 /// improvement, match-vs-expected flag), and any caveats.
 fn render_verdict_block(
     t: &MergedTarget,
@@ -1016,7 +1017,7 @@ fn render_status_link(target_id: &str, status: ExperimentStatus) -> String {
     format!("[{label}](../optimize/{target_id}/{file})")
 }
 
-/// Render run-ids as markdown links to the Phase 3 candidate bench
+/// Render run-ids as markdown links to the Phase 3 verification bench
 /// outputs. Each invocation lives at
 /// `optimize/<target>/<invocation-id>/bench-run.json`; pair by index
 /// against the target's `verification_replay.invocations[]`.

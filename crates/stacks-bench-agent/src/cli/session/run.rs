@@ -1,6 +1,6 @@
 //! `sbagent session run` — full-pipeline orchestrator.
 //!
-//! Chains the per-phase commands (baseline → triage → analysis → merge →
+//! Chains the per-phase commands (discovery pass → triage → analysis → merge →
 //! optimize → bench → finalize → optional publish) into one invocation.
 //! Each phase is a direct in-process call into the typed module that
 //! already implements it. Phase 5 (`publish`) used to fork through
@@ -37,8 +37,8 @@ use crate::types::SessionId;
 /// configuration lives in `config.toml`.
 #[derive(Debug, Args)]
 pub struct RunSessionArgs {
-    /// Existing baseline run id to import instead of running a fresh
-    /// baseline benchmark.
+    /// Existing discovery-pass run id to import instead of running a fresh
+    /// Phase 0 benchmark.
     #[clap(long)]
     pub import_baseline_run_id: Option<i64>,
     /// Optional companion rerun id.
@@ -263,9 +263,10 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
     // completes. A session that crashes mid-pipeline leaves a
     // partial file carrying every phase that finished — useful for
     // triaging hung or aborted sessions. Phase 0a + 0b accumulate
-    // under `baseline`; Phase 1.8 accumulates with Phase 3 under
-    // `bench`; Phase 3.5 accumulates with Phase 4 under `finalize`
-    // (the canonical key set on `SessionRecord.phase_durations_secs`).
+    // under the legacy `baseline` timing key; Phase 1.8 target calibration
+    // baselines accumulate with Phase 3 verification benches under `bench`;
+    // Phase 3.5 accumulates with Phase 4 under `finalize` (the canonical key
+    // set on `SessionRecord.phase_durations_secs`).
     let mut timings = PhaseTimingsRecorder::new(env.layout.timings_json());
 
     let t = Instant::now();
@@ -340,7 +341,7 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
     Ok(())
 }
 
-/// Phase 0a: build + archive the baseline `stacks-bench` binary BEFORE
+/// Phase 0a: build + archive the `stacks-bench` binary BEFORE
 /// either Phase 0 branch (fresh run OR import). Phase 1.8 calibration
 /// depends on `baseline/bin/stacks-bench` existing — including in
 /// imported-baseline sessions where Phase 0b is skipped.
@@ -359,7 +360,7 @@ fn phase_0a_archive_baseline(env: &PhaseEnv<'_>) -> Result<baseline::ArchiveBina
     })
     .context("Phase 0a")?;
     eprintln!(
-        "Phase 0a: archived baseline stacks-bench binary at {} (source_sha={})",
+        "Phase 0a: archived stacks-bench binary at {} (source_sha={})",
         outputs
             .archived_path
             .display(),
@@ -368,8 +369,8 @@ fn phase_0a_archive_baseline(env: &PhaseEnv<'_>) -> Result<baseline::ArchiveBina
     Ok(outputs)
 }
 
-/// Phase 0: import an existing baseline run id, or run a fresh
-/// baseline benchmark. Always reads the archived binary from Phase 0a
+/// Phase 0: import an existing discovery-pass run id, or run a fresh
+/// discovery-pass benchmark. Always reads the archived binary from Phase 0a
 /// (no fallback to `target/release/stacks-bench`).
 fn phase_0_baseline(
     env: &PhaseEnv<'_>,
@@ -490,10 +491,10 @@ async fn phase_1_7_merge(env: &PhaseEnv<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Phase 1.8: per-target targeted baseline calibration. For each
+/// Phase 1.8: per-target target calibration baseline. For each
 /// normal_pr target with verification_replay, run one bench invocation
-/// per replay phase against the strict archived baseline binary. The
-/// resulting baseline-run-ids feed Phase 4 finalize's apples-to-apples
+/// per replay phase against the strict archived binary. The resulting
+/// baseline-run-ids feed Phase 4 finalize's apples-to-apples
 /// improvement_pct comparison.
 fn phase_1_8_calibration(env: &PhaseEnv<'_>) -> Result<()> {
     let targets = loader::read_optimization_targets(&env.layout).context("Phase 1.8")?;
@@ -515,7 +516,7 @@ fn phase_1_8_calibration(env: &PhaseEnv<'_>) -> Result<()> {
         .settings
         .stacks_bench
         .source_dir_required()
-        .context("Phase 1.8: targeted baseline calibration")?;
+        .context("Phase 1.8: target calibration baseline")?;
     crate::session::calibration::run(&crate::session::calibration::Inputs {
         layout: &env.layout,
         bench: &bench,
@@ -533,7 +534,7 @@ fn phase_1_8_calibration(env: &PhaseEnv<'_>) -> Result<()> {
         bench_lock: &env.ctx.layout.bench_lock,
         targets: &targets,
     })
-    .context("Phase 1.8: targeted baseline calibration")?;
+    .context("Phase 1.8: target calibration baseline")?;
     Ok(())
 }
 
@@ -581,7 +582,7 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
         .layout
         .stacks_bench_data_dir
         .clone();
-    // Phase 3 candidate bench cargo cwd is the per-session source
+    // Phase 3 verification-bench cargo cwd is the per-session source
     // checkout, matching every other build step.
     let cargo_cwd = env
         .source
@@ -632,9 +633,9 @@ fn phase_3_bench_experiments(env: &PhaseEnv<'_>) -> Result<()> {
 
 /// Phase 3.5: results-analyzer fan-out. One agent per
 /// `bench_eligible` target with an Implemented optimizer report +
-/// matching baseline/candidate run-ids — judges measured vs
-/// `expected_signal` and writes a typed verdict that Phase 4 finalize
-/// sources `improvement_pct` + `status` from. Per-target failure is
+/// matching target-calibration-baseline / verification-bench run-ids — judges
+/// measured vs `expected_signal` and writes a typed verdict that Phase 4
+/// finalize sources `improvement_pct` + `status` from. Per-target failure is
 /// non-fatal: the offending target lands at finalize as an Aborted
 /// experiment with `reason = "results-analyzer did not produce a
 /// verdict: ..."`. Concurrency: `analyzer.concurrency_cap`.

@@ -7,12 +7,23 @@ which decision, what they read, and what they emit.
 
 ```text
 Optimization session
-  One full outer pass: baseline, target ranking, worktree experiments,
-  comparison, summary. Identified by SBAGENT_SESSION_ID.
+  One full outer pass: discovery pass, target ranking, worktree
+  experiments, verification, summary. Identified by SBAGENT_SESSION_ID.
 
 Benchmark run
   One `cargo stacks-bench bench run` record stored in the persistent
   stacks-bench SQLite DB. Identified by a stacks-bench run id.
+
+Discovery pass
+  Phase 0 session-wide benchmark/profiler scan that feeds triage. Legacy
+  CLI/path/API names still call this `baseline`.
+
+Target calibration baseline
+  Phase 1.8 per-target unchanged-source run, paired 1:1 with a later
+  optimized invocation.
+
+Verification bench
+  Phase 3 optimized-candidate run for the same invocation.
 
 Optimization-session artifacts
   JSON snapshots, stderr logs, Codex JSONL event streams, notes, and
@@ -102,7 +113,7 @@ that converge on the same fix.
          └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
                │             │             │
                ▼             ▼             ▼          (Phase 3: orchestrator
-        per-invocation candidate bench runs            runs stacks-bench per
+        per-invocation verification benches            runs stacks-bench per
         under bench lock; ids → candidate-run-          target invocation)
         ids.json keyed by VR.invocations[].id
                │             │             │
@@ -160,12 +171,13 @@ that converge on the same fix.
   own per-target git clone. Implements the change, runs tests, leaves
   a release binary for the bench phase to measure. Writes into
   `optimize/<target-id>/` — the shared per-target audit folder also
-  used by Phase 3 (per-invocation candidate bench outputs under
+  used by Phase 3 (per-invocation verification bench outputs under
   `<invocation-id>/bench-run.json`) and Phase 5 (publish artifacts).
 - **Results-analyzer** runs in parallel after Phase 3, one per
   `bench_eligible` target. Reads the target's `verification_replay`
   (analyzer hypothesis), the `optimizer-report.json` (claim + diff),
-  and the per-invocation baseline + candidate `bench-run.json` files;
+  and the per-invocation target calibration baseline + verification bench
+  `bench-run.json` files;
   judges measured vs `expected_signal` (direction first, magnitude
   second). Commits one `verdict` (accepted | mixed | rejected) and
   one `confidence` (high | medium | low) per target. Writes
@@ -179,14 +191,14 @@ that converge on the same fix.
 
 ### Orchestrator vs. agent ownership
 
-The `sbagent` orchestrator owns: archiving the strict baseline
-`stacks-bench` binary (Phase 0a) + a single baseline benchmark run
+The `sbagent` orchestrator owns: archiving the strict
+`stacks-bench` binary (Phase 0a) + a single discovery-pass benchmark run
 with `rerun-id` aliased to the run id (Phase 0b — no second `bench
 rerun` is taken; the noise floor sources from
-`triage.single_run_noise_floor_pct`), Phase 1.8 per-target baseline
-calibration (one stacks-bench run per VR invocation against the
-archived baseline binary), release builds + per-invocation candidate
-benchmarks (Phase 3), and finalize (Phase 4) — which now **sources**
+`triage.single_run_noise_floor_pct`), Phase 1.8 per-target calibration
+baselines (one stacks-bench run per VR invocation against the
+archived binary), release builds + per-invocation verification benches
+(Phase 3), and finalize (Phase 4) — which now **sources**
 `Experiment.improvement_pct` and `Experiment.status` verbatim from
 each target's verdict rather than computing them from pooled bench
 means. Agents own: triage, per-family analysis, merge consolidation,

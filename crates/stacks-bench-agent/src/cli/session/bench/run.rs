@@ -1,4 +1,4 @@
-//! `sbagent session bench run` — Phase 3 candidate bench.
+//! `sbagent session bench run` — Phase 3 verification bench.
 //!
 //! Per Pass 1c, every `bench_eligible` target carries its own
 //! `verification_replay.invocations[]`. No session-level full-range
@@ -51,7 +51,7 @@ pub async fn run(args: BenchRunArgs, ctx: &CliContext, session_id: &SessionId) -
         .layout
         .stacks_bench_data_dir
         .clone();
-    // Phase 3 candidate bench cargo cwd is the per-session source
+    // Phase 3 verification-bench cargo cwd is the per-session source
     // checkout. Bench run is downstream of session start, so
     // source.json MUST already exist — `read_session_source` bails
     // loudly if it doesn't.

@@ -1,11 +1,13 @@
 # Benchmark DB Query Catalog
 
 A small library of SQLite queries agents can run against the `stacks-bench`
-SQLite database. Triage and analyzer agents use single-run queries to refine
-candidate mechanisms; the results-analyzer uses paired baseline-vs-candidate
-queries to verify whether the optimizer moved the predicted mechanism. Each
-file is parameterized with sqlite3 named placeholders (`:run_id`, `:span_id`,
-`:baseline_run_id`, ...).
+SQLite database. Triage and analyzer agents use single-run discovery-pass
+queries to refine candidate mechanisms; the results-analyzer uses paired
+target-calibration-baseline vs verification-bench queries to verify whether the
+optimizer moved the predicted mechanism. Each file is parameterized with
+sqlite3 named placeholders (`:run_id`, `:span_id`, `:baseline_run_id`, ...).
+The paired-query parameter name `:baseline_run_id` is legacy terminology for
+the target calibration baseline run id.
 
 ## Source
 
@@ -77,13 +79,13 @@ Each query's header comment lists its parameters and a runnable example.
    - All trace queries take a `:min_wall_ms` filter; start at 5–10ms for txs
      and 10–25ms for blocks, then lower if the result is too sparse.
 7. **Cross-run trend.** [`span_run_drift.sql`](span_run_drift.sql) — when 2+
-   runs exist, surfaces spans whose recent baseline is moving.
+   discovery-pass runs exist, surfaces spans whose recent profile is moving.
 
 ## Results-analyzer paired comparisons
 
-Phase 3.5 receives one baseline run id and one candidate run id per analyzer
-invocation. Use the paired queries below before judging
-`matches_expected_signal`:
+Phase 3.5 receives one target calibration baseline run id and one verification
+bench run id per analyzer invocation. Use the paired queries below before
+judging `matches_expected_signal`:
 
 1. **Envelope sanity.** [`compare_run_summary.sql`](compare_run_summary.sql) —
    confirms both runs exist and compares coarse wall / block / tx totals. Treat
@@ -98,8 +100,8 @@ invocation. Use the paired queries below before judging
    corroborate commit-bucket or whole-block hypotheses.
 
 All paired queries use the same sign convention as `results-analysis.json`:
-positive `improvement_pct` means the candidate is faster / cheaper than the
-baseline.
+positive `improvement_pct` means the verification bench is faster / cheaper
+than the target calibration baseline.
 
 ## Query catalog
 
@@ -109,11 +111,11 @@ baseline.
 | `top_spans_by_self_wall.sql`            | Primary hotspot ranking; CPU vs wait split; per-call avg.                                | `:run_id`, `:limit`                                                        |
 | `span_recurrence.sql`                   | % of blocks / txs in which each span appears (returns all spans, no limit).              | `:run_id`                                                                  |
 | `top_spans_by_call_count.sql`           | High-frequency spans (cache / dedup candidates).                                         | `:run_id`, `:limit`                                                        |
-| `block_timing_breakdown.sql`            | Avg setup / execution / commit per block; commit-overhead baseline.                      | `:run_id`                                                                  |
+| `block_timing_breakdown.sql`            | Avg setup / execution / commit per block; discovery-pass commit-overhead context.         | `:run_id`                                                                  |
 | `baseline_empty_block_breakdown.sql`    | Avg per-stage cost of processing an empty block (irreducible floor).                     | `:run_id`                                                                  |
-| `compare_run_summary.sql`               | Baseline-vs-candidate coarse run envelope comparison.                                    | `:baseline_run_id`, `:candidate_run_id`                                     |
-| `compare_spans_between_runs.sql`        | Baseline-vs-candidate profiler-span comparison for one analyzer-named span.              | `:baseline_run_id`, `:candidate_run_id`, `:span_name`                       |
-| `compare_block_timing_between_runs.sql` | Baseline-vs-candidate setup / execution / commit / total timing comparison.              | `:baseline_run_id`, `:candidate_run_id`                                     |
+| `compare_run_summary.sql`               | Target-calibration-baseline vs verification-bench coarse run envelope comparison.         | `:baseline_run_id`, `:candidate_run_id`                                     |
+| `compare_spans_between_runs.sql`        | Target-calibration-baseline vs verification-bench profiler-span comparison.              | `:baseline_run_id`, `:candidate_run_id`, `:span_name`                       |
+| `compare_block_timing_between_runs.sql` | Target-calibration-baseline vs verification-bench setup / execution / commit comparison. | `:baseline_run_id`, `:candidate_run_id`                                     |
 | `tx_type_distribution.sql`              | Cheap workload context: tx-type counts and total time.                                   | `:run_id`                                                                  |
 | `top_contract_calls.sql`                | Top Clarity contract-functions by total wall time.                                       | `:run_id`, `:limit`                                                        |
 | `top_clarity_consumers_by_contract.sql` | Top Clarity-budget consumers per contract.function (5-axis breakdown + per-block max).   | `:run_id`, `:limit`                                                        |
@@ -181,4 +183,4 @@ Notable tables these queries depend on:
   `stacks_tx_id`, hierarchical `parent_id`);
 - `stacks_block_stats`, `stacks_tx_stats` (per-block / per-tx wall-time facts);
 - `block_processing_baseline` (empty-block per-stage averages, one row
-  per benchmark run).
+  per benchmark run; table name is legacy upstream terminology).

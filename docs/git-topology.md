@@ -100,15 +100,15 @@ When `sbagent session run` starts a fresh `<id>`.
       source.json                       # provenance: url, branch, sha,
                                         #   fetched_at, cache_id (v1 schema,
                                         #   write-once at session start)
-      baseline/                         # Phase 0: run-id, rerun-id,
+      baseline/                         # Phase 0 discovery pass: run-id, rerun-id,
                                         #   bench-run.json, *.stderr.log,
                                         #   profiler-hotspots.json, bin/
       triage/                           # Phase 1: candidates.json, prompt,
                                         #   final-message, queries/, drilldowns/
       analysis/<family>/                # Phase 1.5: per-family analyzer output
       merge/                            # Phase 1.7: optimization-targets.json
-      verify/<target>/<inv>/            # Phase 1.8: per-invocation baseline
-                                        #   calibration outputs
+      verify/<target>/<inv>/            # Phase 1.8: per-invocation target
+                                        #   calibration baseline outputs
       optimize/<target>/                # Phase 2 + 3 + 5 per-target outputs
                                         #   (added per target as they're processed)
       analyze/<target>/                 # Phase 3.5: results-analysis.json
@@ -133,8 +133,9 @@ live outside `<operator>`. See
 requirement.
 
 Phase 0a also writes `<workspace>/sessions/<id>/results/baseline/bin/stacks-bench`
-— the *archived* baseline binary used by Phase 1.8 calibration and any
-imported-baseline sessions. The same binary is *copied* (not moved) into
+— the archived `stacks-bench` binary used by Phase 0 discovery, Phase 1.8
+target calibration baselines, and imported discovery-pass sessions. The same
+binary is *copied* (not moved) into
 the per-target optimizer dirs in §3.
 
 ### Source materialization
@@ -496,7 +497,7 @@ GitHub; the operator inspects it manually via `gh pr list` /
 | Question | Answer |
 | -------- | ------ |
 | Where do session phase outputs land? | `<workspace>/sessions/<id>/results/<phase>/` — see §2 for the per-phase breakdown. |
-| Where does the baseline binary archive live? | `<workspace>/sessions/<id>/results/baseline/bin/stacks-bench`. |
+| Where does the archived `stacks-bench` binary live? | `<workspace>/sessions/<id>/results/baseline/bin/stacks-bench`. |
 | Where does the per-target optimizer's working tree live? | `<workspace>/optimizers/<id>/<target>/` (when `agent_workspace_root` is set); legacy fallback `<workspace>/sessions/<id>/worktrees/<target>/`. |
 | Where does the per-target `agentic/<id>/<target>` branch live? | Inside the per-target clone above. It also gets pushed to `<stacks-core fork>` in Phase 5. |
 | Where does the Phase 3.5 verdict for a target live? | `<workspace>/sessions/<id>/results/analyze/<target>/results-analysis.json`. |

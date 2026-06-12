@@ -1,10 +1,11 @@
 //! Phase 3.5: post-bench results-analyzer fan-out.
 //!
 //! One Codex agent invocation per `bench_eligible` target whose Phase 3
-//! candidate bench actually produced run-ids. Each agent reads the
+//! verification bench actually produced run-ids. Each agent reads the
 //! target's `verification_replay` (analyzer hypothesis), the
 //! `optimizer-report.json` (claim + diff), and the per-invocation
-//! baseline + candidate `bench-run.json` files; writes a typed
+//! target calibration baseline + verification bench `bench-run.json` files;
+//! writes a typed
 //! [`ResultsAnalysis`](crate::models::results_analysis::ResultsAnalysis)
 //! verdict to `results/analyze/<target>/results-analysis.json`.
 //!
@@ -259,8 +260,8 @@ fn eligibility(layout: &SessionLayout, target: &MergedTarget) -> Result<Eligibil
             return Ok(Eligibility::Skip("no optimizer-report.json on disk".into()));
         }
     }
-    // Phase 3 must have produced candidate run-ids. Without them the
-    // bench never landed and the agent has nothing to read.
+    // Phase 3 must have produced verification-bench run-ids. The file name is
+    // the legacy `candidate-run-ids` contract.
     let cand_path = layout.experiment_candidate_run_ids_json(&target.id);
     if !cand_path.is_file() {
         return Ok(Eligibility::Skip(format!(
@@ -268,7 +269,8 @@ fn eligibility(layout: &SessionLayout, target: &MergedTarget) -> Result<Eligibil
             cand_path.display()
         )));
     }
-    // Symmetrically, Phase 1.8 must have produced baseline run-ids.
+    // Symmetrically, Phase 1.8 must have produced target-calibration-baseline
+    // run-ids. The file name is the legacy `baseline-run-ids` contract.
     let base_path = layout.verify_baseline_run_ids_json(&target.id);
     if !base_path.is_file() {
         return Ok(Eligibility::Skip(format!(

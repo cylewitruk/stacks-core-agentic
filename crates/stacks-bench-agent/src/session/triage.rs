@@ -1,6 +1,6 @@
 //! Phase 1: triage agent.
 //!
-//! Reads the Phase 0 baseline artifacts, renders the triage prompt via
+//! Reads the Phase 0 discovery-pass artifacts, renders the triage prompt via
 //! [`crate::prompts::TriagePrompt`] (Askama), invokes the agent harness,
 //! captures stdout/stderr to disk, validates the produced
 //! `candidates.json` against the typed model, and surfaces the count.
@@ -52,7 +52,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     fs::create_dir_all(&layout.results_dir)
         .with_context(|| format!("creating {}", layout.results_dir.display()))?;
 
-    // 1. Load baseline ids.
+    // 1. Load discovery-pass ids. The on-disk names are legacy `baseline-*`
+    // contracts and intentionally remain stable.
     let baseline_run_id = loader::read_run_id_file(&layout.baseline_run_id_path())
         .context("reading baseline-run-id")?;
     let baseline_rerun_id = loader::read_run_id_file(&layout.baseline_rerun_id_path())
@@ -350,7 +351,7 @@ fn render_candidates_md(c: &crate::models::candidates::Candidates) -> String {
     let _ = writeln!(s);
     let _ = writeln!(
         s,
-        "- baseline run id: `{}`  ·  rerun id: `{}`  ·  noise floor: `{:.4}%`",
+        "- discovery-pass run id: `{}`  ·  rerun id: `{}`  ·  noise floor: `{:.4}%`",
         c.baseline_run_id, c.baseline_rerun_id, c.noise_floor_pct,
     );
     let _ = writeln!(
