@@ -12,7 +12,8 @@ mechanism movement from the benchmark DB, not from pooled run summaries.
 > Shipped: analyzer evidence provenance is typed and carried through merge,
 > paired DB comparison queries are bundled, and the results-analyzer prompt now
 > treats `bench-run.json` as the run envelope while using DB-backed mechanism
-> evidence for judgment. Live operator validation remains with `0019`.
+> evidence for judgment. Live operator validation completed in smoke session
+> `20260611-172955`.
 
 ## Items
 
@@ -333,15 +334,36 @@ before live smoke.
       results-analyzer prompt confirms the evidence hierarchy:
       DB-backed mechanism evidence first, `bench-run.json` as envelope.
 
-Live / operator (not blocking v7 ship):
+Live / operator:
 
-- [ ] Next live smoke (`0019`) verifies that the analyzer emits useful
+- [x] Next live smoke (`0019`) verifies that the analyzer emits useful
       evidence queries and the results-analyzer uses them without operator
       correction.
+      Session `20260611-172955` produced three normal-PR verdicts, including a
+      DB-evidence-backed `mixed` MARF verdict after rerunning Phase 3.5 with
+      the fixed bundled SQL query.
+
+## Smoke-Surfaced Corrections
+
+- `compare_spans_between_runs.sql` initially referenced a non-production
+  `total_wall_time_us` column. The smoke caught it; the query now uses
+  `profiler_span_summary.wall_time_us` while preserving the CSV alias expected
+  by agents.
+- `session validate` treated the optional triage `conversation-id` artifact as
+  required. The validator now follows the other phases: final messages are
+  semantic artifacts; conversation ids are debugging aids.
+- Publish initially used the Octocrab PAT only for GitHub API calls while
+  `git push` fell back to ambient git credentials. The push path now uses the
+  existing PAT-via-extraheader helper, validates the publish remote URL, and
+  avoids `Debug` surfaces that could print the PAT.
+- Results-analyzer investigation depth from the MARF / rollback targets showed
+  the five-query soft cap was too tight. The prompt now allows up to ten
+  additional queries before requiring an explicit overage justification.
 
 ## Follow-Ups
 
-- `0019-prompt-hardening-live-smoke` - run after v7; patch prompt text based
-  on real agent behavior.
+- `0019-prompt-hardening-live-smoke` remains as an ongoing calibration bucket
+  for additional live sessions. The first smoke produced narrow fixes rather
+  than a broad prompt rewrite.
 - Possible future item: add a Rust helper for executing catalog queries and
   writing CSVs if agents repeatedly make shell/SQLite mistakes.

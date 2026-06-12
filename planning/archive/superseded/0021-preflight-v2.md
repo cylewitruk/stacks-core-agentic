@@ -5,7 +5,7 @@
 - **completed:** `2026-06-11`
 - **superseded by:** v3 per-session source clone
   ([crates/stacks-bench-agent/src/source/repo.rs](../../../crates/stacks-bench-agent/src/source/repo.rs))
-- **audit:** [v6 Phase 1](../../iterations/v6-observability-surface.md#phase-1-0021-preflight-v2-prologue-rescope)
+- **audit:** [v6 Phase 1](../../archive/completed/v6-observability-surface.md#phase-1-0021-preflight-v2-prologue-rescope)
 
 ## Original Problem
 

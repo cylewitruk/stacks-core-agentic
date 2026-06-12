@@ -40,10 +40,11 @@ The implementation aggregates directly in archive because the required data
 already lives in per-invocation `bench-run.json` files, avoiding a duplicate
 summary hop.
 
-## Follow-Up
+## Live Validation
 
-Live end-to-end validation remains part of
-[v1: Live Pass 1c Smoke](../../iterations/v1-live-pass-1c-smoke.md).
+Smoke session `20260611-172955` archived publish-feedback PR URLs and
+per-target bench wall-clock totals; `history show` rendered all three PR URLs
+from the operator ledger.
 
 ## Original Design
 

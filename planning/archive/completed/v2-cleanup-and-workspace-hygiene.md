@@ -5,20 +5,13 @@ phase-clean surfaces so they match the Pass 1c artifact tree, add the
 operator-facing workspace hygiene knobs the design docs called out, and make
 disk exhaustion fail loudly and early.
 
-> **Status:** in_progress (code-complete; ready for live validation).
+> **Status:** shipped.
 >
-> All four phases are implemented, reviewed, and exercised by unit /
-> integration tests. The remaining work is operator-level live
-> validation, which folds into the
-> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md): one real
-> three-target session implicitly fires the disk preflight at start
-> and leaves a workspace `sbagent workspace prune --dry-run` can be
-> invoked against, and Phase 5 publish on the same session confirms
-> that the `cargo clean` reclamation path doesn't regress publish
-> (the only Phase 3 acceptance bullet still unchecked).
->
-> Move to `shipped` once that smoke session runs end-to-end without
-> regression in any of the four phases below.
+> All four phases are implemented, reviewed, exercised by unit /
+> integration tests, and validated against smoke session `20260611-172955`.
+> The session published successfully after default cargo-clean reclamation,
+> and `sbagent workspace prune --dry-run --archived-only` found the archived
+> session through the real operator ledger without removing it.
 >
 > Both items are scoped to coordinator-owned scratch and operator
 > hygiene. No agent-prompt contract or artifact-schema changes — the
@@ -34,8 +27,8 @@ disk exhaustion fail loudly and early.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0020-migration-leftovers` | primary | in_progress |
-| `0023-workspace-cleanup` | primary | in_progress |
+| `0020-migration-leftovers` | primary | shipped |
+| `0023-workspace-cleanup` | primary | shipped |
 
 ## Why
 
@@ -57,7 +50,7 @@ Two leftover hygiene concerns block scheduled, autonomous operation:
   and validate them against the schema files those templates reference. A
   rewrite of `analysis.schema.json` would not fail prompt lint today.
 - Per-target optimizer checkouts
-  ([design/0023-workspace-cleanup.md](../design/0023-workspace-cleanup.md))
+  ([0023-workspace-cleanup.md](0023-workspace-cleanup.md))
   retain full build trees for the whole session, and the operator has no
   durable command for pruning old session workspaces or for catching obvious
   disk shortfalls before Phase 0a.
@@ -210,8 +203,9 @@ validate against the schema the same template names.
   placeholders that don't satisfy the schema's enum constraint. Adding
   the marker requires replacing those with concrete enum values like
   `"tx_latency"`, which is a prompt-prose change v2 ruled out of scope.
-  Captured as backlog item `0038-prompt-example-concretization` for a
-  future pass.
+  Later closed by
+  [`0038-prompt-example-concretization`](0038-prompt-example-concretization.md)
+  in v7.
 - **Deferred markers — `optimizer.md`.** It has no top-level output
   example fence; its only ```json fence is the input-data
   `{{ target_json }}` placeholder. No marker work to do here.
@@ -271,13 +265,9 @@ explicit, tested, and documented so it cannot regress unnoticed.
 - [x] Default `session run` leaves an empty/absent `target/` under each
       per-target checkout after Phase 3.
 - [x] `--skip-cargo-clean` preserves `target/`.
-- [ ] Phase 5 publish runs successfully after the default reclamation path.
-      *(Deferred to the [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md);
-      reclamation runs upstream of every bench invocation and the
-      worktree's `.git/` + copied binary survive by construction, but
-      end-to-end publish was not exercised in test because the publish
-      path requires a live `gh` client. Flip to `[x]` when the v1 smoke
-      ships a PR from a session that ran the default reclamation path.)*
+- [x] Phase 5 publish runs successfully after the default reclamation path.
+      Validated by smoke session `20260611-172955`, which pushed three PRs
+      from per-target worktrees after the default Phase 3 cargo-clean path.
 - [x] Operations docs name the contract and the `--skip-cargo-clean` escape
       hatch.
 
@@ -406,20 +396,23 @@ In-process / unit (complete, code-side):
       unknown-schema / dangling-marker / unparseable-JSON cases under
       `prompts::tests`.
 
-Live / operator (deferred to the [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md);
-flip to `[x]` when that smoke runs):
+Live / operator:
 
-- [ ] A serial three-target session reclaims each per-target `target/`
+- [x] A serial three-target session reclaims each per-target `target/`
       build cache by default while preserving every worktree's source +
       `.git/` + copied binary through Phase 5 publish.
-- [ ] `sbagent workspace prune --dry-run` and the disk preflight fire
+- [x] `sbagent workspace prune --dry-run` and the disk preflight fire
       against the workspace left behind by that smoke session. Confirms
       the prune candidate enumeration, `--archived-only` ledger lookup,
       `.run.pid` liveness gating, and `preflight.min_free_gib` warn-only
       default behave on real operator paths and not just on `tempdir()`
       seams.
+      Validated with
+      `sbagent -c ~/.config/sbagent/config.toml workspace prune --dry-run --archived-only`,
+      which reported session `20260611-172955` as one dry-run prunable
+      archived session.
 
-Move v2 to `shipped` once both live bullets above are checked.
+v2 is shipped.
 
 ## Non-Goals
 
@@ -432,11 +425,9 @@ Move v2 to `shipped` once both live bullets above are checked.
 
 ## Follow-Ups
 
-- `0021-preflight-v2` if the disk preflight reveals other drift classes worth
-  the same fail-early treatment.
+- `0021-preflight-v2` was later closed as superseded by v3's per-session source
+  clone.
 - `0026-phase-timing` landed in
   [v5: Archive Metadata](v5-archive-metadata.md).
-- `0038-prompt-example-concretization` — concretize the `"..."` placeholder
-  values in `analyzer.md`'s two output examples so they validate against
-  `analysis.schema.json` and can carry the schema-example marker. Splits
-  cleanly from v2 because it is a prompt-prose change v2 ruled out.
+- `0038-prompt-example-concretization` later concretized the `"..."` placeholder
+  values in `analyzer.md`'s two output examples and shipped in v7.

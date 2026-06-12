@@ -12,8 +12,8 @@ the archive branch.
 >
 > Code-side shipped. `SessionRecord` now carries PR / issue URLs,
 > phase durations, and per-target bench wall-clock totals where the
-> session artifacts provide them. Live operator validation is deferred
-> to the existing [v1 Pass 1c smoke](v1-live-pass-1c-smoke.md).
+> session artifacts provide them. Live operator validation completed in
+> smoke session `20260611-172955`.
 
 ## Items
 
@@ -194,7 +194,7 @@ line.
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run; in-process
+- [x] Validated (live smoke session `20260611-172955`; in-process
       mock-pipeline + fixture tests cover the recorder-to-archive
       contract)
 
@@ -271,7 +271,7 @@ when Phase 5 successfully opened a PR / issue; operators reviewing
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run; in-process
+- [x] Validated (live smoke session `20260611-172955`; in-process
       fixture tests cover the publish→sidecar→archive flow and the
       per-invocation bench-run aggregation)
 
@@ -359,9 +359,8 @@ into the v1 smoke track.
 - v6 candidate: publish-side flexibility (per-target remote-install
   hook + multi-remote map). Re-enables the pre-v3 `bot`/`origin`
   separation operators may still want.
-- `0036-observability-surface` — once `phase_durations_secs` is
-  populated, a markdown report of `sessions.jsonl` becomes
-  trivially renderable.
+- `0036-observability-surface` shipped `history list` and `history show`;
+  markdown reports remain tracked by `0043-history-report`.
 - `0033-maintain-command` — `publish-feedback.json`'s `opened_at`
   field becomes the natural anchor for "how long has this PR been
   open" reconciliation.

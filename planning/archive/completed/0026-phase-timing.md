@@ -29,7 +29,7 @@ operators had to reconstruct session timing from logs.
   covers archive ingestion.
 - `just lint --no-sccache` and focused phase-timing tests passed during review.
 
-## Follow-Up
+## Live Validation
 
-Live end-to-end validation remains part of
-[v1: Live Pass 1c Smoke](../../iterations/v1-live-pass-1c-smoke.md).
+Smoke session `20260611-172955` archived real `phase_durations_secs`, and
+`history show` rendered the phase-duration bars from the operator ledger.

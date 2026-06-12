@@ -10,7 +10,7 @@ planning debt before the next iteration uses preflight as a hook.
 
 > **Status:** shipped (Phases 1–4). Phase 5 (markdown report)
 > deferred to
-> [`0043-history-report`](../backlog.md#0043-history-report) —
+> [`0043-history-report`](../../backlog.md#0043-history-report) —
 > best promoted after `0033-maintain-command` lands so the report
 > gains the open/merged/closed PR dimension it currently lacks.
 >
@@ -43,7 +43,7 @@ closed:
 - **`0021-preflight-v2`** explicitly said "If `ephemeral-source-clone`
   ships first, delete or shrink this design" (see the now-archived
   design at
-  [archive/superseded/0021-preflight-v2.md](../archive/superseded/0021-preflight-v2.md)).
+  [archive/superseded/0021-preflight-v2.md](../superseded/0021-preflight-v2.md)).
   v3 shipped the ephemeral source clone. Both remaining checks
   (branch-ref divergence, network-fetch freshness) are obsoleted:
   per-session fetch + `source.json` SHA pinning catches the same
@@ -202,8 +202,8 @@ the new CLI commands (and future tools like `maintain`) all share.
 
 - [x] Core implementation
 - [x] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
@@ -278,8 +278,8 @@ on stdout without writing `jq` queries.
 
 - [x] Core implementation
 - [x] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
@@ -362,8 +362,8 @@ breakdown + per-target detail in a single command.
 
 - [x] Core implementation
 - [x] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
@@ -422,7 +422,7 @@ a raw string + `#[rustfmt::skip]` kept the bytes verbatim.
 ### Phase 5 (Stretch): `sbagent history report` — DEFERRED
 
 Extracted to
-[`0043-history-report`](../backlog.md#0043-history-report) on
+[`0043-history-report`](../../backlog.md#0043-history-report) on
 2026-06-11. Rationale: without `0033-maintain-command`'s
 GitHub-side reconciliation (open / merged / closed / stale PR
 state), a markdown report can only render "PR opened" — which
@@ -444,14 +444,26 @@ In-process / unit:
 - [x] `history show` per-session detail renders the three
       sections.
 - ~~(Stretch) `history report` renders markdown.~~ — deferred to
-  [`0043-history-report`](../backlog.md#0043-history-report).
+  [`0043-history-report`](../../backlog.md#0043-history-report).
 
-Live / operator (not blocking v6 ship):
+Live / operator:
 
-- [ ] Run `history list` against a real operator's
+- [x] Run `history list` against a real operator's
       `sessions.jsonl` (after the v1 Pass 1c smoke produces real
       archived sessions). Confirms the data v5 produces reads
       cleanly through the v6 reader against a non-fixture file.
+      Validated with:
+      `sbagent -c ~/.config/sbagent/config.toml history list --limit 5`,
+      which rendered session `20260611-172955` with `3/0/0` targets and
+      3 PRs.
+
+## Smoke-Surfaced Polish
+
+- `history show` now renders an accepted target with
+  `reason_code` starting with `mixed:` as `status = mixed` in the detail
+  table. The ledger still treats mixed verdicts as accepted/shipped, and
+  `history list` still counts them in the accepted bucket; the detail view
+  now exposes the v7 verdict nuance operators need when inspecting a session.
 
 Code-side shipped with Phases 1–4. Phase 5 (markdown report)
 extracted to `0043-history-report`, to be promoted after
@@ -472,13 +484,11 @@ extracted to `0043-history-report`, to be promoted after
   reader as foundation. Reconciling PR state with GitHub gives
   the deferred report the open/merged/closed dimension it
   currently lacks.
-- [`0043-history-report`](../backlog.md#0043-history-report) —
+- [`0043-history-report`](../../backlog.md#0043-history-report) —
   the extracted Phase 5 (markdown report). Best promoted as a
   v7 stretch (or v8 primary) immediately after `0033` lands so
   the report can carry PR state, not just "PR opened".
 - `0030-event-log-skeleton` — adds the event-history projection
   that makes target dedup + fix-signature tracking trivial.
   Substantial; warrants its own iteration.
-- `0038-prompt-example-concretization` — small prompt-text edit,
-  pick up as a one-off PR whenever someone's in `analyzer.md`
-  next.
+- `0038-prompt-example-concretization` — completed in v7.

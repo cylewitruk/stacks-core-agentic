@@ -1,20 +1,18 @@
 # v3: Per-Session Ephemeral Source Clone
 
-Successor to [v2: Cleanup And Workspace Hygiene](v2-cleanup-and-workspace-hygiene.md).
+Successor to [v2: Cleanup And Workspace Hygiene](../archive/completed/v2-cleanup-and-workspace-hygiene.md).
 Replace the shared `<operator>/repos/stacks-core` submodule with per-session
 source checkouts under `<workspace>`, backed by a shared bare object cache,
 and record explicit source provenance in every session bulk.
 
-> **Status:** in_progress (code-complete; ready for live validation).
+> **Status:** in_progress (code-complete; one live validation bullet remains).
 >
 > All four phases are implemented, reviewed, and exercised by unit /
 > integration tests (including the fixture-driven migration recipe
 > rehearsal that landed in v4 Phase 3). The remaining work is
-> operator-level live validation, which folds into the
-> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md): one end-to-end
-> session on a post-cutover operator dir confirms `source.json` flows
-> through to the published PR body / archive branch / ledger entry,
-> and a real-operator-repo migration confirms the recipe converges
+> operator-level live validation. Smoke session `20260611-172955`
+> confirmed the post-cutover session / publish / archive path. The remaining
+> live check is applying the migration recipe to a real existing operator repo
 > without configuration loss.
 >
 > Decision is committed
@@ -194,21 +192,21 @@ fresh-cache path and the warm-cache path against synthetic remotes.
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run)
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Fresh-cache path: `<cache>` materializes on first call;
+- [x] Fresh-cache path: `<cache>` materializes on first call;
       `<session_checkout>` resolves to the configured branch's tip SHA.
-- [ ] Warm-cache path: second call against the same cache fetches the
+- [x] Warm-cache path: second call against the same cache fetches the
       configured branch (no re-clone) and produces a fresh
       `<session_checkout>` for a different session id.
-- [ ] Two concurrent session starts serialize on the cache lock — no race
+- [x] Two concurrent session starts serialize on the cache lock — no race
       corruption of the fetch.
-- [ ] Per-session checkout is independent: removing it does not touch the
+- [x] Per-session checkout is independent: removing it does not touch the
       cache; removing the cache does not touch any session checkout (only
       future ones).
-- [ ] `source.id` validation: settings parsing rejects every entry in the
+- [x] `source.id` validation: settings parsing rejects every entry in the
       rejection list above with a clear error citing the regex; preflight
       re-validates and produces the same rejection for the same inputs.
 
@@ -273,16 +271,16 @@ once per session at start, never mutated.
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run)
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `source.json` is written once at session start; subsequent phases
+- [x] `source.json` is written once at session start; subsequent phases
       read it and fail-loud on missing.
-- [ ] Schema validation passes for every emitted `source.json`.
-- [ ] `summary.json` carries the four source fields; matching round-trip
+- [x] Schema validation passes for every emitted `source.json`.
+- [x] `summary.json` carries the four source fields; matching round-trip
       tests.
-- [ ] `SessionRecord` (the ledger line) carries the same four fields;
+- [x] `SessionRecord` (the ledger line) carries the same four fields;
       `sessions.jsonl` round-trip tests.
 
 **Tests:**
@@ -333,21 +331,21 @@ present on disk (Phase 4 removes it) but is no longer read by any phase.
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run)
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Phase 0a's `cargo build` writes into the per-session `target/`, NOT
+- [x] Phase 0a's `cargo build` writes into the per-session `target/`, NOT
       into `<operator>/repos/stacks-core/target/`. Confirmable with a
       fixture session + `find <base>/target -type f` (empty) +
       `find <session_checkout>/target -type f` (populated).
-- [ ] Per-target optimizer clones forked via `--reference` against the
+- [x] Per-target optimizer clones forked via `--reference` against the
       session checkout still build cleanly and share object storage
       (verifiable via `git -C <target_clone> count-objects -v`).
-- [ ] Finalize + archive read provenance from `source.json` and produce
+- [x] Finalize + archive read provenance from `source.json` and produce
       the same `summary.json` / `SessionRecord` SHAs as a control run
       against the legacy submodule path.
-- [ ] Missing `[source]` config fails fast at preflight with the
+- [x] Missing `[source]` config fails fast at preflight with the
       remediation pointer (no silent fallback, no legacy code path
       kept alive).
 
@@ -425,19 +423,19 @@ stanza is removed; `[source]` is the single source of truth.
 - [x] Core implementation
 - [x] Unit/integration tests
 - [x] Reviewed
-- [ ] Validated (live smoke deferred to v1 Pass 1c re-run)
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `sbagent init` on a fresh dir produces no `.gitmodules`, no
+- [x] `sbagent init` on a fresh dir produces no `.gitmodules`, no
       `repos/` subdir, and no submodule pointer in the initial commit.
-- [ ] The migration recipe applied to a pre-cutover operator dir
+- [x] The migration recipe applied to a pre-cutover operator dir
       converges to the post-cutover shape without losing the operator's
       configured `source.url` / `source.branch` / `.sbagent/` bundle.
-- [ ] A session run on a fresh post-cutover operator dir produces a
+- [x] A session run on a fresh post-cutover operator dir produces a
       `source.json` and completes Phases 0–4 without consulting any
       `<operator>/repos/` path.
-- [ ] A session run with no `[source]` stanza fails fast at preflight
+- [x] A session run with no `[source]` stanza fails fast at preflight
       with a remediation pointer to the migration recipe (no fallback
       to a submodule was ever provided — Phase 3 already pinned this).
 
@@ -480,17 +478,17 @@ In-process / unit (each phase tests its own slice; rolled-up here):
       against a real operator repo remains under the live-smoke bullet
       below).
 
-Live / operator (deferred to a v3 smoke; folds into the rerun of the
-[v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md) post-cutover):
+Live / operator:
 
-- [ ] One end-to-end session on a post-cutover operator dir, including
+- [x] One end-to-end session on a post-cutover operator dir, including
       Phase 5 publish. Confirms `source.json` flows all the way through to
       the operator's published PR body / archive branch / ledger entry.
+      Validated by smoke session `20260611-172955`.
 - [ ] Operator-side migration recipe applied to a real existing operator
       repo without losing any configuration.
 
-Code-side ships as of the Phase 4 commit. Move v3 to `shipped` once both
-live bullets above are checked.
+Code-side ships as of the Phase 4 commit. Move v3 to `shipped` once the
+remaining live bullet above is checked.
 
 ## Non-Goals
 

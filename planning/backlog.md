@@ -221,7 +221,7 @@ same anchor recipe and cache regime.
 - **status:** `backlog`
 - **priority:** `low`
 - **source:** v6 Phase 5 (deferred); see
-  [iterations/v6-observability-surface.md](iterations/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
+  [archive/completed/v6-observability-surface.md](archive/completed/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
 
 **Problem:** Operators have `sbagent history list` + `show` (v6) but no
 single document they can commit / share / paste into a weekly digest.
@@ -291,13 +291,3 @@ live there, not here.
   `0041-migration-recipe-rehearsal`,
   `0042-source-seed-helper` —
   [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
-- `0036-observability-surface` — shipped via
-  [v6: Observability Surface](iterations/v6-observability-surface.md).
-  Phase 5 (markdown report) deferred to
-  [`0043-history-report`](#0043-history-report); pick up after `0033`.
-  (Prologue closed `0021-preflight-v2` as superseded by v3's per-session
-  source clone — see [archive/superseded/0021-preflight-v2.md](archive/superseded/0021-preflight-v2.md).)
-- `0044-evidence-backed-verification` — shipped via
-  [v7: Evidence-Backed Verification](iterations/v7-evidence-backed-verification.md).
-  Also closed `0038-prompt-example-concretization` as a Phase 2 prompt-lint
-  cleanup.

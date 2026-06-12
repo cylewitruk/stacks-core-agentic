@@ -9,20 +9,18 @@ introduced when it removed `--seed-from`.
 > **Status:** in_progress (code-complete; ready for live validation).
 >
 > All four phases are implemented, reviewed, and exercised by unit /
-> integration tests. The remaining work is operator-level live
-> validation, which folds into the same
-> [v1 live Pass 1c smoke](v1-live-pass-1c-smoke.md) v2 and v3 are
-> waiting on: a real-operator-repo migration confirms the recipe
-> converges without configuration loss, and a real bot-fork seed
-> against GitHub confirms `sbagent source seed` works end-to-end
-> against a brand-new fork.
+> integration tests. The remaining work is operator-level live validation:
+> a real-operator-repo migration confirms the recipe converges without
+> configuration loss, and a real bot-fork seed against GitHub confirms
+> `sbagent source seed` works end-to-end against a brand-new fork.
+> Smoke session `20260611-172955` proved the bot-fork publish path by
+> pushing three branches and opening three PRs on `stacks-bench-bot/stacks-core`;
+> the explicit `sbagent source seed` exercise against a fresh fork remains open.
 >
-> v3's code side shipped; live smoke is deferred to a separate v1
-> Pass 1c re-run. v4 is the natural tidy-up plus a single new
-> operator-facing command. Sized small on purpose: the goal is to
-> finalize v3 cleanly without bundling broader publish-flexibility
-> work (per-target remote-install hook, archive audit fields) that
-> belongs in a later themed iteration.
+> v4 is the natural tidy-up plus a single new operator-facing command. Sized
+> small on purpose: the goal is to finalize v3 cleanly without bundling broader
+> publish-flexibility work (per-target remote-install hook, archive audit
+> fields) that belongs in a later themed iteration.
 >
 > Move to `shipped` once the live bullets in Final Validation are
 > checked.
@@ -134,10 +132,10 @@ remain in active source files.
 
 **Acceptance & Validation:**
 
-- [ ] `rg '(v3 Phase|pre-v3|post-cutover)' crates/stacks-bench-agent/src/`
+- [x] `rg '(v3 Phase|pre-v3|post-cutover)' crates/stacks-bench-agent/src/`
       returns only the documented exceptions (Settings.rs `[source]`
       doc, any explicit migration-recipe references).
-- [ ] `just lint` clean; no docstring intra-doc-link rot from the
+- [x] `just lint` clean; no docstring intra-doc-link rot from the
       rewrites.
 
 **Tests:** No new tests; relies on lint + the regex check above.
@@ -342,27 +340,28 @@ subcommand is a small design improvement on top of the v3 cutover.
 
 In-process / unit:
 
-- [ ] Transition marker scrub: regex check returns only documented
+- [x] Transition marker scrub: regex check returns only documented
       exceptions.
-- [ ] `SessionRecord` v3 schema: v1 + v2 + v3 read-compat tests pass;
+- [x] `SessionRecord` v3 schema: v1 + v2 + v3 read-compat tests pass;
       `stacks_core_base_sha` field gone from emitted records.
-- [ ] Migration recipe rehearsal: fixture test passes; v3 iteration
+- [x] Migration recipe rehearsal: fixture test passes; v3 iteration
       doc bullet flipped.
-- [ ] `sbagent source seed`: fixture-only end-to-end test passes;
+- [x] `sbagent source seed`: fixture-only end-to-end test passes;
       `--to` URL validation matches `init --push`.
 
 Live / operator (deferred; not blocking v4 ship):
 
 - [ ] Migration recipe applied to a real existing operator dir
       converges without losing configuration. The fixture-driven
-      rehearsal in Phase 3 is the in-process counterpart; the live
-      bullet here folds into the same v1 Pass 1c re-run track v3 is
-      waiting on.
+      rehearsal in Phase 3 is the in-process counterpart.
 - [ ] `sbagent source seed --from <upstream> --to <bot-fork>`
       against real GitHub successfully seeds the configured branch.
+      Partial smoke evidence: session `20260611-172955` confirmed the bot fork,
+      PAT, branch push, and PR creation path; this bullet still requires the
+      explicit seed command against a fresh destination.
 
-Code-side ships once the four phases land. Live bullets above run on
-the same track as v3's deferred live smoke.
+Code-side shipped. Move v4 to `shipped` once the two live bullets above are
+checked or explicitly deferred to a separate operator-migration / seed pass.
 
 ## Non-Goals
 

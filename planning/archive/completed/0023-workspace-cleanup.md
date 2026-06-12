@@ -1,9 +1,10 @@
-# Design: Workspace Cleanup
+# Completed: Workspace Cleanup
 
 - **id:** `0023-workspace-cleanup`
-- **status:** `planned`
+- **status:** `shipped`
+- **completed:** `2026-06-12`
 - **priority:** `low`
-- **iteration:** [v2-cleanup-and-workspace-hygiene](../iterations/v2-cleanup-and-workspace-hygiene.md)
+- **iteration:** [v2: Cleanup And Workspace Hygiene](v2-cleanup-and-workspace-hygiene.md)
 
 ## Problem
 
@@ -14,7 +15,19 @@
 - Old session workspaces persist indefinitely.
 - Disk exhaustion currently surfaces as confusing clone/build failures.
 
-## Scope
+## Shipped
+
+- `sbagent session bench clean` removes both Phase 1.8 verify artifacts and
+  Phase 3 candidate bench artifacts, while preserving optimizer-owned outputs.
+- Prompt lint validates explicitly marked schema example fences.
+- The existing per-worktree cargo-clean reclamation path is locked in by tests
+  and documented.
+- `sbagent workspace prune` can dry-run or prune archived/aged session
+  workspaces with `.run.pid` liveness protection.
+- Session preflight warns or fails on low free disk depending on
+  `preflight.min_free_gib`.
+
+## Original Scope
 
 1. Lock in the existing per-worktree `cargo clean` reclamation that already
    runs between binary copy and bench invocations
@@ -50,3 +63,12 @@
 - Session startup warns (or fails, when `preflight.min_free_gib` is set) when
   free space is obviously insufficient, with the exact prune invocation in
   the error body.
+
+## Validation
+
+- v2 unit/integration tests cover clean, prompt lint, cargo-clean, prune, and
+  preflight behavior.
+- Smoke session `20260611-172955` published successfully after the default
+  cargo-clean path.
+- `sbagent workspace prune --dry-run --archived-only` listed the archived smoke
+  session as prunable without deleting it.

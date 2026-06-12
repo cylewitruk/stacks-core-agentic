@@ -3,13 +3,11 @@
 Goal: run one real end-to-end session through the current Pass 1c flow and
 collect the first live evidence for prompt quality and artifact handoffs.
 
-> **Status:** blocked (awaiting NVMe-with-chainstate availability).
+> **Status:** shipped.
 >
-> This iteration validates the system as implemented; no engineering
-> work remains to start it. v2, v3, and v4 are all code-complete and
-> route their live-validation bullets through this same smoke. Prompt
-> hardening and other follow-up work should become new numbered
-> backlog items unless it is tiny and directly blocks the smoke.
+> Completed against session `20260611-172955`: full session run, Phase 3.5
+> rerun after narrow fixes, publish to the bot fork, archive to the operator
+> repo, and `history show` / `history list` against the archived ledger.
 
 ## Items
 
@@ -17,7 +15,7 @@ collect the first live evidence for prompt quality and artifact handoffs.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0018-live-pass-1c-smoke` | primary validation slice | blocked |
+| `0018-live-pass-1c-smoke` | primary validation slice | shipped |
 
 ## Why
 
@@ -46,8 +44,8 @@ clean operator/tool state.
 
 **Status:**
 
-- [ ] Run completed
-- [ ] Artifacts reviewed
+- [x] Run completed
+- [x] Artifacts reviewed
 
 ### Phase 2: Target Selection
 
@@ -62,9 +60,9 @@ invocations.
 
 **Status:**
 
-- [ ] Analyzer emits schema-valid v3 `verification_replay.invocations[]`
-- [ ] Merge preserves invocation IDs and expected-signal axes
-- [ ] Artifacts reviewed
+- [x] Analyzer emits schema-valid v3 `verification_replay.invocations[]`
+- [x] Merge preserves invocation IDs and expected-signal axes
+- [x] Artifacts reviewed
 
 ### Phase 3: Baseline Calibration
 
@@ -79,9 +77,9 @@ benchmark runs.
 
 **Status:**
 
-- [ ] Invocation ID set matches each target
-- [ ] Run-id files validate
-- [ ] Artifacts reviewed
+- [x] Invocation ID set matches each target
+- [x] Run-id files validate
+- [x] Artifacts reviewed
 
 ### Phase 4: Optimization And Verification
 
@@ -95,9 +93,9 @@ benchmark runs.
 
 **Status:**
 
-- [ ] Optimizer reports validate
-- [ ] Candidate invocation IDs match baseline invocation IDs
-- [ ] Artifacts reviewed
+- [x] Optimizer reports validate
+- [x] Candidate invocation IDs match baseline invocation IDs
+- [x] Artifacts reviewed
 
 ### Phase 5: Results Analysis And Finalize
 
@@ -112,10 +110,10 @@ fallback math.
 
 **Status:**
 
-- [ ] Results-analyzer emits context-valid `results-analysis.json`
-- [ ] Finalize sources status and `improvement_pct` from verdicts
-- [ ] Publish gate reasons match verdict and confidence floor
-- [ ] Artifacts reviewed
+- [x] Results-analyzer emits context-valid `results-analysis.json`
+- [x] Finalize sources status and `improvement_pct` from verdicts
+- [x] Publish gate reasons match verdict and confidence floor
+- [x] Artifacts reviewed
 
 ## Acceptance
 
@@ -135,5 +133,11 @@ fallback math.
 
 ## Follow-Ups
 
-- `0019-prompt-hardening-live-smoke` if the smoke identifies prompt-quality
-  issues.
+- The smoke found and we fixed two narrow handoff bugs: missing
+  triage-conversation-id should not fail validation, and
+  `compare_spans_between_runs.sql` needed the production
+  `profiler_span_summary.wall_time_us` column.
+- The smoke validated v7's DB-evidence path: the MARF target archived as
+  `mixed` / caveated rather than a binary accept/reject.
+- Remaining prompt calibration from more sessions stays tracked by
+  `0019-prompt-hardening-live-smoke`.
