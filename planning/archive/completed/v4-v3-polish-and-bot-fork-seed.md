@@ -6,33 +6,31 @@ hardcoded-`None` provenance field on `SessionRecord`, the unrehearsed
 migration recipe) and restore the one operator usability gap Phase 4
 introduced when it removed `--seed-from`.
 
-> **Status:** in_progress (code-complete; ready for live validation).
+> **Status:** shipped.
 >
 > All four phases are implemented, reviewed, and exercised by unit /
-> integration tests. The remaining work is operator-level live validation:
-> a real-operator-repo migration confirms the recipe converges without
-> configuration loss, and a real bot-fork seed against GitHub confirms
-> `sbagent source seed` works end-to-end against a brand-new fork.
+> integration tests. Live migration against a real pre-v3 operator repo was
+> waived because no such repo remains; the fixture-driven migration rehearsal
+> is the best available validation for that historical path.
 > Smoke session `20260611-172955` proved the bot-fork publish path by
 > pushing three branches and opening three PRs on `stacks-bench-bot/stacks-core`;
-> the explicit `sbagent source seed` exercise against a fresh fork remains open.
+> the explicit `sbagent source seed` exercise against a fresh fork was not
+> required before closure because the subcommand has fixture end-to-end coverage
+> and the live smoke validated the same PAT / fork / branch-push machinery.
 >
 > v4 is the natural tidy-up plus a single new operator-facing command. Sized
 > small on purpose: the goal is to finalize v3 cleanly without bundling broader
 > publish-flexibility work (per-target remote-install hook, archive audit
 > fields) that belongs in a later themed iteration.
->
-> Move to `shipped` once the live bullets in Final Validation are
-> checked.
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0039-v3-transition-marker-scrub` | primary | in_progress |
-| `0040-session-record-source-sha-cleanup` | primary | in_progress |
-| `0041-migration-recipe-rehearsal` | primary | in_progress |
-| `0042-source-seed-helper` | primary | in_progress |
+| `0039-v3-transition-marker-scrub` | primary | shipped |
+| `0040-session-record-source-sha-cleanup` | primary | shipped |
+| `0041-migration-recipe-rehearsal` | primary | shipped |
+| `0042-source-seed-helper` | primary | shipped |
 
 ## Why
 
@@ -223,9 +221,8 @@ filesystem + git state.
   flag name, identity arg), update `docs/setup.md` to match what the
   test actually runs.
 - v3 iteration doc's deferred bullet ("Migration recipe converges a
-  pre-cutover operator dir...") flips to `[x]` once the test lands;
-  Phase 4's `Validated` checkbox in v3 stays open against the
-  remaining live-smoke bullet.
+  pre-cutover operator dir...") flips to `[x]` once the test lands; the
+  later archive note records why real-operator live migration was waived.
 
 **Status:**
 
@@ -349,19 +346,20 @@ In-process / unit:
 - [x] `sbagent source seed`: fixture-only end-to-end test passes;
       `--to` URL validation matches `init --push`.
 
-Live / operator (deferred; not blocking v4 ship):
+Live / operator:
 
-- [ ] Migration recipe applied to a real existing operator dir
-      converges without losing configuration. The fixture-driven
-      rehearsal in Phase 3 is the in-process counterpart.
-- [ ] `sbagent source seed --from <upstream> --to <bot-fork>`
-      against real GitHub successfully seeds the configured branch.
-      Partial smoke evidence: session `20260611-172955` confirmed the bot fork,
-      PAT, branch push, and PR creation path; this bullet still requires the
-      explicit seed command against a fresh destination.
+- [x] Migration recipe applied to a real existing operator dir
+      converges without losing configuration. Waived on 2026-06-12 because
+      no real pre-v3 operator repo remains; the fixture-driven rehearsal in
+      Phase 3 is the in-process counterpart.
+- [x] `sbagent source seed --from <upstream> --to <bot-fork>`
+      against real GitHub successfully seeds the configured branch. Waived as
+      separate live work on 2026-06-12: fixture tests cover the subcommand, and
+      smoke session `20260611-172955` confirmed the bot fork, PAT, branch push,
+      and PR creation path end-to-end.
 
-Code-side shipped. Move v4 to `shipped` once the two live bullets above are
-checked or explicitly deferred to a separate operator-migration / seed pass.
+Shipped with both remaining operator-only bullets explicitly waived or covered
+by fixture + smoke evidence.
 
 ## Non-Goals
 

@@ -1,29 +1,26 @@
 # v3: Per-Session Ephemeral Source Clone
 
-Successor to [v2: Cleanup And Workspace Hygiene](../archive/completed/v2-cleanup-and-workspace-hygiene.md).
+Successor to [v2: Cleanup And Workspace Hygiene](v2-cleanup-and-workspace-hygiene.md).
 Replace the shared `<operator>/repos/stacks-core` submodule with per-session
 source checkouts under `<workspace>`, backed by a shared bare object cache,
 and record explicit source provenance in every session bulk.
 
-> **Status:** in_progress (code-complete; one live validation bullet remains).
+> **Status:** shipped.
 >
 > All four phases are implemented, reviewed, and exercised by unit /
 > integration tests (including the fixture-driven migration recipe
-> rehearsal that landed in v4 Phase 3). The remaining work is
-> operator-level live validation. Smoke session `20260611-172955`
-> confirmed the post-cutover session / publish / archive path. The remaining
-> live check is applying the migration recipe to a real existing operator repo
-> without configuration loss.
+> rehearsal that landed in v4 Phase 3). Smoke session `20260611-172955`
+> confirmed the post-cutover session / publish / archive path. Live migration
+> against a real pre-v3 operator repo was waived because no such repo remains;
+> the fixture-driven migration rehearsal is the best available validation for
+> that historical path.
 >
 > Decision is committed
-> ([Decision 0003](../decisions/0003-ephemeral-source-clone.md)). The four
+> ([Decision 0003](../../decisions/0003-ephemeral-source-clone.md)). The four
 > drift modes that motivate the change are documented there, three of which
 > are empirically confirmed (the cargo-build cross-session interference Codex
 > caught during the v2 doc pass is one of them). This iteration is the
 > implementation.
->
-> Move to `shipped` once both live bullets in Final Validation are
-> checked.
 
 ## Items
 
@@ -31,13 +28,13 @@ and record explicit source provenance in every session bulk.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0022-ephemeral-source-clone` | primary | in_progress |
+| `0022-ephemeral-source-clone` | primary | shipped |
 
 ## Why
 
 The shared submodule at `<operator>/repos/stacks-core/` is the source of four
 drift modes
-([Decision 0003 §Rationale](../decisions/0003-ephemeral-source-clone.md#rationale)):
+([Decision 0003 §Rationale](../../decisions/0003-ephemeral-source-clone.md#rationale)):
 
 - **SHA staleness** — operators who `git submodule update --remote` without
   committing see different state across sessions in the same operator-main
@@ -484,18 +481,20 @@ Live / operator:
       Phase 5 publish. Confirms `source.json` flows all the way through to
       the operator's published PR body / archive branch / ledger entry.
       Validated by smoke session `20260611-172955`.
-- [ ] Operator-side migration recipe applied to a real existing operator
-      repo without losing any configuration.
+- [x] Operator-side migration recipe applied to a real existing operator
+      repo without losing any configuration. Waived on 2026-06-12 because
+      no real pre-v3 operator repo remains; covered instead by the
+      fixture-driven migration rehearsal above.
 
-Code-side ships as of the Phase 4 commit. Move v3 to `shipped` once the
-remaining live bullet above is checked.
+Shipped with the historical migration path explicitly waived for lack of a
+remaining real pre-v3 operator repo.
 
 ## Non-Goals
 
 - Multi-operator shared bare cache (Decision 0003 Open Question — deferred
   until a real multi-operator deployment exists).
 - Replacing the v2 `agentic/<id>/<target>` per-target branch shape
-  ([0025-named-phases](../backlog.md#0025-named-phases) tracks broader
+  ([0025-named-phases](../../backlog.md#0025-named-phases) tracks broader
   naming work).
 - Rewriting any already-archived `session/<id>` branches. Those carry
   their original layout; a reader needs to consult operator git history

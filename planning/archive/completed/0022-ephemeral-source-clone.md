@@ -1,10 +1,17 @@
 # Design: Per-Session Ephemeral Source Clone
 
 - **id:** `0022-ephemeral-source-clone`
-- **status:** `planned`
+- **status:** `shipped`
 - **priority:** `medium`
-- **iteration:** [v3-ephemeral-source-clone](../iterations/v3-ephemeral-source-clone.md)
-- **decision:** [Decision 0003](../decisions/0003-ephemeral-source-clone.md)
+- **iteration:** [v3-ephemeral-source-clone](v3-ephemeral-source-clone.md)
+- **decision:** [Decision 0003](../../decisions/0003-ephemeral-source-clone.md)
+
+## Shipped
+
+Implemented by v3 and validated by unit/integration tests plus smoke session
+`20260611-172955`. The historical live migration against a real pre-v3
+operator repo was waived because no such repo remains; the fixture-driven
+migration rehearsal remains the validation witness for that path.
 
 ## Problem
 

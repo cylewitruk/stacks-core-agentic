@@ -283,11 +283,4 @@ the token is proven inaccessible to agent tools and logs.
 
 ## Scheduled — see iteration docs
 
-The following item IDs are owned by an active iteration; full specs
-live there, not here.
-
-- `0039-v3-transition-marker-scrub`,
-  `0040-session-record-source-sha-cleanup`,
-  `0041-migration-recipe-rehearsal`,
-  `0042-source-seed-helper` —
-  [v4: v3 Polish + Bot-Fork Seed](iterations/v4-v3-polish-and-bot-fork-seed.md).
+No active iteration currently owns backlog items.
