@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::publish::{
-    CreatePrArgs, GhClient, PublishConfig, PushInputs, push,
+    CreatePrArgs, GhClient, GitPushAuth, PublishConfig, PushInputs, push,
 };
 use stacks_bench_agent::types::SessionId;
 
@@ -42,6 +42,9 @@ enum Call {
         worktree: PathBuf,
         remote: String,
         branch: String,
+        token: String,
+        auth_username: String,
+        auth_url_prefix: String,
     },
     CreatePr {
         repo: String,
@@ -99,13 +102,24 @@ impl GhClient for FakeGh {
             });
         Ok(())
     }
-    fn push_branch(&self, worktree: &Path, remote: &str, branch: &str) -> Result<()> {
+    fn push_branch(
+        &self,
+        worktree: &Path,
+        remote: &str,
+        branch: &str,
+        auth: GitPushAuth<'_>,
+    ) -> Result<()> {
         self.calls
             .lock()
             .push(Call::Push {
                 worktree: worktree.to_path_buf(),
                 remote: remote.to_owned(),
                 branch: branch.to_owned(),
+                token: auth.token.to_owned(),
+                auth_username: auth.auth_username.to_owned(),
+                auth_url_prefix: auth
+                    .auth_url_prefix
+                    .to_owned(),
             });
         Ok(())
     }
@@ -278,6 +292,9 @@ async fn push_creates_pr_for_normal_pr_and_consensus_poc_pr() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("push");
@@ -333,6 +350,31 @@ async fn push_creates_pr_for_normal_pr_and_consensus_poc_pr() {
             .iter()
             .any(|b| b == "agentic/20260507-104400/clarity-cost-recalibration")
     );
+
+    let push_auths: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            Call::Push {
+                remote,
+                token,
+                auth_username,
+                auth_url_prefix,
+                ..
+            } => Some((
+                remote.as_str(),
+                token.as_str(),
+                auth_username.as_str(),
+                auth_url_prefix.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        push_auths
+            .iter()
+            .all(|auth| *auth == ("origin", "secret", "x-access-token", "https://github.com/")),
+        "publish must push branches with PAT-via-extraheader auth; got {push_auths:#?}",
+    );
 }
 
 #[tokio::test]
@@ -348,6 +390,9 @@ async fn push_creates_issue_with_trace_tag_in_body() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .unwrap();
@@ -397,6 +442,9 @@ async fn push_skips_git_ops_when_pr_already_exists() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("push");
@@ -431,6 +479,9 @@ async fn push_skips_issue_when_issue_already_exists() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .unwrap();
@@ -462,6 +513,9 @@ async fn push_writes_publish_feedback_sidecar_with_returned_pr_url() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("push");
@@ -500,6 +554,9 @@ async fn push_writes_publish_feedback_sidecar_with_returned_issue_url() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("push");
@@ -623,6 +680,9 @@ async fn push_resolves_checkouts_through_agent_workspace_root_when_set() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("push must succeed when checkouts staged under workspace root");

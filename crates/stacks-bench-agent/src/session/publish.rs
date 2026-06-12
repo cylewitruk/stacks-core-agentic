@@ -648,19 +648,36 @@ pub struct CreatePrArgs<'a> {
     pub body: &'a str,
 }
 
+/// PAT auth material for the `git push` side of publish.
+///
+/// The GitHub API client and git CLI do not share credentials: Octocrab
+/// consumes the PAT in-process, while `git push` needs an explicit
+/// PAT-via-extraheader overlay for the single push invocation.
+#[derive(Clone, Copy)]
+pub struct GitPushAuth<'a> {
+    pub token: &'a str,
+    pub auth_username: &'a str,
+    pub auth_url_prefix: &'a str,
+}
+
 /// Operations `publish::push` needs. Git ops shell out to `git`; GitHub
 /// API ops go through octocrab in-process.
 ///
-/// The git ops stay sync (they're well-isolated, leverage the user's
-/// existing auth setup, and `git push` over libgit2 means a separate auth
-/// callback rabbit-hole). The GitHub API ops are async because that's
-/// octocrab's surface.
+/// The git ops stay sync (they're well-isolated and reuse the
+/// PAT-via-extraheader helper that `sync` / `archive` use). The GitHub
+/// API ops are async because that's octocrab's surface.
 pub trait GhClient: Send + Sync {
     fn worktree_remote_url(&self, worktree: &Path, remote: &str) -> Result<String>;
     fn switch_branch(&self, worktree: &Path, branch: &str) -> Result<()>;
     fn add_modified(&self, worktree: &Path) -> Result<()>;
     fn commit_if_staged(&self, worktree: &Path, message: &str) -> Result<()>;
-    fn push_branch(&self, worktree: &Path, remote: &str, branch: &str) -> Result<()>;
+    fn push_branch(
+        &self,
+        worktree: &Path,
+        remote: &str,
+        branch: &str,
+        auth: GitPushAuth<'_>,
+    ) -> Result<()>;
 
     fn pr_exists(
         &self,
@@ -733,8 +750,24 @@ impl GhClient for StdGhClient {
         }
         crate::git::run_git(worktree, &["commit", "-m", message])
     }
-    fn push_branch(&self, worktree: &Path, remote: &str, branch: &str) -> Result<()> {
-        crate::git::run_git(worktree, &["push", "-u", remote, branch])
+    fn push_branch(
+        &self,
+        worktree: &Path,
+        remote: &str,
+        branch: &str,
+        auth: GitPushAuth<'_>,
+    ) -> Result<()> {
+        let remote_url = crate::git::get_remote_url(worktree, remote)?;
+        crate::git::validate_auth_url(&remote_url, auth.auth_url_prefix, "`publish.remote`")?;
+        crate::git::push_with_pat(
+            worktree,
+            remote,
+            branch,
+            auth.token,
+            &[],
+            auth.auth_username,
+            auth.auth_url_prefix,
+        )
     }
 
     async fn pr_exists(
@@ -829,11 +862,15 @@ impl GhClient for StdGhClient {
 }
 
 /// Inputs to `publish push`.
+// Do not derive Debug: this struct carries the raw publish PAT in `token`.
 pub struct PushInputs<'a, G: GhClient> {
     pub layout: &'a SessionLayout,
     pub framework: &'a Layout,
     pub config: &'a PublishConfig,
     pub gh: &'a G,
+    pub token: &'a str,
+    pub git_auth_username: &'a str,
+    pub git_auth_url_prefix: &'a str,
 }
 
 #[derive(Debug, Default)]
@@ -1046,9 +1083,16 @@ async fn push_pr<G: GhClient>(
     inputs
         .gh
         .commit_if_staged(&worktree, &commit_msg)?;
-    inputs
-        .gh
-        .push_branch(&worktree, &inputs.config.publish_remote, &branch)?;
+    inputs.gh.push_branch(
+        &worktree,
+        &inputs.config.publish_remote,
+        &branch,
+        GitPushAuth {
+            token: inputs.token,
+            auth_username: inputs.git_auth_username,
+            auth_url_prefix: inputs.git_auth_url_prefix,
+        },
+    )?;
 
     let draft = matches!(target.delivery_mode, DeliveryMode::ConsensusPocPr)
         || inputs

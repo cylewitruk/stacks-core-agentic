@@ -713,12 +713,25 @@ async fn phase_5_publish(env: &PhaseEnv<'_>) -> Result<()> {
     )?;
     let token =
         publish::read_publish_token(&publish_config.publish_token_file).context("Phase 5")?;
+    let git_auth_url_prefix = env
+        .ctx
+        .settings
+        .git
+        .effective_auth_url_prefix()
+        .context("Phase 5: git.auth_url_prefix")?;
     let gh = publish::StdGhClient::from_token(&token)?;
     publish::push(&publish::PushInputs {
         layout: &env.layout,
         framework: &env.ctx.layout,
         config: &publish_config,
         gh: &gh,
+        token: &token,
+        git_auth_username: env
+            .ctx
+            .settings
+            .git
+            .effective_auth_username(),
+        git_auth_url_prefix: &git_auth_url_prefix,
     })
     .await
     .context("Phase 5: push")?;

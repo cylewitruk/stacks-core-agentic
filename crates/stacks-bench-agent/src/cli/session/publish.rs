@@ -68,12 +68,22 @@ pub async fn run(args: PublishArgs, ctx: &CliContext, session_id: &SessionId) ->
             .map(|p| p as &std::path::Path),
     )?;
     let token = publish::read_publish_token(&publish_config.publish_token_file)?;
+    let git_auth_url_prefix = ctx
+        .settings
+        .git
+        .effective_auth_url_prefix()?;
     let gh = publish::StdGhClient::from_token(&token)?;
     let push_outputs = publish::push(&publish::PushInputs {
         layout: &layout,
         framework: &ctx.layout,
         config: &publish_config,
         gh: &gh,
+        token: &token,
+        git_auth_username: ctx
+            .settings
+            .git
+            .effective_auth_username(),
+        git_auth_url_prefix: &git_auth_url_prefix,
     })
     .await
     .context("publish push")?;

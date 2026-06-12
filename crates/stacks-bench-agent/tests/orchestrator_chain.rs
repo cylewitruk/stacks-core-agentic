@@ -22,7 +22,7 @@ use stacks_bench_agent::session::bench::BenchClient;
 use stacks_bench_agent::session::finalize::{FinalizeInputs, finalize};
 use stacks_bench_agent::session::optimizers::{self, GitCheckoutManager};
 use stacks_bench_agent::session::publish::{
-    self, CreatePrArgs, GenerateInputs, GhClient, PublishConfig, PushInputs,
+    self, CreatePrArgs, GenerateInputs, GhClient, GitPushAuth, PublishConfig, PushInputs,
 };
 use stacks_bench_agent::settings::Settings;
 use stacks_bench_agent::types::SessionId;
@@ -286,7 +286,7 @@ impl GhClient for ChainGh {
             .push(GhCall::Commit);
         Ok(())
     }
-    fn push_branch(&self, _: &Path, _: &str, branch: &str) -> Result<()> {
+    fn push_branch(&self, _: &Path, _: &str, branch: &str, _: GitPushAuth<'_>) -> Result<()> {
         self.calls
             .lock()
             .push(GhCall::Push(branch.to_owned()));
@@ -548,6 +548,9 @@ async fn post_merge_chain_optimizers_finalize_publish() {
         framework: &layout,
         config: &cfg,
         gh: &gh,
+        token: "secret",
+        git_auth_username: "x-access-token",
+        git_auth_url_prefix: "https://github.com/",
     })
     .await
     .expect("publish::push");
