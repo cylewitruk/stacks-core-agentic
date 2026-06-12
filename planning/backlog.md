@@ -249,6 +249,38 @@ richer than the current per-session views.
 the four sections above against a fixture ledger.
 `--out reports/<iso-week>.md` writes to disk; stdout stays empty.
 
+<a id="0045-ephemeral-codex-runtime-state"></a>
+
+### Ephemeral Codex Runtime State
+
+- **id:** `0045-ephemeral-codex-runtime-state`
+- **status:** `backlog`
+- **priority:** `medium`
+
+**Problem:** Nested, Codex-driven smoke reruns can fail when sbagent-launched
+Codex subprocesses try to write runtime state under `~/.codex/`, which is
+outside the sandbox grant. Granting `~/.codex/` is the wrong fix: that directory
+also contains auth/config material and must remain inaccessible to phase agents.
+
+**Scope:** Investigate and implement a way for sbagent-launched Codex
+subprocesses to keep writable runtime state under a session-scoped scratch path,
+for example `<session>/scratch/codex-state/`, without exposing `~/.codex/` or
+Codex auth material to agent-executed shell commands. Confirm whether the Codex
+CLI can split mutable runtime state from auth/config; if it cannot, document the
+safe fallback for nested supervised smoke runs.
+
+**Acceptance:**
+
+- Inner Codex invocations do not attempt to write `~/.codex/state_*.sqlite`.
+- Phase-agent commands cannot read `~/.codex/auth.json`.
+- Phase-agent commands cannot print Codex auth secrets from inherited env.
+- Nested Codex-driven reruns either work without escalation or fail with a clear
+  diagnostic that preserves the secret boundary.
+
+**Deferred / non-goals:** Do not add `~/.codex/` to `codex.extra_writable_roots`
+or per-phase sandbox grants. Do not move auth tokens into session scratch unless
+the token is proven inaccessible to agent tools and logs.
+
 ## Scheduled — see iteration docs
 
 The following item IDs are owned by an active iteration; full specs
