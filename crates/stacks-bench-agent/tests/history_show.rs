@@ -52,13 +52,17 @@ fn exec_show(config_path: &Path, session_id: &str) -> Output {
 /// - Three phase durations with a 1200:295:0.5 ratio. The bar-chart acceptance
 ///   check asserts the optimize bar is roughly 4x the baseline bar; 0.5s
 ///   renders as `< 1s`.
-/// - Three targets covering accepted (with bench + pr_url), rejected (bench, no
-///   urls), and aborted (no bench, no urls).
+/// - Four targets covering accepted (with bench + pr_url), accepted-with-mixed
+///   reason, rejected (bench, no urls), and aborted (no bench, no urls).
 fn fixture_session_line() -> String {
     let targets = [
         // Accepted target with bench: improvement +5.32%, candidate
         // 135s wall (= 2:15), pr_url set.
         r#"{"id":"target-1","family_id":"f","bucket":"block_processing","delivery_mode":"normal_pr","status":"accepted","pr_url":"https://example.com/pr/1","bench":{"baseline_run_ids":[1],"candidate_run_ids":[2],"baseline_total_us":140000000,"candidate_total_us":135000000,"improvement_pct":5.32,"passes_noise_floor":true}}"#,
+        // Mixed verdicts archive as accepted (they shipped) but carry
+        // the verdict-level caveat in reason_code. `history show`
+        // surfaces that nuance in the status cell.
+        r#"{"id":"target-mixed","family_id":"f","bucket":"block_processing","delivery_mode":"normal_pr","status":"accepted","reason_code":"mixed: magnitude below expected band","pr_url":"https://example.com/pr/2","bench":{"baseline_run_ids":[1],"candidate_run_ids":[4],"baseline_total_us":65000000,"candidate_total_us":64000000,"improvement_pct":1.54,"passes_noise_floor":true}}"#,
         // Rejected: improvement -1.25%, candidate 90s wall (= 1:30),
         // no urls.
         r#"{"id":"target-2","family_id":"f","bucket":"block_processing","delivery_mode":"normal_pr","status":"rejected","status_stage":"bench","bench":{"baseline_run_ids":[1],"candidate_run_ids":[3],"baseline_total_us":89000000,"candidate_total_us":90000000,"improvement_pct":-1.25,"passes_noise_floor":false}}"#,
@@ -85,10 +89,11 @@ Phase durations
   triage       0.50s  < 1s
 
 Targets
-  id        status    delivery_mode  improvement_pct  bench  url
-  target-1  accepted  normal_pr      +5.32%           2:15   https://example.com/pr/1
-  target-2  rejected  normal_pr      -1.25%           1:30   -
-  target-3  aborted   normal_pr      -                -      -
+  id            status    delivery_mode  improvement_pct  bench  url
+  target-1      accepted  normal_pr      +5.32%           2:15   https://example.com/pr/1
+  target-mixed  mixed     normal_pr      +1.54%           1:04   https://example.com/pr/2
+  target-2      rejected  normal_pr      -1.25%           1:30   -
+  target-3      aborted   normal_pr      -                -      -
 "#;
 
 fn assert_success(out: &Output) {

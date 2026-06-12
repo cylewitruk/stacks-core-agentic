@@ -614,13 +614,7 @@ struct TargetRow {
 }
 
 fn build_target_row(t: &TargetRecord) -> TargetRow {
-    let status = match t.status {
-        TargetStatus::Accepted => "accepted",
-        TargetStatus::Rejected => "rejected",
-        TargetStatus::Aborted => "aborted",
-        TargetStatus::Failed => "failed",
-    }
-    .to_owned();
+    let status = target_status_text(t).to_owned();
     let delivery_mode = match t.delivery_mode {
         DeliveryMode::NormalPr => "normal_pr",
         DeliveryMode::ConsensusPocPr => "consensus_poc_pr",
@@ -648,6 +642,22 @@ fn build_target_row(t: &TargetRecord) -> TargetRow {
         improvement_pct,
         bench: bench_wall,
         url,
+    }
+}
+
+fn target_status_text(t: &TargetRecord) -> &'static str {
+    if t.status == TargetStatus::Accepted
+        && t.reason_code
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("mixed:"))
+    {
+        return "mixed";
+    }
+    match t.status {
+        TargetStatus::Accepted => "accepted",
+        TargetStatus::Rejected => "rejected",
+        TargetStatus::Aborted => "aborted",
+        TargetStatus::Failed => "failed",
     }
 }
 
