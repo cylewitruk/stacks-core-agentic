@@ -145,7 +145,7 @@ If the paired comparisons are inconclusive, contradictory, or would force
 `confidence = medium | low`, run a small number of additional read-only DB
 queries before finalizing. Use this to validate the chosen verdict, not to
 query until a preferred verdict looks stronger. Keep the investigation
-targeted; cap it at five additional queries unless you justify the overage in
+targeted; cap it at ten additional queries unless you justify the overage in
 `observations`:
 
 - inspect nearby spans, parent/child spans, or same-context sibling spans;
