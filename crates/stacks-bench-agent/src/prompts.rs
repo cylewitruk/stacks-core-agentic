@@ -1046,6 +1046,79 @@ mod tests {
         );
     }
 
+    /// v8 Phase 2 contract: the PR-writer prompt pins per-invocation table
+    /// vocabulary (boolean → `yes`/`no`, no `true`/`false` drift) AND
+    /// frames `mixed` verdicts as shippable-with-caveats — NOT a clean
+    /// accept, NOT a near-rejection.
+    #[test]
+    fn pr_writer_prompt_pins_vocabulary_and_mixed_verdict_framing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+        let p = PrWriterPrompt::synthetic_for_lint();
+        let rendered = render("pr-writer", &p, tmp.path()).expect("render");
+
+        // Per-invocation table vocab: pin the canonical yes/no rendering
+        // for the matches_expected_signal boolean so the smoke's
+        // yes/no/true drift can't recur.
+        for expected in [
+            "Matches expected signal",
+            "the literal string `yes` (true)",
+            "or `no` (false)",
+            "never `true`/`false`",
+        ] {
+            assert!(rendered.contains(expected), "missing vocab substring `{expected}`");
+        }
+
+        // Mixed verdict framing: explicit "shippable with caveats", not a
+        // clean accept and not a near-rejection.
+        for expected in [
+            "verdict = \"mixed\"",
+            "shippable with caveats",
+            "ship with awareness",
+            "verdict is mixed",
+        ] {
+            assert!(rendered.contains(expected), "missing mixed-framing substring `{expected}`");
+        }
+
+        // Anti-pattern guards: the smoke's three drift cases.
+        assert!(
+            !rendered.contains("`true` or `false`"),
+            "vocab drift: PR writer should pin yes/no, not pass through booleans"
+        );
+    }
+
+    /// v8 Phase 1 contract: the results-analyzer prompt carries the smoke-
+    /// session calibration anchor for the canonical mixed/medium case AND
+    /// states the estimate-gap policy (overshoots stay `high`, gaps go to
+    /// `caveats` not auto-demotion).
+    #[test]
+    fn results_analyzer_prompt_carries_v8_calibration_anchor_and_estimate_gap_policy() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+        let p = ResultsAnalyzerPrompt::synthetic_for_lint();
+        let rendered = render("results-analyzer", &p, tmp.path()).expect("render");
+
+        // MARF calibration anchor — the smoke session's mixed/medium case.
+        for expected in [
+            "Calibration anchor",
+            "MARF deferred-seal",
+            "20260611-172955",
+            "matches_expected_signal: false",
+        ] {
+            assert!(rendered.contains(expected), "missing anchor substring `{expected}`");
+        }
+
+        // Estimate-gap policy: overshoots stay `high`, gaps go to caveats.
+        for expected in [
+            "Estimate gaps are caveats, not confidence demotions",
+            "do not demote to `medium` solely because",
+            "Overshooting is",
+            "a clean win",
+        ] {
+            assert!(rendered.contains(expected), "missing policy substring `{expected}`");
+        }
+    }
+
     /// Every bundled template parses + renders cleanly under MiniJinja
     /// strict mode against its struct's field set. Replaces the previous
     /// Askama compile-time drift check; same coverage, now at test time.

@@ -30,4 +30,4 @@ operator `sessions.jsonl` ledger row, and rendered through `history show`.
 - SQL column drift and the optional triage conversation-id validator mismatch
   were fixed immediately.
 - Additional prompt calibration remains under
-  [`0019-prompt-hardening-live-smoke`](../../iterations/v8-smoke-informed-prompt-hardening.md).
+  [`0019-prompt-hardening-live-smoke`](v8-smoke-informed-prompt-hardening.md).

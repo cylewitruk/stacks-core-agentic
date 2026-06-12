@@ -421,7 +421,7 @@ v2 is shipped.
   ([0028-optimizer-memory](../../backlog.md#0028-optimizer-memory),
   [0033-maintain-command](../../backlog.md#0033-maintain-command)).
 - Schema or agent-prompt prose rewrites driven by the live smoke
-  ([0019-prompt-hardening-live-smoke](../../iterations/v8-smoke-informed-prompt-hardening.md)).
+  ([0019-prompt-hardening-live-smoke](v8-smoke-informed-prompt-hardening.md)).
 
 ## Follow-Ups
 

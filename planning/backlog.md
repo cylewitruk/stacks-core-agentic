@@ -269,8 +269,4 @@ making results-analyzer confidence depend on forecast accuracy.
 
 ## Scheduled — see iteration docs
 
-The following item IDs are owned by an active iteration; full specs
-live there, not here.
-
-- `0019-prompt-hardening-live-smoke` —
-  [v8: Smoke-Informed Prompt Hardening](iterations/v8-smoke-informed-prompt-hardening.md).
+No active iteration currently owns backlog items.

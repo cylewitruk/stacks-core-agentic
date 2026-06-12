@@ -101,13 +101,42 @@ Pick exactly one `verdict`:
 
 And one `confidence`:
 
-- **`high`** — strong evidence: direction matches across all invocations,
-  magnitudes within (or close to) tolerance, variance bands tight.
-- **`medium`** — mostly aligned but with notable caveats — borderline
-  magnitude, or one invocation noisier than the others.
-- **`low`** — weak evidence — possibly noise, possibly real but unclear.
-  Surface what would resolve it (more reps, different sample set, etc.) in
-  the caveats.
+- **`high`** — direction matches every invocation; mechanism evidence is
+  clean and consistent. Magnitudes within tolerance OR overshooting on the
+  favorable side. Variance bands tight. **A magnitude overshoot is a clean
+  win — do not demote to `medium` solely because the analyzer's
+  `estimate_pct` was low.** Record the estimate gap as a caveat instead so
+  the analyzer side can recalibrate future estimates.
+- **`medium`** — mostly aligned but with notable caveats: borderline
+  magnitude, one invocation noisier than the others, per-block / per-tx
+  movement uneven, OR the mechanism moved but the macro effect is smaller
+  than predicted (the `mixed` shape).
+- **`low`** — weak evidence after the additional-investigation cap is
+  exhausted: possibly noise, possibly real but unclear. Surface what would
+  resolve it (more reps, different sample set, etc.) in the caveats.
+
+**Calibration anchor — MARF deferred-seal mixed/medium (smoke session
+`20260611-172955`).** Analyzer expected `commit_time` to improve by
+`8.0% ± 5.0%` on the hot finalize replay. Measured: commit time `+1.004%`
+per block, with per-block movement ranging from `+6.696%` to `-2.806%`. The
+mechanism span `calculate_node_hashes` improved `5.174%` exclusive wall —
+the mechanism moved as predicted. But the macro commit-time effect fell
+below the tolerance band AND per-block movement was uneven, so
+`matches_expected_signal: false`, verdict `mixed`, confidence `medium`.
+Caveats named both the per-block range and the band gap. This is the
+canonical "mechanism moved but magnitude/distribution disagreed" case —
+not a clean accept, not a rejection.
+
+**Estimate gaps are caveats, not confidence demotions.** When measured
+magnitude clears the tolerance band on the favorable side (e.g. `+27%`
+measured against a `+6% ± 4%` estimate), the verdict shape is still set by
+whether direction matches AND mechanism evidence is clean. Overshooting is
+a clean win — keep confidence at `high` and note the estimate gap in
+`caveats` so the analyzer side can recalibrate. The same applies to
+undershoots that still clear the band on the favorable side. Reserve
+`medium` for genuine evidence-quality caveats (per-block variance, span
+contradictions, sample-count concerns), not for forecast-vs-reality
+gaps.
 
 # Per-invocation reasoning
 
@@ -133,8 +162,20 @@ For each invocation in `verification_replay.invocations[]`:
    - Direction mismatch → `false`. Always.
    - Direction match, magnitude within `tolerance_pct` of `estimate_pct`
      (when both provided) → `true`.
-   - Direction match, magnitude outside tolerance → judgment call. Default
-     `false` and explain in `observations`.
+   - Direction match, **favorable** overshoot above the tolerance band
+     (e.g. `+27%` measured against a `+6% ± 4%` estimate) WITH clean
+     mechanism evidence → `true`. Overshoot alone does not disqualify a
+     match; record the estimate gap as a caveat. This is the per-invocation
+     analogue of the high-confidence rule for clean wins.
+   - Direction match, magnitude **below** the tolerance band → judgment
+     call. Default `false` when the per-invocation shape is uneven, the
+     mechanism span moved less than expected, or block / tx variance
+     contradicts the macro number. Default `true` only if the mechanism
+     moved cleanly and the gap is small.
+   - Direction match, per-invocation shape contradicts the macro number
+     (uneven block/tx movement, per-row regressions inside an overall win)
+     → judgment call. Default `false` and explain in `observations`; this
+     is the MARF-style mixed case.
 5. Surface noteworthy `observations` per invocation — DB deltas on the
    analyzer evidence, suspected-span movement, variance bands visible in the
    query outputs, and surprising cross-span compensation.

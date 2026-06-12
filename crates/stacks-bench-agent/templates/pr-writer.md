@@ -78,11 +78,38 @@ If `{{ delivery_mode }}` is `consensus_poc_pr`, the framing in your PR body MUST
   `{{ results_analysis_json }}` verbatim — that prose is the canonical
   Result section the results-analyzer agent committed to (it reads
   per-invocation traces; you do not). Append the per-invocation table
-  from the verdict's `per_invocation[]` (label, baseline run id,
-  candidate run id, measured %, matches_expected_signal) for the
-  reviewer. If the verdict carries non-empty `caveats[]`, list them
-  as a bullet group under a `**Caveats.**` line at the end of the
-  section. In `Validation`, summarize tests/verification from
+  from the verdict's `per_invocation[]` for the reviewer. Render each
+  row with these columns in order: `Invocation`, `Baseline run`,
+  `Candidate run`, `Measured`, `Matches expected signal`. Render the
+  `matches_expected_signal` boolean as the literal string `yes` (true)
+  or `no` (false) — never `true`/`false`, never prose. Use the same
+  vocabulary across every row and every PR so reviewers reading
+  multiple PRs see one consistent rendering.
+
+  **Verdict framing.** Read `verdict` from the results-analysis JSON and
+  frame the Summary + Benchmark result sections accordingly:
+
+  - `verdict = "accepted"` (clean win): write a concise, confident
+    Summary. Don't pre-emptively load caveats the verdict didn't
+    record. If `caveats[]` is empty, omit the `**Caveats.**` block
+    entirely.
+  - `verdict = "mixed"` (shippable with caveats): the change IS
+    shippable — frame it that way, not as a near-rejection. The
+    Summary section MUST state, in one short sentence, that the
+    verdict is mixed and what the central caveat is (e.g. "Mixed
+    verdict: mechanism moved as predicted but the macro effect fell
+    below the expected band; see Caveats below."). The Summary should
+    read as "ship with awareness", not "hold for rejection". The
+    `**Caveats.**` block at the end of `Benchmark result` lists every
+    entry from `caveats[]` verbatim. Do NOT downgrade the title to a
+    softer verb like `wip:` or `rfc:` — `perf:` still applies.
+  - `verdict = "rejected"` is unreachable for `normal_pr` (the
+    publisher gates publish on a shippable verdict + confidence floor).
+    If you encounter it, hold and do not write a PR.
+
+  If the verdict carries non-empty `caveats[]`, list them as a bullet
+  group under a `**Caveats.**` line at the end of `Benchmark result`.
+  In `Validation`, summarize tests/verification from
   `implementation.md` without inventing anything.
 - If `{{ results_analysis_json }}` is `{}` (no verdict was produced
   for this `normal_pr` target — typically because Phase 3.5 was
