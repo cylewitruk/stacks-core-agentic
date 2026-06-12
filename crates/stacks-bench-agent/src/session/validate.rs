@@ -55,7 +55,6 @@ pub fn validate(layout: &SessionLayout) -> Result<ValidationReport> {
     // useful for debugging but not a semantic artifact, so it's not
     // in the required-file check.
     require_non_empty(&layout.candidates_json(), "triage/candidates.json", &mut report);
-    require_non_empty(&layout.triage_conversation_id(), "triage/conversation-id", &mut report);
 
     // Phase 1.7: merge.
     require_non_empty(

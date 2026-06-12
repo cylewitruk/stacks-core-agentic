@@ -27,7 +27,7 @@ WITH span_rows AS (
     ps.context,
     ps.name,
     SUM(pss.self_wall_time_us) AS self_wall_us,
-    SUM(pss.total_wall_time_us) AS total_wall_us,
+    SUM(pss.wall_time_us) AS total_wall_us,
     SUM(pss.call_count) AS calls
   FROM profiler_span_summary AS pss
   JOIN profiler_span AS ps ON ps.id = pss.profiler_span_id

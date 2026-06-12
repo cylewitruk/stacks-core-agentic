@@ -83,6 +83,26 @@ fn validate_detects_missing_summary() {
     );
 }
 
+#[test]
+fn validate_allows_missing_triage_conversation_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id: SessionId = "20260507-104400"
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let layout = stage_fixture(&tmp, &id);
+
+    finalize(&FinalizeInputs { layout: &layout }).expect("finalize");
+    std::fs::remove_file(layout.triage_conversation_id()).unwrap();
+
+    let report = validate::validate(&layout).expect("validate runs");
+    assert!(
+        report.ok(),
+        "triage conversation id is optional debug metadata; missing: {:#?}",
+        report.missing
+    );
+}
+
 /// `read_optimization_targets` runs `OptimizationTargets::validate`
 /// inline (which fans out to `MergedTarget::validate` and through to
 /// `VerificationReplay::validate`). A hand-staged recipe with an
