@@ -185,8 +185,8 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
     // older than the workspace build) abort before any heavy phase
     // touches disk or the bench DB.
     if !args.skip_preflight {
-        let findings =
-            crate::session::preflight::collect_findings(ctx).context("session-start preflight")?;
+        let findings = crate::session::preflight::collect_findings_for_session_run(ctx)
+            .context("session-start preflight")?;
         crate::session::preflight::report(&findings)?;
     }
 

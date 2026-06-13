@@ -305,6 +305,26 @@ branch_prefix = "agentic"
 
 
 # ---------------------------------------------------------------------------
+# [autonomy] — safety gates for unattended session starts.
+# Section is OPTIONAL. These gates block `sbagent session run` before expensive
+# work starts; `sbagent maintain` remains allowed while paused.
+# ---------------------------------------------------------------------------
+
+# [autonomy]
+# Block new sessions when this many bot PRs are currently open according to
+# sessions.jsonl + maintain.jsonl.
+# max_open_agent_prs = 10
+
+# Block new sessions when the most recent archived session is newer than this
+# threshold.
+# min_session_interval_hours = 144
+
+# Automatically write .sbagent/pause after this many completed sessions in a
+# row produce zero accepted targets. Set to 0 to disable.
+# zero_accepted_circuit_breaker = 3
+
+
+# ---------------------------------------------------------------------------
 # [preflight] — session-start safety floors.
 # ---------------------------------------------------------------------------
 

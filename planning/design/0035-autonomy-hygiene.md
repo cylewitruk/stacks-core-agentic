@@ -1,9 +1,10 @@
 # Design: Autonomy Hygiene
 
 - **id:** `0035-autonomy-hygiene`
-- **status:** `planned`
+- **status:** `shipped`
 - **priority:** `medium`
-- **iteration:** [v11: Autonomy Safety + Scheduled Maintain](../iterations/v11-autonomy-safety-and-maintain-schedule.md)
+- **iteration:** [v11: Autonomy Safety + Scheduled Maintain](../archive/completed/v11-autonomy-safety-and-maintain-schedule.md)
+- **completed:** [0035 archive note](../archive/completed/0035-autonomy-hygiene.md)
 - **source:** [assets/autonomous-roadmap.md](../../assets/autonomous-roadmap.md)
 
 ## Problem

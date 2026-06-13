@@ -84,6 +84,11 @@ pub struct Settings {
     #[serde(default)]
     pub maintain: MaintainSettings,
 
+    /// Unattended-run safety gates. These are checked before
+    /// expensive session work starts.
+    #[serde(default)]
+    pub autonomy: AutonomySettings,
+
     /// Upstream source repo we're optimizing — URL, branch, optional
     /// stable cache id. Required by every session phase that needs
     /// source (Phase 0a build, Phase 2 per-target clones, finalize +
@@ -258,6 +263,48 @@ impl Default for MaintainSettings {
             secondary_rate_limit_floor_pct: default_maintain_secondary_rate_limit_floor_pct(),
         }
     }
+}
+
+/// `[autonomy]` — safety gates for unattended session starts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutonomySettings {
+    /// Block `sbagent session run` when this many bot PRs are open.
+    /// Uses archived `pr_url`s plus `maintain.jsonl` lifecycle events.
+    #[serde(default = "default_autonomy_max_open_agent_prs")]
+    pub max_open_agent_prs: usize,
+
+    /// Minimum age of the most recent archived session before another
+    /// session may start.
+    #[serde(default = "default_autonomy_min_session_interval_hours")]
+    pub min_session_interval_hours: u64,
+
+    /// Pause automatically after this many completed sessions in a
+    /// row produce zero accepted targets. `0` disables the breaker.
+    #[serde(default = "default_autonomy_zero_accepted_circuit_breaker")]
+    pub zero_accepted_circuit_breaker: usize,
+}
+
+impl Default for AutonomySettings {
+    fn default() -> Self {
+        Self {
+            max_open_agent_prs: default_autonomy_max_open_agent_prs(),
+            min_session_interval_hours: default_autonomy_min_session_interval_hours(),
+            zero_accepted_circuit_breaker: default_autonomy_zero_accepted_circuit_breaker(),
+        }
+    }
+}
+
+fn default_autonomy_max_open_agent_prs() -> usize {
+    10
+}
+
+fn default_autonomy_min_session_interval_hours() -> u64 {
+    144
+}
+
+fn default_autonomy_zero_accepted_circuit_breaker() -> usize {
+    3
 }
 
 fn default_maintain_stale_after_days() -> u64 {
@@ -1270,6 +1317,57 @@ mod tests {
                 .maintain
                 .secondary_rate_limit_floor_pct,
             25
+        );
+    }
+
+    #[test]
+    fn autonomy_settings_defaults_and_overrides_parse() {
+        let defaults: Settings = toml::from_str("").expect("empty settings parse");
+        assert_eq!(
+            defaults
+                .autonomy
+                .max_open_agent_prs,
+            10
+        );
+        assert_eq!(
+            defaults
+                .autonomy
+                .min_session_interval_hours,
+            144
+        );
+        assert_eq!(
+            defaults
+                .autonomy
+                .zero_accepted_circuit_breaker,
+            3
+        );
+
+        let custom: Settings = toml::from_str(
+            r#"
+            [autonomy]
+            max_open_agent_prs = 5
+            min_session_interval_hours = 72
+            zero_accepted_circuit_breaker = 2
+            "#,
+        )
+        .expect("custom autonomy settings parse");
+        assert_eq!(
+            custom
+                .autonomy
+                .max_open_agent_prs,
+            5
+        );
+        assert_eq!(
+            custom
+                .autonomy
+                .min_session_interval_hours,
+            72
+        );
+        assert_eq!(
+            custom
+                .autonomy
+                .zero_accepted_circuit_breaker,
+            2
         );
     }
 

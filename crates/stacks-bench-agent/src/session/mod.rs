@@ -5,6 +5,7 @@
 
 pub mod analyzers;
 pub mod archive;
+pub mod autonomy;
 pub mod baseline;
 pub mod bench;
 pub mod bench_experiments;

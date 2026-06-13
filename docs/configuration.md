@@ -22,7 +22,7 @@ The annotated template is checked in at
 to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
 stanzas (`[layout]`, `[source]`, `[stacks_bench]`, `[triage]`,
 `[analyzer]`, `[optimizer]`, `[results_analysis]`, `[codex]`,
-`[publish]`, `[maintain]`, `[preflight]`, `[git]`); each stanza's fields are
+`[publish]`, `[maintain]`, `[autonomy]`, `[preflight]`, `[git]`); each stanza's fields are
 documented inline in that file. Notable Pass 1c knobs:
 
 - `analyzer.max_invocations_per_target` (default `8`, schema hard max
@@ -36,6 +36,12 @@ documented inline in that file. Notable Pass 1c knobs:
 - `maintain.stale_after_days` (default `14`) and
   `maintain.secondary_rate_limit_floor_pct` (default `10`) — thresholds for
   `sbagent maintain` PR/issue lifecycle reconciliation.
+- `autonomy.max_open_agent_prs` (default `10`),
+  `autonomy.min_session_interval_hours` (default `144`), and
+  `autonomy.zero_accepted_circuit_breaker` (default `3`) — fail-closed
+  session-start gates for unattended operation. They block `sbagent session run`
+  before source materialization / baseline work; `sbagent maintain` remains
+  allowed while paused.
 - `preflight.min_free_gib` (default unset / `None`) — session-start
   free-disk floor on the filesystem holding
   `layout.agent_workspace_root`. When set, the preflight emits a hard

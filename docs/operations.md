@@ -41,6 +41,41 @@ error rather than silently falling back to a different auth path.
 fails on schemas / queries drift and warns on prompt drift. Running
 sync without checking first is fine; it's idempotent.
 
+## Scheduled maintain in GitHub Actions
+
+The tool repo ships a template at
+`assets/operator-templates/.github/workflows/sbagent-maintain.yml`.
+Copy it into the operator repo as
+`<operator>/.github/workflows/sbagent-maintain.yml`; workflows in this
+tooling repo cannot see the operator ledgers or secrets.
+
+The copied workflow runs `sbagent maintain` only; it never starts
+benchmark sessions. It triggers on manual dispatch, a conservative
+cron, and pushes that update `sessions.jsonl`. It has a shared
+`sbagent-autonomy` concurrency group and a job-level loop guard:
+commits authored by `stacks-bench-bot` do not recursively trigger more
+work.
+
+Configure these repository secrets in the operator repo before enabling
+the schedule:
+
+- `SBAGENT_CONFIG_TOML` — an Actions-specific config. Its
+  `publish.token_file` should point at
+  `/home/runner/.config/sbagent/gh_token`.
+- `STACKS_BENCH_BOT_PAT` — the bot PAT written to that token file at
+  runtime.
+
+Minimum PAT permissions:
+
+- Contents: read/write, for the `maintain.jsonl` commit and push.
+- Pull requests: read, for PR lifecycle queries.
+
+Do not grant merge, close, comment, or label scopes for this workflow.
+If either required secret is missing, the template exits with a notice
+instead of failing the operator repo. Run the first `workflow_dispatch`
+manually and expect either a short table of appended maintenance events
+or `no maintenance events; all observed artifacts terminal`.
+
 ## Launch a coordinator session in tmux
 
 ```bash
@@ -409,6 +444,45 @@ persistent SQLite benchmark DB.
 Override the directory via `layout.lock_dir` in `config.toml`. Hand-running
 a benchmark outside `sbagent`? Use `flock` against the same path so
 you serialize against any concurrent `sbagent session run`.
+
+## Local scheduled sessions
+
+GitHub-hosted CI is not the current substrate for `sbagent session run`.
+Benchmark sessions need a dedicated host with the chainstate source,
+shadow root, benchmark DB, disk, and CPU budget configured up front.
+Use GitHub Actions for `sbagent maintain`; use local cron, launchd, or
+systemd timers for benchmark sessions.
+
+Before enabling a timer on a benchmark host:
+
+```bash
+sbagent -c ~/.config/sbagent/config.toml check --with-publish
+sbagent -c ~/.config/sbagent/config.toml maintain --dry-run
+```
+
+Then run one supervised `sbagent session run` manually on that host. Only
+enable the timer after the preflight gates, publish wiring, archive path,
+and maintain reconciliation all behave as expected.
+
+The timer command should serialize against the same lockfiles `sbagent`
+uses internally. If either lock is already held, skip the run and let the
+next timer tick try again:
+
+```bash
+OPERATOR_DIR="/path/to/stacks-core-autopilot"
+CONFIG="$HOME/.config/sbagent/config.toml"
+LOCK_DIR="$OPERATOR_DIR/data/run"
+
+flock -n "$LOCK_DIR/benchmark.lock" \
+  flock -n "$LOCK_DIR/test.lock" \
+  sbagent -c "$CONFIG" session run --publish --archive
+```
+
+The safety gates remain the source of truth. A committed
+`$OPERATOR_DIR/.sbagent/pause` blocks new `session run` starts but still
+allows `sbagent maintain` to keep PR lifecycle state fresh. The
+`[autonomy]` queue, cadence, and zero-accepted circuit-breaker settings
+also run before source materialization or benchmark work starts.
 
 ## Hand-running stacks-bench
 

@@ -54,6 +54,8 @@ fn maintain_all_terminal_artifacts_exits_zero_without_publish_token() {
     let tmp = tempfile::tempdir().unwrap();
     let operator = tmp.path().join("operator");
     std::fs::create_dir_all(&operator).unwrap();
+    std::fs::create_dir_all(operator.join(".sbagent")).unwrap();
+    std::fs::write(operator.join(".sbagent/pause"), "paused for test\n").unwrap();
     let config_path = write_config(tmp.path(), &operator);
 
     write_jsonl(

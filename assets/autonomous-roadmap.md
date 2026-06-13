@@ -239,21 +239,25 @@ Status: `[x]` · Shipped in
 
 ### 3B. GitHub Actions wiring
 
-Status: `[ ]` · Planned in
-[`v11-autonomy-safety-and-maintain-schedule`](../planning/iterations/v11-autonomy-safety-and-maintain-schedule.md)
+Status: `[x]` · Shipped in
+[`v11-autonomy-safety-and-maintain-schedule`](../planning/archive/completed/v11-autonomy-safety-and-maintain-schedule.md)
 
-- `.github/workflows/sbagent-maintain.yml` only:
-  - `schedule: cron: <daily>`.
+- Operator-template workflow for `.github/workflows/sbagent-maintain.yml` only:
+  - copied from
+    `assets/operator-templates/.github/workflows/sbagent-maintain.yml`.
+  - `schedule: cron: <daily>`, `workflow_dispatch`, and `sessions.jsonl`
+    push trigger.
   - Shared `concurrency` group reserved for autonomy jobs.
   - Bot identity configured early.
-- Loop-detection guard: `if: github.event.head_commit.author.name != 'sbagent-bot'` on any push-triggered workflow.
+- Loop-detection guard: `if: github.actor != 'stacks-bench-bot'`.
 - `sbagent session run` is not scheduled in GitHub-hosted CI. Benchmark
   sessions need a dedicated host with chainstate/data mounts and should use
   local cron / launchd / systemd once v11's safety gates exist.
 
 ### 3C. Hygiene (required, not optional)
 
-Status: `[ ]` · Estimate: ~1 day · Depends on: 2A
+Status: `[x]` · Shipped in
+[`v11-autonomy-safety-and-maintain-schedule`](../planning/archive/completed/v11-autonomy-safety-and-maintain-schedule.md)
 
 The pause file + rate limits + circuit breaker are not nice-to-haves — they're the difference between "runs unattended" and "runs unattended *without burning down the review queue / codex budget*." Same line item as 3A.
 

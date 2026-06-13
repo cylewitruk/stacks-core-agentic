@@ -1,11 +1,13 @@
 # v11: Autonomy Safety + Scheduled Maintain
 
-Successor to [v10: Maintain Command + PR Lifecycle Reconciliation](../archive/completed/v10-maintain-and-pr-lifecycle.md).
+Successor to [v10: Maintain Command + PR Lifecycle Reconciliation](v10-maintain-and-pr-lifecycle.md).
 v10 gave the bot a post-publish lifecycle ledger. v11 adds the brakes needed
 before any unattended loop runs, then schedules the lowest-risk loop:
 `sbagent maintain`.
 
-> **Status:** planned.
+> **Status:** shipped — implementation complete, reviewed, and archived.
+> The operator workflow template still needs to be copied into the operator
+> repo and dispatched there as live validation.
 >
 > v11 is deliberately not "scheduled benchmark sessions in CI." Benchmark
 > sessions require a dedicated machine with chainstate, disk, and runtime
@@ -16,8 +18,8 @@ before any unattended loop runs, then schedules the lowest-risk loop:
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0035-autonomy-hygiene` | primary | planned |
-| `0034-github-actions-wiring` | maintain-only scheduling | planned |
+| `0035-autonomy-hygiene` | primary | shipped |
+| `0034-github-actions-wiring` | maintain-only scheduling | shipped; operator dispatch pending |
 
 ## Why
 
@@ -59,13 +61,18 @@ In scope:
     `zero_accepted_circuit_breaker`.
 - Circuit breaker writes `.sbagent/pause` with a short diagnostic when it trips.
 - Operator-facing diagnostics explain the block reason and the reset path.
-- GitHub Actions workflow for `sbagent maintain` only:
+- GitHub Actions workflow template for `sbagent maintain` only:
+  - template lives under `assets/operator-templates/`; operators copy it into
+    their operator repo as `.github/workflows/sbagent-maintain.yml`;
   - shared concurrency group name reserved for future local/remote scheduling;
   - loop guard uses a job-level actor check so commits pushed by
     `stacks-bench-bot` do not recursively trigger work;
+  - missing-secrets path exits with a notice instead of failing the operator
+    repo before setup is complete;
   - bot identity and PAT wiring documented with minimum permissions:
     Contents: write and Pull requests: read;
-  - manual `workflow_dispatch` plus conservative cron.
+  - manual `workflow_dispatch`, `sessions.jsonl` push trigger, plus
+    conservative cron.
 - Docs for local benchmark scheduling as a future operator recipe, not an
   implemented workflow.
 
@@ -98,20 +105,20 @@ file, while maintain still runs.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] With `.sbagent/pause` present, `sbagent session run` fails before
+- [x] With `.sbagent/pause` present, `sbagent session run` fails before
       materializing source or running baseline.
-- [ ] The failure message names `.sbagent/pause` and the unpause action.
-- [ ] `sbagent maintain --dry-run` still runs with `.sbagent/pause` present.
-- [ ] A combined fixture proves `session run` is blocked while `maintain`
+- [x] The failure message names `.sbagent/pause` and the unpause action.
+- [x] `sbagent maintain --dry-run` still runs with `.sbagent/pause` present.
+- [x] A combined fixture proves `session run` is blocked while `maintain`
       remains allowed under the same paused operator tree.
-- [ ] Default settings parse from `assets/example.config.toml`.
+- [x] Default settings parse from `assets/example.config.toml`.
 
 **Tests:**
 
@@ -136,20 +143,20 @@ when the previous session is too recent.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] If open bot PR count is at or above `max_open_agent_prs`, session start
+- [x] If open bot PR count is at or above `max_open_agent_prs`, session start
       fails before expensive work.
-- [ ] Terminal maintain events remove PRs from the open count.
-- [ ] If the most recent session is younger than
+- [x] Terminal maintain events remove PRs from the open count.
+- [x] If the most recent session is younger than
       `min_session_interval_hours`, session start fails with the timestamp and
       configured threshold.
-- [ ] If both gates fail, diagnostics list both reasons.
+- [x] If both gates fail, diagnostics list both reasons.
 
 **Tests:**
 
@@ -180,19 +187,19 @@ sessions until a human looks.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] N consecutive zero-accepted sessions create `.sbagent/pause`.
-- [ ] Fewer than N completed archived sessions do not trip the breaker.
-- [ ] Gated or aborted-before-run sessions do not count toward N.
-- [ ] A successful accepted session in the window prevents the breaker.
-- [ ] Existing pause file is not overwritten.
-- [ ] The generated pause file is concise and operator-readable.
+- [x] N consecutive zero-accepted sessions create `.sbagent/pause`.
+- [x] Fewer than N completed archived sessions do not trip the breaker.
+- [x] Gated or aborted-before-run sessions do not count toward N.
+- [x] A successful accepted session in the window prevents the breaker.
+- [x] Existing pause file is not overwritten.
+- [x] The generated pause file is concise and operator-readable.
 
 **Tests:**
 
@@ -205,9 +212,10 @@ sessions until a human looks.
 
 **Scope:**
 
-- Add `.github/workflows/sbagent-maintain.yml`.
+- Add `assets/operator-templates/.github/workflows/sbagent-maintain.yml`.
 - Workflow triggers:
   - `workflow_dispatch`;
+  - push events that touch `sessions.jsonl`;
   - conservative cron, e.g. daily.
 - Shared concurrency group, e.g. `sbagent-autonomy`.
 - Loop guard uses `if: github.actor != 'stacks-bench-bot'` at the job level so
@@ -215,6 +223,7 @@ sessions until a human looks.
 - Installs or uses the pinned sbagent binary path according to current project
   convention.
 - Runs `sbagent maintain` with the operator config.
+- Missing required secrets produce an informational no-op, not a red workflow.
 - Documents required secrets and expected no-op output. Minimum token
   permissions: Contents: write for the maintain.jsonl commit/push and Pull
   requests: read for PR-state queries. No merge, close, comment, or label
@@ -224,21 +233,24 @@ sessions until a human looks.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Workflow YAML is syntactically valid and has `workflow_dispatch`.
-- [ ] Workflow uses the shared concurrency group.
-- [ ] Workflow cannot trigger a benchmark session.
-- [ ] Workflow job has the pinned `github.actor != 'stacks-bench-bot'` guard.
-- [ ] Docs explain required PAT/config setup.
-- [ ] Docs list the minimum PAT permissions and explicitly avoid
+- [x] Workflow YAML is syntactically valid and has `workflow_dispatch`.
+- [x] Workflow template includes the `sessions.jsonl` push trigger.
+- [x] Workflow uses the shared concurrency group.
+- [x] Workflow cannot trigger a benchmark session.
+- [x] Workflow job has the pinned `github.actor != 'stacks-bench-bot'` guard.
+- [x] Workflow template is operator-agnostic and not hard-coded to one repo.
+- [x] Workflow template no-ops cleanly when required secrets are absent.
+- [x] Docs explain required PAT/config setup.
+- [x] Docs list the minimum PAT permissions and explicitly avoid
       merge/close/comment scopes.
-- [ ] Manual operator validation records one successful workflow dispatch or
+- [x] Manual operator validation records one successful workflow dispatch or
       a documented reason it cannot run in the current repo.
 
 **Tests:**
@@ -257,26 +269,26 @@ pretending GitHub-hosted CI can run them.
   - local cron or launchd timer;
   - required chainstate/data mounts;
   - config path;
-  - existing `bench.lock` / `test.lock` lockfiles under
+  - existing `benchmark.lock` / `test.lock` lockfiles under
     `<framework>/data/run/` as the serialization primitive;
   - expected interaction with `.sbagent/pause`.
 - No code that schedules sessions.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Docs clearly state GitHub-hosted CI is not the current session-run
+- [x] Docs clearly state GitHub-hosted CI is not the current session-run
       substrate.
-- [ ] Recipe shows how to run a no-op dry-check / preflight before enabling
+- [x] Recipe shows how to run a no-op dry-check / preflight before enabling
       local cron.
-- [ ] Recipe points at the safety gates from Phases 1-3.
-- [ ] Recipe says local cron must not start a session while `bench.lock` or
+- [x] Recipe points at the safety gates from Phases 1-3.
+- [x] Recipe says local cron must not start a session while `benchmark.lock` or
       `test.lock` is held.
 
 **Tests:**
@@ -285,12 +297,12 @@ pretending GitHub-hosted CI can run them.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache` clean.
-- [ ] `just test --summary --no-sccache` clean.
-- [ ] `sbagent maintain --dry-run` still works when `.sbagent/pause` exists.
-- [ ] `sbagent session run` is blocked by pause, PR-queue, cadence, and circuit
+- [x] `just lint --no-sccache` clean.
+- [x] `just test --summary --no-sccache` clean.
+- [x] `sbagent maintain --dry-run` still works when `.sbagent/pause` exists.
+- [x] `sbagent session run` is blocked by pause, PR-queue, cadence, and circuit
       breaker fixture cases before expensive work starts.
-- [ ] `sbagent-maintain.yml` can be manually dispatched or is documented as
+- [x] `sbagent-maintain.yml` can be manually dispatched or is documented as
       pending repo-secret setup.
 
 ## Follow-Ups

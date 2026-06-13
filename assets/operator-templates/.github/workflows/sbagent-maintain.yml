@@ -1,0 +1,65 @@
+name: sbagent maintain
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - sessions.jsonl
+  schedule:
+    # Conservative default: keep lifecycle state fresh without hammering GitHub.
+    - cron: "17 8 * * *"
+
+concurrency:
+  group: sbagent-autonomy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  maintain:
+    # Bot-authored maintain commits must not recursively trigger more work.
+    if: github.actor != 'stacks-bench-bot'
+    runs-on: ubuntu-latest
+    env:
+      HAS_SBAGENT_CONFIG_TOML: ${{ secrets.SBAGENT_CONFIG_TOML != '' }}
+      HAS_STACKS_BENCH_BOT_PAT: ${{ secrets.STACKS_BENCH_BOT_PAT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required secrets
+        if: env.HAS_SBAGENT_CONFIG_TOML != 'true' || env.HAS_STACKS_BENCH_BOT_PAT != 'true'
+        run: |
+          echo "::notice::Skipping sbagent maintain; configure SBAGENT_CONFIG_TOML and STACKS_BENCH_BOT_PAT secrets."
+
+      - name: Configure bot git identity
+        if: env.HAS_SBAGENT_CONFIG_TOML == 'true' && env.HAS_STACKS_BENCH_BOT_PAT == 'true'
+        run: |
+          git config user.name "Stacks BenchBot"
+          git config user.email "283996447+stacks-bench-bot@users.noreply.github.com"
+
+      - name: Install sbagent
+        if: env.HAS_SBAGENT_CONFIG_TOML == 'true' && env.HAS_STACKS_BENCH_BOT_PAT == 'true'
+        run: cargo install --git https://github.com/cylewitruk/stacks-bench-agent --package stacks-bench-agent --bin sbagent
+
+      - name: Write sbagent config
+        if: env.HAS_SBAGENT_CONFIG_TOML == 'true' && env.HAS_STACKS_BENCH_BOT_PAT == 'true'
+        env:
+          SBAGENT_CONFIG_TOML: ${{ secrets.SBAGENT_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.config/sbagent"
+          printf '%s\n' "$SBAGENT_CONFIG_TOML" > "$HOME/.config/sbagent/config.toml"
+
+      - name: Write bot PAT
+        if: env.HAS_SBAGENT_CONFIG_TOML == 'true' && env.HAS_STACKS_BENCH_BOT_PAT == 'true'
+        env:
+          STACKS_BENCH_BOT_PAT: ${{ secrets.STACKS_BENCH_BOT_PAT }}
+        run: |
+          mkdir -p "$HOME/.config/sbagent"
+          printf '%s\n' "$STACKS_BENCH_BOT_PAT" > "$HOME/.config/sbagent/gh_token"
+          chmod 600 "$HOME/.config/sbagent/gh_token"
+
+      - name: Run maintain
+        if: env.HAS_SBAGENT_CONFIG_TOML == 'true' && env.HAS_STACKS_BENCH_BOT_PAT == 'true'
+        run: sbagent maintain

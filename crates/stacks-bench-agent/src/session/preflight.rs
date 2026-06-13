@@ -1,7 +1,7 @@
 //! Session-start preflight: fast checks for operator/orchestrator
 //! drift modes that silently corrupt session output downstream.
 //!
-//! Three checks:
+//! Session-start checks:
 //!
 //! - **Installed binary drift** (`Warn`) — running `sbagent` older than
 //!   `<framework>/target/release/sbagent`. Operator forgot to install after
@@ -10,8 +10,12 @@
 //!   tunable prompts) — orchestrator's typed-report gate depends on
 //!   `optimizer.md`'s contract; stale operator copy makes the agent write the
 //!   wrong artifact and looks like "agent crashed" downstream.
-//! - **Submodule reachability** (`Fail`) — `repos/<base>` HEAD must be an
-//!   ancestor of local `origin/<publish_base_branch>`. No network fetch in v1.
+//! - **Free disk** (`Warn` / `Fail`) — the workspace filesystem has enough
+//!   space for source materialization, per-target clones, and bench scratch.
+//! - **Source config** (`Fail`) — `[source]` and `agent_workspace_root` are
+//!   sufficient to materialize the per-session source checkout.
+//! - **Autonomy gates** (`Fail`) — pause file, review queue, cadence, and
+//!   circuit breaker checks for unattended operation.
 //!
 //! Wired into `sbagent session run`, `session optimize run` (incl.
 //! `--resume`), and `sbagent check`. `--skip-preflight` opts out.
@@ -66,12 +70,70 @@ impl fmt::Display for Finding {
 /// findings in evaluation order (caller decides whether to bail on
 /// any `Fail`).
 pub fn collect_findings(ctx: &CliContext) -> Result<Vec<Finding>> {
+    collect_findings_inner(ctx, AutonomyMode::ReportOnly)
+}
+
+/// Run preflight for the full `session run` path. This is the only
+/// preflight entry point that may write `.sbagent/pause` when the
+/// zero-accepted circuit breaker trips.
+pub fn collect_findings_for_session_run(ctx: &CliContext) -> Result<Vec<Finding>> {
+    collect_findings_inner(ctx, AutonomyMode::Enforce)
+}
+
+fn collect_findings_inner(ctx: &CliContext, autonomy_mode: AutonomyMode) -> Result<Vec<Finding>> {
     let mut findings = Vec::new();
     check_installed_binary_drift(ctx, &mut findings)?;
     check_critical_prompt_drift(ctx, &mut findings)?;
     check_free_disk(ctx, &mut findings, &Fs4Disk)?;
     check_source_config(ctx, &mut findings);
+    check_autonomy_gates(ctx, &mut findings, autonomy_mode)?;
     Ok(findings)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AutonomyMode {
+    ReportOnly,
+    Enforce,
+}
+
+/// Enforce unattended-run safety gates before a session does expensive
+/// work. Skipped when the resolved layout has no operator repo root so
+/// ad-hoc local/dev configs that never archive stay usable.
+fn check_autonomy_gates(
+    ctx: &CliContext,
+    findings: &mut Vec<Finding>,
+    mode: AutonomyMode,
+) -> Result<()> {
+    const CHECK: &str = "autonomy";
+    let operator = match ctx
+        .layout
+        .operator_repo_root
+        .as_deref()
+    {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let blocks = match mode {
+        AutonomyMode::ReportOnly => crate::session::autonomy::check_operator_gates(
+            operator,
+            &ctx.settings.autonomy,
+            std::time::SystemTime::now(),
+        )?,
+        AutonomyMode::Enforce => crate::session::autonomy::enforce_operator_gates(
+            operator,
+            &ctx.settings.autonomy,
+            std::time::SystemTime::now(),
+        )?,
+    };
+    for block in blocks {
+        findings.push(Finding {
+            severity: Severity::Fail,
+            check: CHECK,
+            message: format!("{}: {}", block.gate, block.message),
+            remediation: block.remediation,
+        });
+    }
+    Ok(())
 }
 
 /// Every `session run` materializes a per-session source checkout
@@ -554,6 +616,44 @@ mod tests {
         // pointing at the same tmp dir.
         let layout = Layout::from_settings(&settings).expect("layout");
         CliContext { settings, layout }
+    }
+
+    fn ctx_with_operator(operator: &std::path::Path) -> CliContext {
+        let settings = Settings {
+            layout: LayoutSettings {
+                operator_repo_root: Some(operator.to_path_buf()),
+                ..LayoutSettings::default()
+            },
+            ..Settings::default()
+        };
+        let layout = Layout::from_settings(&settings).expect("layout");
+        CliContext { settings, layout }
+    }
+
+    #[test]
+    fn check_autonomy_gates_fails_on_pause_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let operator = tmp.path().join("operator");
+        std::fs::create_dir_all(operator.join(".sbagent")).unwrap();
+        std::fs::write(operator.join(".sbagent/pause"), "manual pause\n").unwrap();
+        let ctx = ctx_with_operator(&operator);
+        let mut findings = Vec::new();
+
+        check_autonomy_gates(&ctx, &mut findings, AutonomyMode::ReportOnly).unwrap();
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Fail);
+        assert_eq!(findings[0].check, "autonomy");
+        assert!(
+            findings[0]
+                .message
+                .contains("pause-file")
+        );
+        assert!(
+            findings[0]
+                .remediation
+                .contains("remove it")
+        );
     }
 
     #[test]

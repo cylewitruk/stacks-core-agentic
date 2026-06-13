@@ -218,11 +218,3 @@ cron / launchd / systemd timers once v11's safety gates exist.
 
 **Acceptance:** A configured benchmark host can run scheduled sessions without
 racing maintain, bypassing `.sbagent/pause`, or starting when safety gates fail.
-
-## Scheduled — see iteration docs
-
-The following item IDs are owned by an active iteration; full specs live there,
-not here.
-
-- `0034-github-actions-wiring`, `0035-autonomy-hygiene` —
-  [v11: Autonomy Safety + Scheduled Maintain](iterations/v11-autonomy-safety-and-maintain-schedule.md).
