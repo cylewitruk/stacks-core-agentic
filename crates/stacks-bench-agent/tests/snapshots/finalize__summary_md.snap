@@ -4,16 +4,16 @@ expression: summary_md
 ---
 # Session 20260507-104400
 
-- Baseline run id: 100
-- Baseline rerun id: 101
+- Discovery-pass run id: 100
+- Discovery-pass rerun id: 101
 - Noise floor: 0.8%
 - Target catalog: [targets.md](targets.md)
 
-## Improvement vs baseline
+## Improvement vs target calibration baseline
 
 ```mermaid
 xychart-beta
-    title "Per-target improvement vs baseline (%)"
+    title "Per-target improvement vs target calibration baseline (%)"
     x-axis ["marf-read-cache-rollbac…"]
     y-axis "% improvement" 0 --> 10
     bar [4.20]

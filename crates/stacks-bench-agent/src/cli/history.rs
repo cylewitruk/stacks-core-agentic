@@ -18,8 +18,10 @@ use clap::{Args, Subcommand};
 
 use crate::cli::CliContext;
 use crate::models::common::DeliveryMode;
+use crate::models::maintain_event::{MaintEvent, MaintEventKind};
 use crate::models::session_record::{SessionRecord, SessionStatus, TargetRecord, TargetStatus};
 use crate::session::ledger_reader::{LedgerReadReport, read_all, session_total_secs};
+use crate::session::maintain_ledger::read_all as read_maintain;
 
 /// `sbagent history ...`.
 #[derive(Debug, Args)]
@@ -469,16 +471,41 @@ fn run_show(args: ShowArgs, ctx: &CliContext) -> Result<()> {
 
     let mut out = std::io::stdout().lock();
     let use_color = out.is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    render_show(&mut out, &record, use_color)?;
+    let maintain_path = ctx
+        .layout
+        .require_operator_repo_root()?
+        .join("maintain.jsonl");
+    let maintain = read_maintain(&maintain_path)?;
+    for s in &maintain.skipped {
+        eprintln!(
+            "sbagent history: skipping malformed maintain.jsonl line {}: {}",
+            s.line_number, s.error,
+        );
+    }
+    let maint_events = maintain
+        .events
+        .into_iter()
+        .filter(|e| e.session_id == record.id)
+        .collect::<Vec<_>>();
+    render_show(&mut out, &record, &maint_events, use_color)?;
     Ok(())
 }
 
-fn render_show<W: Write>(out: &mut W, record: &SessionRecord, use_color: bool) -> Result<()> {
+fn render_show<W: Write>(
+    out: &mut W,
+    record: &SessionRecord,
+    maint_events: &[MaintEvent],
+    use_color: bool,
+) -> Result<()> {
     render_header_section(out, record, use_color)?;
     writeln!(out)?;
     render_phase_durations_section(out, record)?;
     writeln!(out)?;
     render_targets_section(out, record)?;
+    if !maint_events.is_empty() {
+        writeln!(out)?;
+        render_maintenance_section(out, maint_events)?;
+    }
     Ok(())
 }
 
@@ -674,6 +701,110 @@ fn target_cell(r: &TargetRow, col: usize) -> &str {
 }
 
 fn write_padded_cells<'a, W, I>(out: &mut W, cells: I, widths: &[usize; 6]) -> Result<()>
+where
+    W: Write,
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut first = true;
+    let n = widths.len();
+    for (i, c) in cells.into_iter().enumerate() {
+        if !first {
+            write!(out, "  ")?;
+        }
+        first = false;
+        if i + 1 == n {
+            write!(out, "{c}")?;
+        } else {
+            write!(out, "{c:<w$}", w = widths[i])?;
+        }
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
+fn render_maintenance_section<W: Write>(out: &mut W, events: &[MaintEvent]) -> Result<()> {
+    writeln!(out, "Maintenance events")?;
+    let mut rows = events
+        .iter()
+        .map(build_maintenance_row)
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| {
+        a.observed_at
+            .cmp(&b.observed_at)
+    });
+
+    const HEADERS: [&str; 5] = ["observed_at", "kind", "target", "state", "url"];
+    let widths: [usize; 5] = std::array::from_fn(|col| {
+        let header_w = HEADERS[col].len();
+        rows.iter()
+            .map(|r| maintenance_cell(r, col).len())
+            .max()
+            .unwrap_or(0)
+            .max(header_w)
+    });
+    write!(out, "  ")?;
+    write_maintenance_cells(out, HEADERS.iter().copied(), &widths)?;
+    for row in &rows {
+        write!(out, "  ")?;
+        write_maintenance_cells(
+            out,
+            (0..HEADERS.len()).map(|c| maintenance_cell(row, c)),
+            &widths,
+        )?;
+    }
+    Ok(())
+}
+
+struct MaintenanceRow {
+    observed_at: String,
+    kind: String,
+    target: String,
+    state: String,
+    url: String,
+}
+
+fn build_maintenance_row(event: &MaintEvent) -> MaintenanceRow {
+    MaintenanceRow {
+        observed_at: event.observed_at.clone(),
+        kind: maint_kind_text(event.kind).to_owned(),
+        target: event
+            .target_id
+            .clone()
+            .unwrap_or_else(|| "-".to_owned()),
+        state: event.new_state.clone(),
+        url: event
+            .pr_url
+            .clone()
+            .or_else(|| event.issue_url.clone())
+            .unwrap_or_else(|| "-".to_owned()),
+    }
+}
+
+fn maint_kind_text(kind: MaintEventKind) -> &'static str {
+    match kind {
+        MaintEventKind::PrOpen => "pr_open",
+        MaintEventKind::PrMerged => "pr_merged",
+        MaintEventKind::PrClosedUnmerged => "pr_closed_unmerged",
+        MaintEventKind::PrStale => "pr_stale",
+        MaintEventKind::PrForcePushed => "pr_force_pushed",
+        MaintEventKind::PrBranchDeleted => "pr_branch_deleted",
+        MaintEventKind::IssueOpen => "issue_open",
+        MaintEventKind::IssueClosed => "issue_closed",
+    }
+}
+
+fn maintenance_cell(r: &MaintenanceRow, col: usize) -> &str {
+    match col {
+        0 => &r.observed_at,
+        1 => &r.kind,
+        2 => &r.target,
+        3 => &r.state,
+        4 => &r.url,
+        _ => unreachable!(),
+    }
+}
+
+fn write_maintenance_cells<'a, W, I>(out: &mut W, cells: I, widths: &[usize; 5]) -> Result<()>
 where
     W: Write,
     I: IntoIterator<Item = &'a str>,

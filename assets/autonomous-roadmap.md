@@ -224,17 +224,18 @@ Required for "just runs and runs." Each item independently shippable but 3A and 
 
 ### 3A. `sbagent maintain` subcommand (reconciliation loop)
 
-Status: `[ ]` · Estimate: ~1 day · Depends on: 2A
+Status: `[x]` · Shipped in
+[`0033-maintain-command`](../planning/archive/completed/0033-maintain-command.md)
 
-- Read projection. Find all rows with status in {`pr_open`, `pr_opened_failed`}.
-- For each, query GitHub via existing octocrab client (`publish::StdGhClient`).
-- Compare observed PR state to projection. Emit state-change events:
-  - `pr_merged { fix_signature, pr_number, merge_sha }`
-  - `pr_closed_unmerged { fix_signature, pr_number, reason? }`
-  - `pr_stale { fix_signature, pr_number, head_age_days }` (when main has moved > N commits since baseline_head)
-- Append to `events/maintenance/<utc-ts>.jsonl`.
-- Commit + push (same shape as 2C).
-- No code modifications. This is pure observation + state delta; future iterations can add `--rebase` to auto-rebase stale PRs.
+- Reads `sessions.jsonl` and `maintain.jsonl`.
+- Queries GitHub for non-terminal PR/issue artifacts.
+- Emits typed lifecycle events (`pr_open`, `pr_merged`,
+  `pr_closed_unmerged`, `pr_stale`, `pr_force_pushed`,
+  `pr_branch_deleted`, `issue_open`, `issue_closed`) into
+  `maintain.jsonl`.
+- Commits + pushes `maintain.jsonl` on real runs.
+- No code modifications. This is pure observation + state delta; future
+  iterations can add PR mutations if needed.
 
 ### 3B. GitHub Actions wiring
 

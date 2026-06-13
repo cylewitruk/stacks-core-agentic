@@ -27,6 +27,7 @@
 //!   issue body.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result, bail};
 
@@ -660,6 +661,70 @@ pub struct GitPushAuth<'a> {
     pub auth_url_prefix: &'a str,
 }
 
+/// One GitHub state read plus the rate-limit state observed around
+/// that read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GhStateRead<T> {
+    /// Parsed GitHub state.
+    pub state: T,
+    /// Rate-limit metadata available to the maintain reconciler.
+    pub rate_limit: RateLimitSnapshot,
+}
+
+/// GitHub API rate-limit snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitSnapshot {
+    /// Remaining requests in the current bucket.
+    pub remaining: u32,
+    /// Bucket size.
+    pub limit: u32,
+    /// Reset time.
+    pub resets_at: SystemTime,
+}
+
+impl RateLimitSnapshot {
+    /// Conservative fallback for high-level octocrab paths that don't
+    /// expose response headers. Tests seed exact values through
+    /// `FakeGh`; `StdGhClient` can move to header-backed snapshots
+    /// without changing the trait.
+    pub fn default_github_core() -> Self {
+        Self {
+            remaining: 5_000,
+            limit: 5_000,
+            resets_at: SystemTime::now() + Duration::from_secs(3600),
+        }
+    }
+
+    /// True when `remaining / limit` is below `floor_pct`.
+    pub fn below_floor_pct(&self, floor_pct: u32) -> bool {
+        if self.limit == 0 {
+            return true;
+        }
+        u64::from(self.remaining) * 100 < u64::from(self.limit) * u64::from(floor_pct)
+    }
+}
+
+/// Raw PR state from one GitHub read. No reconciliation logic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrState {
+    pub is_open: bool,
+    pub is_merged: bool,
+    pub is_closed_unmerged: bool,
+    pub is_draft: bool,
+    pub head_sha: Option<String>,
+    pub head_ref_deleted: bool,
+    pub base_ref: String,
+    pub updated_at: String,
+}
+
+/// Raw issue state from one GitHub read. No reconciliation logic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueLifecycleState {
+    pub is_open: bool,
+    pub is_closed: bool,
+    pub updated_at: String,
+}
+
 /// Operations `publish::push` needs. Git ops shell out to `git`; GitHub
 /// API ops go through octocrab in-process.
 ///
@@ -707,6 +772,20 @@ pub trait GhClient: Send + Sync {
         title: &'a str,
         body: &'a str,
     ) -> impl std::future::Future<Output = Result<String>> + Send + 'a;
+    /// Read raw PR lifecycle state for `sbagent maintain`.
+    fn query_pr_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> impl std::future::Future<Output = Result<GhStateRead<PrState>>> + Send;
+    /// Read raw issue lifecycle state for `sbagent maintain`.
+    fn query_issue_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> impl std::future::Future<Output = Result<GhStateRead<IssueLifecycleState>>> + Send;
 }
 
 /// Default impl: git ops shell out to `git`; GitHub API ops go through
@@ -858,6 +937,61 @@ impl GhClient for StdGhClient {
         let url = issue.html_url.to_string();
         println!("{url}");
         Ok(url)
+    }
+
+    async fn query_pr_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<GhStateRead<PrState>> {
+        let pr = self
+            .api
+            .pulls(owner, repo)
+            .get(number)
+            .await
+            .with_context(|| format!("octocrab pulls get {owner}/{repo}#{number}"))?;
+        let is_open = matches!(pr.state, octocrab::models::IssueState::Open);
+        let is_merged = pr.merged || pr.merged_at.is_some();
+        let is_closed_unmerged =
+            matches!(pr.state, octocrab::models::IssueState::Closed) && !is_merged;
+        Ok(GhStateRead {
+            state: PrState {
+                is_open,
+                is_merged,
+                is_closed_unmerged,
+                is_draft: pr.draft.unwrap_or(false),
+                head_sha: Some(pr.head.sha.clone()),
+                head_ref_deleted: pr.head.repo.is_none(),
+                base_ref: pr.base.ref_field.clone(),
+                updated_at: pr.updated_at.to_rfc3339(),
+            },
+            rate_limit: RateLimitSnapshot::default_github_core(),
+        })
+    }
+
+    async fn query_issue_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<GhStateRead<IssueLifecycleState>> {
+        let issue = self
+            .api
+            .issues(owner, repo)
+            .get(number)
+            .await
+            .with_context(|| format!("octocrab issues get {owner}/{repo}#{number}"))?;
+        let is_open = matches!(issue.state, octocrab::models::IssueState::Open);
+        let is_closed = matches!(issue.state, octocrab::models::IssueState::Closed);
+        Ok(GhStateRead {
+            state: IssueLifecycleState {
+                is_open,
+                is_closed,
+                updated_at: issue.updated_at.to_rfc3339(),
+            },
+            rate_limit: RateLimitSnapshot::default_github_core(),
+        })
     }
 }
 

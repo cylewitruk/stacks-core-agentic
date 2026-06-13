@@ -24,22 +24,6 @@ numbering history.
 **Deferred / non-goals:** Do not change artifact paths unless paired with a
 separate migration.
 
-<a id="0027-maintain-ledger"></a>
-
-### Maintain Ledger
-
-- **id:** `0027-maintain-ledger`
-- **status:** `backlog`
-- **priority:** `low`
-
-**Problem:** Future maintenance observations need an append-only home that does
-not mutate write-once session branches.
-
-**Scope:** Add a `maintain.jsonl` sibling to `sessions.jsonl`.
-
-**Acceptance:** Maintenance records can reference a session id without touching
-that session's archive branch.
-
 <a id="0028-optimizer-memory"></a>
 
 ### Cross-Session Optimizer Memory
@@ -110,23 +94,6 @@ them to optimizer.
 
 **Acceptance:** A completed session creates a readable operator commit without
 committing raw scratch artifacts.
-
-<a id="0033-maintain-command"></a>
-
-### Maintain Command
-
-- **id:** `0033-maintain-command`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0033-maintain-command.md](design/0033-maintain-command.md)
-
-**Problem:** Autonomous operation needs PR lifecycle reconciliation.
-
-**Scope:** Add `sbagent maintain` to observe GitHub state and emit maintenance
-events.
-
-**Acceptance:** Merged, closed, stale, and failed-open PR states are reflected in
-the event log.
 
 <a id="0034-github-actions-wiring"></a>
 
@@ -202,13 +169,12 @@ default `--out` is stdout. Markdown sections:
 - **PRs opened**: bulleted list of `pr_url`s grouped by session.
 - **Issues opened**: bulleted list of `issue_url`s.
 
-**Promotion trigger:** Best picked up AFTER
-[`0033-maintain-command`](#0033-maintain-command) lands. `0033` adds
-GitHub-side reconciliation (open / merged / closed / stale PR state) to
-the event log. Without it, the report can only render "PR opened" —
-which `history list` already does. With it, the report gains the
-merged-vs-open dimension that makes a weekly digest meaningfully
-richer than the current per-session views.
+**Promotion trigger:** Best picked up after
+[`0033-maintain-command`](archive/completed/0033-maintain-command.md) has
+live operator validation. `0033` added GitHub-side reconciliation (open /
+merged / closed / stale PR state) to `maintain.jsonl`. Once that has a
+real operator row, the report can gain the merged-vs-open dimension that
+makes a weekly digest meaningfully richer than the current per-session views.
 
 **Acceptance:** Default invocation produces a markdown document with
 the four sections above against a fixture ledger.
@@ -266,7 +232,3 @@ verification results. Keep this separate from results-analyzer verdict policy.
 
 **Acceptance:** Analyzer output gives more realistic magnitude ranges without
 making results-analyzer confidence depend on forecast accuracy.
-
-## Scheduled — see iteration docs
-
-No active iteration currently owns backlog items.

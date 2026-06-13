@@ -23,6 +23,7 @@ use serde_json::Value;
 use crate::models::analyze::Analysis;
 use crate::models::candidates::Candidates;
 use crate::models::coordinator_provenance::CoordinatorProvenance;
+use crate::models::maintain_event::MaintEvent;
 use crate::models::optimizer_report::OptimizerReport;
 use crate::models::publish_feedback::PublishFeedback;
 use crate::models::results_analysis::ResultsAnalysis;
@@ -57,6 +58,7 @@ pub fn generate_all() -> Result<Vec<SchemaEntry>> {
         entry::<SourceJson>("source.schema.json")?,
         entry::<Timings>("timings.schema.json")?,
         entry::<PublishFeedback>("publish-feedback.schema.json")?,
+        entry::<MaintEvent>("maintain-event.schema.json")?,
     ])
 }
 

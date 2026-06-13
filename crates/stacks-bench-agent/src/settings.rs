@@ -80,6 +80,10 @@ pub struct Settings {
     #[serde(default)]
     pub preflight: PreflightSettings,
 
+    /// Post-publish maintenance / PR lifecycle reconciliation knobs.
+    #[serde(default)]
+    pub maintain: MaintainSettings,
+
     /// Upstream source repo we're optimizing — URL, branch, optional
     /// stable cache id. Required by every session phase that needs
     /// source (Phase 0a build, Phase 2 per-target clones, finalize +
@@ -228,6 +232,40 @@ pub struct PreflightSettings {
     /// production session has shown peak per-session usage.
     #[serde(default)]
     pub min_free_gib: Option<u64>,
+}
+
+/// `[maintain]` — GitHub lifecycle reconciliation knobs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaintainSettings {
+    /// Days since GitHub `updated_at` before an open PR/issue is
+    /// considered stale by `sbagent maintain`.
+    #[serde(default = "default_maintain_stale_after_days")]
+    pub stale_after_days: u64,
+
+    /// Stop querying within one maintain invocation when the latest
+    /// response reports remaining requests below this percentage of
+    /// the limit. Cross-invocation cadence belongs to scheduled
+    /// execution, not this setting.
+    #[serde(default = "default_maintain_secondary_rate_limit_floor_pct")]
+    pub secondary_rate_limit_floor_pct: u32,
+}
+
+impl Default for MaintainSettings {
+    fn default() -> Self {
+        Self {
+            stale_after_days: default_maintain_stale_after_days(),
+            secondary_rate_limit_floor_pct: default_maintain_secondary_rate_limit_floor_pct(),
+        }
+    }
+}
+
+fn default_maintain_stale_after_days() -> u64 {
+    14
+}
+
+fn default_maintain_secondary_rate_limit_floor_pct() -> u32 {
+    10
 }
 
 /// `[dev]` — framework-internal knobs.
@@ -1195,6 +1233,44 @@ mod tests {
             .as_deref()
             .unwrap();
         assert_eq!(labels, ["needs-bench-review", "auto-generated"]);
+    }
+
+    #[test]
+    fn maintain_settings_defaults_and_overrides_parse() {
+        let defaults: Settings = toml::from_str("").expect("empty settings parse");
+        assert_eq!(
+            defaults
+                .maintain
+                .stale_after_days,
+            14
+        );
+        assert_eq!(
+            defaults
+                .maintain
+                .secondary_rate_limit_floor_pct,
+            10
+        );
+
+        let custom: Settings = toml::from_str(
+            r#"
+            [maintain]
+            stale_after_days = 30
+            secondary_rate_limit_floor_pct = 25
+            "#,
+        )
+        .expect("custom maintain settings parse");
+        assert_eq!(
+            custom
+                .maintain
+                .stale_after_days,
+            30
+        );
+        assert_eq!(
+            custom
+                .maintain
+                .secondary_rate_limit_floor_pct,
+            25
+        );
     }
 
     #[test]

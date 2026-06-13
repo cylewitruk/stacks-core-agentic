@@ -56,6 +56,7 @@ pub const BUNDLED_SCHEMAS: &[(&str, &str)] = &[
     ("source.schema.json", include_str!("../../../schemas/source.schema.json")),
     ("timings.schema.json", include_str!("../../../schemas/timings.schema.json")),
     ("publish-feedback.schema.json", include_str!("../../../schemas/publish-feedback.schema.json")),
+    ("maintain-event.schema.json", include_str!("../../../schemas/maintain-event.schema.json")),
 ];
 
 /// Result of a [`seed_to`] call. Same shape as

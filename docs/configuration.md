@@ -22,7 +22,7 @@ The annotated template is checked in at
 to `~/.config/sbagent/config.toml` and edit. Settings are grouped into
 stanzas (`[layout]`, `[source]`, `[stacks_bench]`, `[triage]`,
 `[analyzer]`, `[optimizer]`, `[results_analysis]`, `[codex]`,
-`[publish]`, `[preflight]`, `[git]`); each stanza's fields are
+`[publish]`, `[maintain]`, `[preflight]`, `[git]`); each stanza's fields are
 documented inline in that file. Notable Pass 1c knobs:
 
 - `analyzer.max_invocations_per_target` (default `8`, schema hard max
@@ -33,6 +33,9 @@ documented inline in that file. Notable Pass 1c knobs:
   `"high" | "medium" | "low"`) — minimum confidence required for a
   `normal_pr` target to publish in Phase 5. Verdicts below the floor
   hold for operator review.
+- `maintain.stale_after_days` (default `14`) and
+  `maintain.secondary_rate_limit_floor_pct` (default `10`) — thresholds for
+  `sbagent maintain` PR/issue lifecycle reconciliation.
 - `preflight.min_free_gib` (default unset / `None`) — session-start
   free-disk floor on the filesystem holding
   `layout.agent_workspace_root`. When set, the preflight emits a hard

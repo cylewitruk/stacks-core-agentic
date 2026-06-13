@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "MaintEventKind": {
+      "description": "Discriminator for one maintenance observation.",
+      "oneOf": [
+        {
+          "const": "pr_open",
+          "description": "First time `sbagent maintain` observes a PR as open. Publish\ncreates the PR; maintain records the first observation.",
+          "type": "string"
+        },
+        {
+          "const": "pr_merged",
+          "description": "PR merged into its base branch.",
+          "type": "string"
+        },
+        {
+          "const": "pr_closed_unmerged",
+          "description": "PR closed without merging.",
+          "type": "string"
+        },
+        {
+          "const": "pr_stale",
+          "description": "PR stayed open past the configured stale threshold.",
+          "type": "string"
+        },
+        {
+          "const": "pr_force_pushed",
+          "description": "PR head sha changed after a prior observation.",
+          "type": "string"
+        },
+        {
+          "const": "pr_branch_deleted",
+          "description": "PR is open but its head ref no longer exists.",
+          "type": "string"
+        },
+        {
+          "const": "issue_open",
+          "description": "First time `sbagent maintain` observes an issue as open.\nPublish creates the issue; maintain records the first\nobservation.",
+          "type": "string"
+        },
+        {
+          "const": "issue_closed",
+          "description": "Issue closed.",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One maintenance ledger line.",
+  "properties": {
+    "family_id": {
+      "description": "Family id copied from the archived target row.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fix_signature": {
+      "description": "Fix signature copied from the archived target row when\navailable. v10 uses the target id as the best available\nsignature; later dedup work may tighten this.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "head_sha": {
+      "description": "PR head sha for PR events when GitHub reports one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "issue_url": {
+      "description": "Issue URL for issue lifecycle events.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "$ref": "#/$defs/MaintEventKind",
+      "description": "Observation kind."
+    },
+    "new_state": {
+      "description": "New normalized state represented by this event.",
+      "type": "string"
+    },
+    "observed_at": {
+      "description": "ISO 8601 UTC timestamp when maintain observed the state.",
+      "type": "string"
+    },
+    "pr_url": {
+      "description": "PR URL for PR lifecycle events.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prior_state": {
+      "description": "Previous normalized state, or `None` for initial `PrOpen` /\n`IssueOpen` observations.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    },
+    "session_id": {
+      "description": "Session id whose archived target produced the PR/issue.",
+      "type": "string"
+    },
+    "target_id": {
+      "description": "Target id. `None` only for future session-level events.",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "observed_at",
+    "session_id",
+    "new_state"
+  ],
+  "title": "MaintEvent",
+  "type": "object"
+}

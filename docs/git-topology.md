@@ -451,46 +451,38 @@ End state in `<workspace>/sessions/<id>/`:
 
 ## 6. When maintenance is run
 
-**Planned, not yet implemented** — see
-[design/0033-maintain-command.md](../planning/design/0033-maintain-command.md)
-for the spec. Describing the intended shape so this doc covers the
-full lifecycle:
+`sbagent maintain` observes **post-publish state** — PRs and issues
+opened in §5a — and reconciles their lifecycle into the operator's
+append-only maintenance ledger. It is read-only on the GitHub side
+(no PR modifications) and append-only on the operator side.
 
-`sbagent maintain` is intended to observe **post-publish state** —
-PRs and issues opened in §5a — and reconcile their lifecycle into a
-durable event log. It is read-only on the GitHub side (no PR
-modifications) and append-only on the operator side.
+See the completed
+[0033-maintain-command](../planning/archive/completed/0033-maintain-command.md)
+archive note for the shipped state machine.
 
-### Local files / dirs (planned)
+### Local files / dirs
 
 ```text
-<operator>/events/maintenance/<utc-ts>.jsonl
-                                        # one append-only file per maintain run
-                                        # carrying pr_merged / pr_closed_unmerged
-                                        # / pr_stale events
+<operator>/maintain.jsonl              # append-only PR/issue lifecycle events
 ```
 
-### Git operations (planned)
+### Git operations
 
 In `<operator>`:
 
 1. Query GitHub via `octocrab` for the PRs/issues opened in earlier
    sessions (cross-reference via `sessions.jsonl` archived state).
-2. Diff observed lifecycle vs the last-known event log.
-3. Append maintenance events to a new
-   `events/maintenance/<utc-ts>.jsonl`.
-4. `git add events/maintenance/<utc-ts>.jsonl && git commit`
-   authored as `Stacks BenchBot`.
+2. Diff observed lifecycle vs the last-known projection from
+   `maintain.jsonl`.
+3. Append any new maintenance events to `maintain.jsonl`.
+4. `git add maintain.jsonl && git commit` authored as
+   `Stacks BenchBot`.
 5. `git push origin main`.
 
 Nothing touches `session/<id>` branches (they're write-once). Nothing
 touches the `agentic/<id>/<target>` branches in the
 `<stacks-core fork>` (those are owned by upstream review now —
 reviewers may push to them, the bot doesn't).
-
-Until `0033-maintain-command` ships, post-publish state lives only on
-GitHub; the operator inspects it manually via `gh pr list` /
-`gh pr view`. There is no event log on the operator side today.
 
 ## Where does X live? — quick lookup
 

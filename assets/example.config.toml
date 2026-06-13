@@ -289,6 +289,22 @@ branch_prefix = "agentic"
 
 
 # ---------------------------------------------------------------------------
+# [maintain] — post-publish PR / issue lifecycle reconciliation.
+# Section is OPTIONAL. Defaults are conservative for manual runs; scheduled
+# cadence lives in the future cron layer, not here.
+# ---------------------------------------------------------------------------
+
+# [maintain]
+# Days since GitHub `updated_at` before an open PR/issue is considered stale.
+# stale_after_days = 14
+
+# Stop querying within one `sbagent maintain` invocation when the latest
+# GitHub response reports remaining requests below this percentage of the
+# bucket. Cross-invocation rate management belongs to the scheduler.
+# secondary_rate_limit_floor_pct = 10
+
+
+# ---------------------------------------------------------------------------
 # [preflight] — session-start safety floors.
 # ---------------------------------------------------------------------------
 

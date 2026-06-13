@@ -15,6 +15,7 @@ use crate::settings::Settings;
 pub mod check;
 pub mod history;
 pub mod init;
+pub mod maintain;
 pub mod preflight;
 pub mod prompt;
 pub mod publish;
@@ -63,6 +64,9 @@ pub enum Command {
     /// repos are materialized per-session from `[source]` under
     /// `<workspace>/sessions/<id>/repos/<cache_id>/`.
     Init(init::InitArgs),
+
+    /// Reconcile archived PR/issue lifecycle state into `maintain.jsonl`.
+    Maintain(maintain::MaintainArgs),
 
     /// Prompt-template lifecycle: lint disk-loaded templates, force-sync
     /// from bundled defaults.
@@ -275,6 +279,7 @@ pub async fn dispatch(args: CliArgs) -> Result<()> {
         Command::Check(a) => check::run(a, &ctx).await,
         Command::History(a) => history::run(a, &ctx).await,
         Command::Init(_) => unreachable!("handled before CliContext build"),
+        Command::Maintain(a) => maintain::run(a, &ctx).await,
         Command::Prompt(a) => prompt::run(a, &ctx).await,
         Command::Publish(a) => publish::run(a, &ctx).await,
         Command::Rejections(a) => rejections::run(a, &ctx).await,

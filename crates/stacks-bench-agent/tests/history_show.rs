@@ -39,6 +39,17 @@ fn write_sessions_jsonl(operator: &Path, lines: &[String]) {
     std::fs::write(path, body).unwrap();
 }
 
+fn write_maintain_jsonl(operator: &Path, lines: &[&str]) {
+    std::fs::create_dir_all(operator).unwrap();
+    let path = operator.join("maintain.jsonl");
+    let mut body = String::new();
+    for line in lines {
+        body.push_str(line);
+        body.push('\n');
+    }
+    std::fs::write(path, body).unwrap();
+}
+
 fn exec_show(config_path: &Path, session_id: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sbagent"))
         .args(["-c", config_path.to_str().unwrap(), "history", "show", session_id])
@@ -194,4 +205,32 @@ fn history_show_no_color_suppresses_ansi_escapes() {
     assert_success(&out);
     let stdout = String::from_utf8(out.stdout).expect("stdout is utf-8");
     assert!(!stdout.contains("\x1b["), "ANSI escape leaked despite NO_COLOR=1");
+}
+
+#[test]
+fn history_show_renders_matching_maintenance_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let operator = tmp.path().join("operator");
+    let config_path = write_config(tmp.path(), &operator);
+    write_sessions_jsonl(&operator, &[fixture_session_line()]);
+    write_maintain_jsonl(
+        &operator,
+        &[
+            r#"{"schema_version":1,"kind":"pr_open","observed_at":"2026-06-10T10:00:00Z","session_id":"20260609-120000-show-fixture","target_id":"target-1","family_id":"f","fix_signature":"target-1","pr_url":"https://example.com/pr/1","new_state":"open","head_sha":"aaa"}"#,
+            r#"{"schema_version":1,"kind":"pr_merged","observed_at":"2026-06-11T10:00:00Z","session_id":"20260609-120000-show-fixture","target_id":"target-1","family_id":"f","fix_signature":"target-1","pr_url":"https://example.com/pr/1","prior_state":"open","new_state":"merged","head_sha":"aaa"}"#,
+            r#"{"schema_version":1,"kind":"issue_open","observed_at":"2026-06-12T10:00:00Z","session_id":"other-session","target_id":"target-x","family_id":"f","fix_signature":"target-x","issue_url":"https://example.com/issues/9","new_state":"open"}"#,
+        ],
+    );
+
+    let out = exec_show(&config_path, "20260609-120000-show-fixture");
+    assert_success(&out);
+    let stdout = String::from_utf8(out.stdout).expect("stdout is utf-8");
+
+    assert!(stdout.contains("Maintenance events"));
+    assert!(stdout.contains("2026-06-10T10:00:00Z  pr_open"));
+    assert!(stdout.contains("2026-06-11T10:00:00Z  pr_merged"));
+    assert!(!stdout.contains("issue_open"));
+    for b in stdout.as_bytes() {
+        assert!(*b < 0x80, "non-ASCII byte 0x{b:02x} in stdout");
+    }
 }

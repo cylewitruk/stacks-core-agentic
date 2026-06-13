@@ -22,7 +22,8 @@ use stacks_bench_agent::session::bench::BenchClient;
 use stacks_bench_agent::session::finalize::{FinalizeInputs, finalize};
 use stacks_bench_agent::session::optimizers::{self, GitCheckoutManager};
 use stacks_bench_agent::session::publish::{
-    self, CreatePrArgs, GenerateInputs, GhClient, GitPushAuth, PublishConfig, PushInputs,
+    self, CreatePrArgs, GenerateInputs, GhClient, GhStateRead, GitPushAuth, IssueLifecycleState,
+    PrState, PublishConfig, PushInputs,
 };
 use stacks_bench_agent::settings::Settings;
 use stacks_bench_agent::types::SessionId;
@@ -328,6 +329,22 @@ impl GhClient for ChainGh {
                 body_has_trace: body.contains("<!-- agentic-"),
             });
         Ok(format!("https://github.com/{repo}/issues/1"))
+    }
+    async fn query_pr_state(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<GhStateRead<PrState>> {
+        unreachable!("orchestrator chain test does not exercise maintain PR reads")
+    }
+    async fn query_issue_state(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<GhStateRead<IssueLifecycleState>> {
+        unreachable!("orchestrator chain test does not exercise maintain issue reads")
     }
 }
 

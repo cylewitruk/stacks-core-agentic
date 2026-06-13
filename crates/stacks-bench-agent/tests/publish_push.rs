@@ -9,7 +9,8 @@ use parking_lot::Mutex;
 use stacks_bench_agent::layout::{FrameworkDir, Layout};
 use stacks_bench_agent::session::SessionLayout;
 use stacks_bench_agent::session::publish::{
-    CreatePrArgs, GhClient, GitPushAuth, PublishConfig, PushInputs, push,
+    CreatePrArgs, GhClient, GhStateRead, GitPushAuth, IssueLifecycleState, PrState, PublishConfig,
+    PushInputs, push,
 };
 use stacks_bench_agent::types::SessionId;
 
@@ -180,6 +181,22 @@ impl GhClient for FakeGh {
                 body: body.to_owned(),
             });
         Ok(format!("https://github.com/{repo}/issues/1"))
+    }
+    async fn query_pr_state(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<GhStateRead<PrState>> {
+        unreachable!("publish_push tests do not exercise maintain PR reads")
+    }
+    async fn query_issue_state(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<GhStateRead<IssueLifecycleState>> {
+        unreachable!("publish_push tests do not exercise maintain issue reads")
     }
 }
 

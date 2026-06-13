@@ -419,7 +419,7 @@ v2 is shipped.
 - Parallel optimizer fan-out or shared checkout pools.
 - Cross-session memory or PR-state reconciliation
   ([0028-optimizer-memory](../../backlog.md#0028-optimizer-memory),
-  [0033-maintain-command](../../backlog.md#0033-maintain-command)).
+  [0033-maintain-command](0033-maintain-command.md)).
 - Schema or agent-prompt prose rewrites driven by the live smoke
   ([0019-prompt-hardening-live-smoke](v8-smoke-informed-prompt-hardening.md)).
 
