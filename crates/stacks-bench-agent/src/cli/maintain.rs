@@ -104,7 +104,7 @@ fn started_at_date(record: &crate::models::session_record::SessionRecord) -> &st
 
 fn render_outcome<W: Write>(out: &mut W, outcome: &ReconcileOutcome, dry_run: bool) -> Result<()> {
     if outcome.new_events.is_empty() && outcome.deferred.is_empty() {
-        writeln!(out, "no maintenance events; all observed artifacts terminal")?;
+        writeln!(out, "no maintenance events; lifecycle state unchanged")?;
         return Ok(());
     }
     let committed = if dry_run { "no" } else { "yes" };

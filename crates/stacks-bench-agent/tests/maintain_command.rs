@@ -3,7 +3,7 @@
 //! The GitHub-querying reconciler is covered in-process with `FakeGh`.
 //! These binary tests cover process-boundary behavior that does not need
 //! live GitHub: argument wiring, config loading, ledger projection, and
-//! the all-terminal no-op path.
+//! the no-op output path.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -72,7 +72,7 @@ fn maintain_all_terminal_artifacts_exits_zero_without_publish_token() {
     let out = exec_maintain(&config_path, &["--dry-run"]);
     assert_success(&out);
     let stdout = String::from_utf8(out.stdout).expect("stdout is utf-8");
-    assert_eq!(stdout, "no maintenance events; all observed artifacts terminal\n");
+    assert_eq!(stdout, "no maintenance events; lifecycle state unchanged\n");
     assert!(
         !operator
             .join("maintain.jsonl.lock")

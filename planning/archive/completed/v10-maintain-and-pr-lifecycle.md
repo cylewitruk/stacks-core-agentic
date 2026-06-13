@@ -338,8 +338,7 @@ optionally commit + push.
      `push_with_pat` helper.
 - Output: ASCII-only terminal summary table — `kind | session | target |
   url | committed?`. Same contract as v6's `history list`. Empty case:
-  "no maintenance events; all observed artifacts terminal" or
-  equivalent.
+  "no maintenance events; lifecycle state unchanged" or equivalent.
 
 **Idempotency model (load-bearing — read carefully):**
 
