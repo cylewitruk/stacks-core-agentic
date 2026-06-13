@@ -95,39 +95,6 @@ them to optimizer.
 **Acceptance:** A completed session creates a readable operator commit without
 committing raw scratch artifacts.
 
-<a id="0034-github-actions-wiring"></a>
-
-### GitHub Actions Wiring
-
-- **id:** `0034-github-actions-wiring`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0034-github-actions-wiring.md](design/0034-github-actions-wiring.md)
-
-**Problem:** Closed-loop operation needs scheduled session and maintenance runs.
-
-**Scope:** Add cron workflows with concurrency guards and bot identity.
-
-**Acceptance:** Scheduled jobs run without racing each other or recursively
-triggering from bot commits.
-
-<a id="0035-autonomy-hygiene"></a>
-
-### Autonomy Hygiene
-
-- **id:** `0035-autonomy-hygiene`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0035-autonomy-hygiene.md](design/0035-autonomy-hygiene.md)
-
-**Problem:** Scheduled autonomy needs pause, rate limits, circuit breakers, and
-event-version safeguards.
-
-**Scope:** Add fail-closed safety controls before scheduled cron is enabled.
-
-**Acceptance:** Operator-free runs cannot exceed configured PR, cadence, or
-failure thresholds.
-
 <a id="0037-triage-anchor-benchmarks"></a>
 
 ### Triage Anchor Benchmarks
@@ -232,3 +199,30 @@ verification results. Keep this separate from results-analyzer verdict policy.
 
 **Acceptance:** Analyzer output gives more realistic magnitude ranges without
 making results-analyzer confidence depend on forecast accuracy.
+
+<a id="0050-local-session-cron"></a>
+
+### Local Session Cron
+
+- **id:** `0050-local-session-cron`
+- **status:** `backlog`
+- **priority:** `medium`
+- **source:** v11 planning.
+
+**Problem:** `sbagent session run` cannot currently run on GitHub-hosted CI
+because benchmark sessions require a dedicated machine with chainstate, disk,
+and runtime capacity.
+
+**Scope:** Provide a dedicated-host scheduling recipe and hardening for local
+cron / launchd / systemd timers once v11's safety gates exist.
+
+**Acceptance:** A configured benchmark host can run scheduled sessions without
+racing maintain, bypassing `.sbagent/pause`, or starting when safety gates fail.
+
+## Scheduled — see iteration docs
+
+The following item IDs are owned by an active iteration; full specs live there,
+not here.
+
+- `0034-github-actions-wiring`, `0035-autonomy-hygiene` —
+  [v11: Autonomy Safety + Scheduled Maintain](iterations/v11-autonomy-safety-and-maintain-schedule.md).

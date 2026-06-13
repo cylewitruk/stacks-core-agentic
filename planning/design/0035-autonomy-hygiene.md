@@ -1,9 +1,9 @@
 # Design: Autonomy Hygiene
 
 - **id:** `0035-autonomy-hygiene`
-- **status:** `backlog`
-- **priority:** `low`
-- **backlog:** [0035-autonomy-hygiene](../backlog.md#0035-autonomy-hygiene)
+- **status:** `planned`
+- **priority:** `medium`
+- **iteration:** [v11: Autonomy Safety + Scheduled Maintain](../iterations/v11-autonomy-safety-and-maintain-schedule.md)
 - **source:** [assets/autonomous-roadmap.md](../../assets/autonomous-roadmap.md)
 
 ## Problem
@@ -12,17 +12,23 @@ Unattended runs need hard safety controls before cron is enabled.
 
 ## Design
 
-- `.sbagent/pause` blocks new sessions.
+- `.sbagent/pause` blocks new sessions while allowing `sbagent maintain`.
 - Rate limits:
   - `max_open_agent_prs`
   - `min_session_interval_hours`
-  - `max_total_bench_hours_per_week`
 - Circuit breaker: pause automatically after K zero-accepted sessions.
+  Fewer than K completed archived sessions do not trip the breaker, and
+  sessions blocked by safety gates do not count toward K.
+- Clear operator diagnostics for every blocked run.
+
+Deferred from the older broad sketch:
+
+- `max_total_bench_hours_per_week`
 - Event versioning enforcement.
 - Idempotency keys for GitHub API calls.
 - Signed bot commits.
 
 ## Acceptance
 
-The scheduler fails closed when the operator queue, cadence, budget, or repeated
-failure thresholds are exceeded.
+Session start fails closed when the operator pause file, PR queue, cadence, or
+repeated zero-accepted-session thresholds are exceeded.

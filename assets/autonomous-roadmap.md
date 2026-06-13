@@ -77,7 +77,7 @@ The current proposal puts the autonomous lifecycle (events, schedule, secrets, t
 
 ```text
 stacks-bench-operator/
-├── .github/workflows/      sbagent-session.yml + sbagent-maintain.yml
+├── .github/workflows/      sbagent-maintain.yml
 ├── .sbagent/
 │   ├── pause               presence blocks runs
 │   ├── config.toml         rate limits, model, paths, sbagent version pin
@@ -239,18 +239,17 @@ Status: `[x]` · Shipped in
 
 ### 3B. GitHub Actions wiring
 
-Status: `[ ]` · Estimate: ~½ day · Depends on: 3A, 3C
+Status: `[ ]` · Planned in
+[`v11-autonomy-safety-and-maintain-schedule`](../planning/iterations/v11-autonomy-safety-and-maintain-schedule.md)
 
-- `.github/workflows/sbagent-session.yml`:
-  - `schedule: cron: <weekly>`.
-  - `concurrency: { group: sbagent-state, cancel-in-progress: false }`.
-  - Bot identity (deploy key or dedicated PAT) committed via `git config user.email/user.name` early in the job.
-  - Skip if `.sbagent/pause` exists (see 3C).
-  - Step: clone stacks-core submodule, `cargo build --release`, run `sbagent session run`.
-- `.github/workflows/sbagent-maintain.yml`:
+- `.github/workflows/sbagent-maintain.yml` only:
   - `schedule: cron: <daily>`.
-  - Same `concurrency` group so a maintain run can't race a session.
+  - Shared `concurrency` group reserved for autonomy jobs.
+  - Bot identity configured early.
 - Loop-detection guard: `if: github.event.head_commit.author.name != 'sbagent-bot'` on any push-triggered workflow.
+- `sbagent session run` is not scheduled in GitHub-hosted CI. Benchmark
+  sessions need a dedicated host with chainstate/data mounts and should use
+  local cron / launchd / systemd once v11's safety gates exist.
 
 ### 3C. Hygiene (required, not optional)
 
@@ -262,11 +261,9 @@ The pause file + rate limits + circuit breaker are not nice-to-haves — they're
 - **Rate limits** in `config.toml`:
   - `max_open_agent_prs` (config; default 10) — block `session run` if exceeded.
   - `min_session_interval_hours` (default 144) — block if last session was too recent.
-  - `max_total_bench_hours_per_week` (soft cap; emit warning, fail-closed by default).
 - **Circuit breaker**: if last K sessions had zero `experiment_accepted` events, set `pause` file automatically and require manual reset (K = 3 default).
-- **Event versioning enforcement**: replay rejects events with `event_version > KNOWN_MAX` with a clear error. Forces deliberate migration when schema bumps.
-- **Idempotency keys on GitHub API calls**: octocrab supports `X-GitHub-Request-Id`; use deterministic keys derived from `fix_signature + session_id` so retried PR creations dedupe.
-- **Signed commits**: bot commits use gitsign / Sigstore (or GPG fallback). Required for unattended pushes that anyone could trust.
+- Later hardening can add weekly bench-hour budgets, event-version
+  enforcement, GitHub idempotency keys, and signed commits.
 
 ### 3D. Observability surface
 
