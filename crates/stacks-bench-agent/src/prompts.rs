@@ -572,6 +572,8 @@ pub struct MergePrompt {
     pub codex_merge_model: String,
     /// Concatenated accepted analyses JSON (full corpus).
     pub accepted_analyses_json: String,
+    /// Deterministic coordinator-computed dedup rejections, as JSON.
+    pub dedup_rejections_json: String,
 }
 
 impl Prompt for MergePrompt {
@@ -785,6 +787,7 @@ impl MergePrompt {
             optimization_targets_schema_path: "/tmp/lint/optimization-targets.schema.json".into(),
             codex_merge_model: "gpt-test".into(),
             accepted_analyses_json: "[]".into(),
+            dedup_rejections_json: "[]".into(),
         }
     }
 }
@@ -1046,6 +1049,34 @@ mod tests {
             !rendered.contains("bench-run.json` is your primary evidence"),
             "stale primary-evidence wording survived:\n{rendered}"
         );
+    }
+
+    #[test]
+    fn merge_prompt_treats_dedup_as_coordinator_owned() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+        let mut p = MergePrompt::synthetic_for_lint();
+        p.dedup_rejections_json = serde_json::json!([
+            {
+                "family_id": "family-a",
+                "target_index": 0,
+                "fix_signature": "fix-a",
+                "reason": "dedup:open-pr",
+                "detail": "matching open PR"
+            }
+        ])
+        .to_string();
+        let rendered = render("merge-analyses", &p, tmp.path()).expect("render");
+
+        for expected in [
+            "Coordinator-computed cross-session dedup rejections",
+            "removed from the accepted-analysis target arrays",
+            "deterministic and coordinator-owned",
+            "or reinterpret `dedup:` rejections",
+            "coordinator appends those rows",
+        ] {
+            assert!(rendered.contains(expected), "missing `{expected}`:\n{rendered}");
+        }
     }
 
     /// v8 Phase 2 contract: the PR-writer prompt pins per-invocation table

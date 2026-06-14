@@ -283,6 +283,12 @@ pub struct AutonomySettings {
     /// row produce zero accepted targets. `0` disables the breaker.
     #[serde(default = "default_autonomy_zero_accepted_circuit_breaker")]
     pub zero_accepted_circuit_breaker: usize,
+
+    /// Block a fix signature from re-entering optimizer fan-out after
+    /// this many unsuccessful archived attempts. Lifetime count in
+    /// v12; set high to effectively disable repeated-failure dedup.
+    #[serde(default = "default_autonomy_dedup_failure_threshold")]
+    pub dedup_failure_threshold: usize,
 }
 
 impl Default for AutonomySettings {
@@ -291,6 +297,7 @@ impl Default for AutonomySettings {
             max_open_agent_prs: default_autonomy_max_open_agent_prs(),
             min_session_interval_hours: default_autonomy_min_session_interval_hours(),
             zero_accepted_circuit_breaker: default_autonomy_zero_accepted_circuit_breaker(),
+            dedup_failure_threshold: default_autonomy_dedup_failure_threshold(),
         }
     }
 }
@@ -304,6 +311,10 @@ fn default_autonomy_min_session_interval_hours() -> u64 {
 }
 
 fn default_autonomy_zero_accepted_circuit_breaker() -> usize {
+    3
+}
+
+fn default_autonomy_dedup_failure_threshold() -> usize {
     3
 }
 
@@ -1341,6 +1352,12 @@ mod tests {
                 .zero_accepted_circuit_breaker,
             3
         );
+        assert_eq!(
+            defaults
+                .autonomy
+                .dedup_failure_threshold,
+            3
+        );
 
         let custom: Settings = toml::from_str(
             r#"
@@ -1348,6 +1365,7 @@ mod tests {
             max_open_agent_prs = 5
             min_session_interval_hours = 72
             zero_accepted_circuit_breaker = 2
+            dedup_failure_threshold = 4
             "#,
         )
         .expect("custom autonomy settings parse");
@@ -1368,6 +1386,12 @@ mod tests {
                 .autonomy
                 .zero_accepted_circuit_breaker,
             2
+        );
+        assert_eq!(
+            custom
+                .autonomy
+                .dedup_failure_threshold,
+            4
         );
     }
 

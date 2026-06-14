@@ -323,6 +323,10 @@ branch_prefix = "agentic"
 # row produce zero accepted targets. Set to 0 to disable.
 # zero_accepted_circuit_breaker = 3
 
+# Block exact fix signatures from re-entering optimizer fan-out after this many
+# unsuccessful archived attempts. Lifetime count in v12.
+# dedup_failure_threshold = 3
+
 
 # ---------------------------------------------------------------------------
 # [preflight] — session-start safety floors.

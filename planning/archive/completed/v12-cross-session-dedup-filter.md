@@ -1,22 +1,22 @@
 # v12: Cross-Session Dedup Filter
 
-Successor to [v11: Autonomy Safety + Scheduled Maintain](../archive/completed/v11-autonomy-safety-and-maintain-schedule.md).
+Successor to [v11: Autonomy Safety + Scheduled Maintain](v11-autonomy-safety-and-maintain-schedule.md).
 v10 gave sbagent a `maintain.jsonl` lifecycle ledger; v11 made scheduled
 maintain safe. v12 consumes that history so new sessions do not optimize the
 same fix signature while a prior PR is still open, already merged, or repeatedly
 unsuccessful.
 
-> **Status:** planned
+> **Status:** shipped — code-complete, reviewed, validated, and archived.
 >
-> This iteration scopes deterministic cross-session dedup at merge time. It
-> does not add a unified event log; it uses `sessions.jsonl` plus
-> `maintain.jsonl` and records skips as stable `rejected_by_merge` entries.
+> v12 implements deterministic cross-session dedup at merge time. It does
+> not add a unified event log; it uses `sessions.jsonl` plus `maintain.jsonl`
+> and records skips as stable `rejected_by_merge` entries.
 
 ## Items
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0031-triage-merge-dedup-filter` | primary | planned |
+| `0031-triage-merge-dedup-filter` | primary | shipped |
 
 ## Why
 
@@ -92,6 +92,7 @@ The dedup projection classifies a prior signature as blocking when:
 Dedup rejection reasons use a closed prefix set:
 
 - `dedup:open-pr`
+- `dedup:open-issue`
 - `dedup:merged`
 - `dedup:repeated-failure`
 
@@ -140,26 +141,26 @@ manual repair or multi-run edge case leaves events slightly out of order.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] A matching open PR with no terminal or stale event returns a blocking
+- [x] A matching open PR with no terminal or stale event returns a blocking
       decision.
-- [ ] A matching merged PR returns a blocking decision.
-- [ ] A matching stale open PR does not block, but is retained as prior context.
-- [ ] Closed-unmerged attempts count toward the unsuccessful threshold.
-- [ ] Rejected / failed / aborted archived targets count toward the unsuccessful
+- [x] A matching merged PR returns a blocking decision.
+- [x] A matching stale open PR does not block, but is retained as prior context.
+- [x] Closed-unmerged attempts count toward the unsuccessful threshold.
+- [x] Rejected / failed / aborted archived targets count toward the unsuccessful
       threshold.
-- [ ] Below-threshold unsuccessful history does not block.
-- [ ] Projection uses exact `fix_signature`; same family with a different
+- [x] Below-threshold unsuccessful history does not block.
+- [x] Projection uses exact `fix_signature`; same family with a different
       signature is not blocked.
-- [ ] Projection sorts maintain events by `observed_at` before deriving latest
+- [x] Projection sorts maintain events by `observed_at` before deriving latest
       PR / issue state.
-- [ ] Consensus PoC PR and consensus issue records participate in dedup using
+- [x] Consensus PoC PR and consensus issue records participate in dedup using
       the same exact-signature key.
 
 **Tests:**
@@ -194,20 +195,21 @@ showing the operator what was deduped and why.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] A deduped target is absent from the LLM merge input.
-- [ ] The final written `optimization-targets.json` contains a
+- [x] A deduped target is absent from the LLM merge input.
+- [x] The final written `optimization-targets.json` contains a
       `rejected_by_merge` row with one of the closed reasons:
-      `dedup:open-pr`, `dedup:merged`, or `dedup:repeated-failure`.
-- [ ] Non-dedup analyzer targets still reach the merge prompt unchanged.
-- [ ] `final-message.md` reports dedup skip count and reason categories.
-- [ ] Schema version remains unchanged.
+      `dedup:open-pr`, `dedup:open-issue`, `dedup:merged`, or
+      `dedup:repeated-failure`.
+- [x] Non-dedup analyzer targets still reach the merge prompt unchanged.
+- [x] `final-message.md` reports dedup skip count and reason categories.
+- [x] Schema version remains unchanged.
 
 **Tests:**
 
@@ -234,18 +236,18 @@ the existing optimizer boundary stays intact: optimizer fan-out reads
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Validator rejects a missing dedup rejection row.
-- [ ] Validator rejects an invented `dedup:` rejection row.
-- [ ] Validator rejects an unknown `dedup:` reason category.
-- [ ] Validator rejects a deduped target that also appears in `targets[]`.
-- [ ] Optimizer receives only non-deduped targets in a fixture end-to-end chain.
+- [x] Validator rejects a missing dedup rejection row.
+- [x] Validator rejects an invented `dedup:` rejection row.
+- [x] Validator rejects an unknown `dedup:` reason category.
+- [x] Validator rejects a deduped target that also appears in `targets[]`.
+- [x] Optimizer receives only non-deduped targets in a fixture end-to-end chain.
 
 **Tests:**
 
@@ -271,19 +273,19 @@ raw JSON.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Docs state that exact `fix_signature` matching is the only v12 dedup
+- [x] Docs state that exact `fix_signature` matching is the only v12 dedup
       mechanism.
-- [ ] Docs state stale open PRs are not hard-blocked.
-- [ ] Docs state `dedup:` rows live in `rejected_by_merge`.
-- [ ] Docs state unsuccessful-attempt counts are lifetime counts in v12.
-- [ ] `assets/example.config.toml` includes the threshold with a short comment.
+- [x] Docs state stale open PRs are not hard-blocked.
+- [x] Docs state `dedup:` rows live in `rejected_by_merge`.
+- [x] Docs state unsuccessful-attempt counts are lifetime counts in v12.
+- [x] `assets/example.config.toml` includes the threshold with a short comment.
 
 **Tests:**
 
@@ -292,13 +294,13 @@ raw JSON.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache`
-- [ ] `just test --summary --no-sccache`
-- [ ] Fixture session with a prior open PR skips the matching analyzer target
+- [x] `just lint --no-sccache`
+- [x] `just test --summary --no-sccache`
+- [x] Fixture session with a prior open PR skips the matching analyzer target
       and still optimizes unrelated targets.
-- [ ] Fixture session with a stale prior PR does not hard-block the matching
+- [x] Fixture session with a stale prior PR does not hard-block the matching
       analyzer target.
-- [ ] No schema mirror changes other than config/docs-driven outputs expected
+- [x] No schema mirror changes other than config/docs-driven outputs expected
       by the implementation.
 
 ## Follow-Ups

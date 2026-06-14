@@ -39,9 +39,12 @@ documented inline in that file. Notable Pass 1c knobs:
 - `autonomy.max_open_agent_prs` (default `10`),
   `autonomy.min_session_interval_hours` (default `144`), and
   `autonomy.zero_accepted_circuit_breaker` (default `3`) — fail-closed
-  session-start gates for unattended operation. They block `sbagent session run`
-  before source materialization / baseline work; `sbagent maintain` remains
-  allowed while paused.
+  session-start gates for unattended operation.
+  `autonomy.dedup_failure_threshold` (default `3`) blocks exact fix
+  signatures from re-entering optimizer fan-out after that many unsuccessful
+  archived attempts. They block `sbagent session run` before source
+  materialization / baseline work; `sbagent maintain` remains allowed while
+  paused.
 - `preflight.min_free_gib` (default unset / `None`) — session-start
   free-disk floor on the filesystem holding
   `layout.agent_workspace_root`. When set, the preflight emits a hard

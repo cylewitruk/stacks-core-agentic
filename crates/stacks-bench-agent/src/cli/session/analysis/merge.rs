@@ -28,10 +28,17 @@ pub async fn run(_args: AnalysisMergeArgs, ctx: &CliContext, session_id: &Sessio
 
     if outputs.empty_input_shortcut {
         println!("merge-analyses: 0 accepted analyses; emitted empty targets list.");
+    } else if !outputs.llm_invoked {
+        println!(
+            "merge-analyses: all accepted targets skipped by dedup ({} dedup rejection(s)); \
+             emitted empty targets list.",
+            outputs.deduped_target_count
+        );
     } else {
         println!(
-            "merge-analyses: LLM merge succeeded ({} input(s) → {} target(s))",
-            outputs.accepted_input_count, outputs.merged_target_count
+            "merge-analyses: LLM merge succeeded ({} input(s) → {} target(s), {} dedup \
+             rejection(s))",
+            outputs.accepted_input_count, outputs.merged_target_count, outputs.deduped_target_count
         );
     }
     Ok(())

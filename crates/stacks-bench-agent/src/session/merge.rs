@@ -27,11 +27,12 @@ use anyhow::{Context as _, Result, bail};
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::analyze::{AcceptedAnalysis, Analysis};
-use crate::models::common::{BreakageClass, Bucket};
-use crate::models::targets::OptimizationTargets;
+use crate::models::common::{BreakageClass, Bucket, LensDispositionEntry, SchemaVersionV4};
+use crate::models::targets::{OptimizationTargets, RejectedByMerge};
 use crate::models::{ToJson, ValidateModel};
 use crate::prompts;
-use crate::session::{SessionLayout, loader};
+use crate::session::dedup::{self, DedupDecision};
+use crate::session::{SessionLayout, ledger_reader, loader, maintain_ledger};
 use crate::settings::Settings;
 
 /// Inputs to a merge run.
@@ -55,6 +56,12 @@ pub struct Outputs {
     pub merged_target_count: usize,
     /// True iff the empty-input shortcut fired (no LLM call was made).
     pub empty_input_shortcut: bool,
+    /// Number of analyzer-emitted targets deterministically rejected
+    /// by cross-session dedup.
+    pub deduped_target_count: usize,
+    /// True iff the merge LLM was invoked. False for no accepted
+    /// analyses and for all-targets-deduped shortcuts.
+    pub llm_invoked: bool,
     /// Conversation id captured from the LLM events stream (None when the
     /// shortcut fires).
     pub conversation_id: Option<String>,
@@ -111,14 +118,63 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             accepted_input_count: 0,
             merged_target_count: 0,
             empty_input_shortcut: true,
+            deduped_target_count: 0,
+            llm_invoked: false,
+            conversation_id: None,
+        });
+    }
+
+    let (filtered_accepted, dedup_decisions) = compute_dedup_filtered_inputs(inputs, &accepted)?;
+    let deduped_target_count = dedup_decisions.len();
+
+    if filtered_accepted
+        .iter()
+        .all(|a| a.targets.is_empty())
+    {
+        let empty = OptimizationTargets {
+            schema_version: SchemaVersionV4,
+            session_id: candidates.session_id.clone(),
+            baseline_run_id: candidates.baseline_run_id,
+            baseline_rerun_id: candidates.baseline_rerun_id,
+            noise_floor_pct: candidates.noise_floor_pct,
+            merge_method: crate::models::targets::MergeMethod::Llm,
+            merge_model: String::new(),
+            targets: vec![],
+            rejected_by_merge: dedup_rejections(&dedup_decisions),
+            lens_dispositions: lens_dispositions_from_accepted(&accepted),
+        };
+        fs::create_dir_all(layout.merge_dir())
+            .with_context(|| format!("creating {}", layout.merge_dir().display()))?;
+        fs::write(layout.optimization_targets_json(), empty.to_json_pretty()? + "\n")?;
+        fs::write(
+            layout.merge_final_message(),
+            format!(
+                "# Merge phase: dedup-only\n\nAll analyzer-emitted targets were skipped by \
+                 cross-session dedup.\n\nDedup rejections: {}\n\nCoverage check satisfied: {} \
+                 input target(s), 0 merged target(s), {} rejected_by_merge row(s).\n",
+                dedup_summary_markdown(&dedup_decisions),
+                deduped_target_count,
+                deduped_target_count,
+            ),
+        )?;
+        validate_merge_output_with_dedup(&empty, &accepted, &dedup_decisions)?;
+        return Ok(Outputs {
+            accepted_input_count: accepted_count,
+            merged_target_count: 0,
+            empty_input_shortcut: false,
+            deduped_target_count,
+            llm_invoked: false,
             conversation_id: None,
         });
     }
 
     // Render the merge prompt with the accepted-analyses array inlined.
-    let accepted_json = accepted
+    let accepted_json = filtered_accepted
         .to_json_pretty()
         .context("serializing accepted analyses for merge prompt")?;
+    let dedup_json = dedup_decisions
+        .to_json_pretty()
+        .context("serializing dedup decisions for merge prompt")?;
     let merge_reasoning_effort = inputs
         .settings
         .codex
@@ -177,6 +233,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             bucket_anchors_path: crate::context::ctx_path(&ctx_paths, "bucket-anchors")?,
             codex_merge_model: merge_model_id.to_owned(),
             accepted_analyses_json: accepted_json,
+            dedup_rejections_json: dedup_json,
         },
         prompts_dir,
     )?;
@@ -284,15 +341,115 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     }
 
     // Parse + validate the LLM output.
-    let targets = loader::read_optimization_targets(layout)?;
-    validate_merge_output(&targets, &accepted)?;
+    let mut targets = loader::read_optimization_targets(layout)?;
+    targets
+        .rejected_by_merge
+        .extend(dedup_rejections(&dedup_decisions));
+    fs::write(layout.optimization_targets_json(), targets.to_json_pretty()? + "\n")?;
+    validate_merge_output_with_dedup(&targets, &accepted, &dedup_decisions)?;
 
     Ok(Outputs {
         accepted_input_count: accepted_count,
         merged_target_count: targets.targets.len(),
         empty_input_shortcut: false,
+        deduped_target_count,
+        llm_invoked: true,
         conversation_id: invoke_outputs.conversation_id,
     })
+}
+
+fn compute_dedup_filtered_inputs(
+    inputs: &Inputs<'_, impl AgentHarness>,
+    accepted: &[&AcceptedAnalysis],
+) -> Result<(Vec<AcceptedAnalysis>, Vec<DedupDecision>)> {
+    let operator = inputs
+        .framework
+        .require_operator_repo_root()?;
+    let sessions = ledger_reader::read_all(&operator.join("sessions.jsonl"))
+        .context("reading sessions.jsonl for merge dedup projection")?;
+    for skipped in &sessions.skipped {
+        eprintln!(
+            "merge dedup: skipping malformed sessions.jsonl line {}: {}",
+            skipped.line_number, skipped.error
+        );
+    }
+    let maintain = maintain_ledger::read_all(&operator.join("maintain.jsonl"))
+        .context("reading maintain.jsonl for merge dedup projection")?;
+    for skipped in &maintain.skipped {
+        eprintln!(
+            "merge dedup: skipping malformed maintain.jsonl line {}: {}",
+            skipped.line_number, skipped.error
+        );
+    }
+    let projection = dedup::DedupProjection::from_ledgers(
+        &sessions.records,
+        &maintain.events,
+        inputs
+            .settings
+            .autonomy
+            .dedup_failure_threshold,
+    );
+
+    Ok(filter_accepted_for_dedup(accepted, &projection))
+}
+
+fn filter_accepted_for_dedup(
+    accepted: &[&AcceptedAnalysis],
+    projection: &dedup::DedupProjection,
+) -> (Vec<AcceptedAnalysis>, Vec<DedupDecision>) {
+    let mut decisions = Vec::new();
+    let mut filtered = Vec::new();
+    for analysis in accepted {
+        let mut next = (*analysis).clone();
+        next.targets.clear();
+        for (idx, target) in analysis
+            .targets
+            .iter()
+            .enumerate()
+        {
+            if let Some(decision) = projection.decision_for(&analysis.family_id, idx, target) {
+                decisions.push(decision);
+            } else {
+                next.targets
+                    .push(target.clone());
+            }
+        }
+        filtered.push(next);
+    }
+    (filtered, decisions)
+}
+
+fn dedup_rejections(decisions: &[DedupDecision]) -> Vec<RejectedByMerge> {
+    decisions
+        .iter()
+        .map(DedupDecision::to_rejected_by_merge)
+        .collect()
+}
+
+fn lens_dispositions_from_accepted(accepted: &[&AcceptedAnalysis]) -> Vec<LensDispositionEntry> {
+    accepted
+        .iter()
+        .map(|a| LensDispositionEntry {
+            family_id: a.family_id.clone(),
+            lens: a.lens_disposition.lens,
+            status: a.lens_disposition.status,
+            reason: a
+                .lens_disposition
+                .reason
+                .clone(),
+        })
+        .collect()
+}
+
+fn dedup_summary_markdown(decisions: &[DedupDecision]) -> String {
+    if decisions.is_empty() {
+        return "none".to_owned();
+    }
+    decisions
+        .iter()
+        .map(|d| format!("{} target[{}] {} ({})", d.family_id, d.target_index, d.reason, d.detail))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Validate the merged output against (1) the typed model's per-record
@@ -301,6 +458,15 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
 pub fn validate_merge_output(
     targets: &OptimizationTargets,
     accepted: &[&AcceptedAnalysis],
+) -> Result<()> {
+    validate_merge_output_with_dedup(targets, accepted, &[])
+}
+
+/// Validate merge output plus coordinator-computed dedup decisions.
+pub fn validate_merge_output_with_dedup(
+    targets: &OptimizationTargets,
+    accepted: &[&AcceptedAnalysis],
+    expected_dedup: &[DedupDecision],
 ) -> Result<()> {
     targets
         .validate_model()
@@ -349,6 +515,35 @@ pub fn validate_merge_output(
             expected_pairs.len(),
             accounted.len()
         );
+    }
+
+    let expected_dedup_pairs: BTreeSet<(String, usize, String)> = expected_dedup
+        .iter()
+        .map(|d| (d.family_id.clone(), d.target_index, d.reason.clone()))
+        .collect();
+    let actual_dedup_pairs: BTreeSet<(String, usize, String)> = targets
+        .rejected_by_merge
+        .iter()
+        .filter(|r| r.reason.starts_with("dedup:"))
+        .map(|r| (r.family_id.clone(), r.target_index, r.reason.clone()))
+        .collect();
+    if actual_dedup_pairs != expected_dedup_pairs {
+        bail!(
+            "merge: dedup rejection invariant failed (expected coordinator-computed dedup \
+             decisions exactly once). expected={:?} actual={:?}",
+            expected_dedup_pairs,
+            actual_dedup_pairs
+        );
+    }
+    for r in &targets.rejected_by_merge {
+        if r.reason.starts_with("dedup:") && !dedup::is_dedup_reason(&r.reason) {
+            bail!(
+                "merge: unknown dedup rejection reason `{}` for family_id={} target_index={}",
+                r.reason,
+                r.family_id,
+                r.target_index
+            );
+        }
     }
 
     // Lens-disposition coverage: every accepted family_id appears once.
@@ -589,6 +784,194 @@ mod tests {
         );
     }
 
+    #[test]
+    fn accepts_expected_dedup_rejection() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let decision = dedup_decision("fam-a", 0, "fix-1", dedup::DEDUP_REASON_OPEN_PR);
+        let mut targets = make_targets_doc(vec![]);
+        targets
+            .rejected_by_merge
+            .push(decision.to_rejected_by_merge());
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        validate_merge_output_with_dedup(&targets, &accepted, &[decision]).unwrap();
+    }
+
+    #[test]
+    fn filter_removes_deduped_targets_and_keeps_unrelated_targets() {
+        let prior = crate::models::session_record::SessionRecord {
+            kind: crate::models::session_record::SessionRecordKind::SessionCompleted,
+            schema_version: crate::models::common::SchemaVersionV3,
+            id: "prior".to_owned(),
+            artifact_branch: "session/prior".to_owned(),
+            artifact_sha: "abc123".to_owned(),
+            artifact_url: None,
+            started_at: "2026-06-11T00:00:00Z".to_owned(),
+            finished_at: "2026-06-11T01:00:00Z".to_owned(),
+            status: crate::models::session_record::SessionStatus::Succeeded,
+            failure_phase: None,
+            failure_reason: None,
+            sbagent_version: "0.1.0".to_owned(),
+            sbagent_git_sha: None,
+            range: crate::models::session_record::SessionRange {
+                start_at: Some(1),
+                count: Some(1),
+                warmup: Some(0),
+                filter: None,
+                network: "mainnet".to_owned(),
+            },
+            baseline_run_ids: vec![100],
+            phase_durations_secs: Default::default(),
+            targets: vec![crate::models::session_record::TargetRecord {
+                id: "fix-1".to_owned(),
+                family_id: "prior-family".to_owned(),
+                bucket: "block_processing".to_owned(),
+                delivery_mode: crate::models::common::DeliveryMode::NormalPr,
+                status: crate::models::session_record::TargetStatus::Accepted,
+                status_stage: None,
+                reason_code: None,
+                head_sha: None,
+                pr_url: Some("https://github.com/owner/repo/pull/1".to_owned()),
+                issue_url: None,
+                bench: None,
+            }],
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
+        };
+        let projection = dedup::DedupProjection::from_ledgers(&[prior], &[], 3);
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![
+                make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None),
+                make_target("x::z", Bucket::BlockProcessing, "fix-2", false, None),
+            ],
+        );
+        let accepted = vec![&analysis];
+
+        let (filtered, decisions) = filter_accepted_for_dedup(&accepted, &projection);
+
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].fix_signature, "fix-1");
+        assert_eq!(decisions[0].reason, dedup::DEDUP_REASON_OPEN_PR);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].targets.len(), 1);
+        assert_eq!(filtered[0].targets[0].fix_signature, "fix-2");
+    }
+
+    #[test]
+    fn rejects_missing_expected_dedup_rejection() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let decision = dedup_decision("fam-a", 0, "fix-1", dedup::DEDUP_REASON_OPEN_PR);
+        let mut targets = make_targets_doc(vec![]);
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        let err = validate_merge_output_with_dedup(&targets, &accepted, &[decision])
+            .expect_err("expected missing dedup row to fail");
+        assert!(
+            err.to_string()
+                .contains("target coverage"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_invented_dedup_rejection() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let mut targets = make_targets_doc(vec![]);
+        targets
+            .rejected_by_merge
+            .push(crate::models::targets::RejectedByMerge {
+                family_id: "fam-a".to_owned(),
+                target_index: 0,
+                reason: dedup::DEDUP_REASON_OPEN_PR.to_owned(),
+            });
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        let err = validate_merge_output_with_dedup(&targets, &accepted, &[])
+            .expect_err("expected invented dedup row to fail");
+        assert!(
+            err.to_string()
+                .contains("dedup rejection invariant"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_dedup_reason() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let decision = dedup_decision("fam-a", 0, "fix-1", "dedup:unknown");
+        let mut targets = make_targets_doc(vec![]);
+        targets
+            .rejected_by_merge
+            .push(decision.to_rejected_by_merge());
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        let err = validate_merge_output_with_dedup(&targets, &accepted, &[decision])
+            .expect_err("expected unknown dedup reason to fail");
+        assert!(
+            err.to_string()
+                .contains("unknown dedup rejection reason"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_deduped_target_also_in_targets() {
+        let analysis = make_accepted_with_targets(
+            "fam-a",
+            vec![make_target("x::y", Bucket::BlockProcessing, "fix-1", false, None)],
+        );
+        let accepted = vec![&analysis];
+        let decision = dedup_decision("fam-a", 0, "fix-1", dedup::DEDUP_REASON_OPEN_PR);
+        let mut targets = make_targets_doc(vec![merged_target_for(
+            "merged-1",
+            Bucket::BlockProcessing,
+            vec![("fam-a", 0)],
+            false,
+            None,
+        )]);
+        targets
+            .rejected_by_merge
+            .push(decision.to_rejected_by_merge());
+        targets
+            .lens_dispositions
+            .push(make_lens_disposition_entry("fam-a"));
+
+        let err = validate_merge_output_with_dedup(&targets, &accepted, &[decision])
+            .expect_err("expected double-accounted dedup target to fail");
+        assert!(
+            err.to_string()
+                .contains("target coverage"),
+            "got: {err}"
+        );
+    }
+
     fn make_accepted_with_targets(
         family_id: &str,
         targets: Vec<AnalyzerTarget>,
@@ -607,6 +990,21 @@ mod tests {
             },
             targets,
             global_materiality_note: None,
+        }
+    }
+
+    fn dedup_decision(
+        family_id: &str,
+        target_index: usize,
+        fix_signature: &str,
+        reason: &str,
+    ) -> DedupDecision {
+        DedupDecision {
+            family_id: family_id.to_owned(),
+            target_index,
+            fix_signature: fix_signature.to_owned(),
+            reason: reason.to_owned(),
+            detail: "test detail".to_owned(),
         }
     }
 

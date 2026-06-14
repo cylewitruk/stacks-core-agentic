@@ -31,6 +31,14 @@ The JSON must match `{{ optimization_targets_schema_path }}`.
 {{ accepted_analyses_json }}
 ```
 
+- Coordinator-computed cross-session dedup rejections. These targets were
+  removed from the accepted-analysis target arrays before this prompt was
+  rendered.
+
+```json
+{{ dedup_rejections_json }}
+```
+
 # Merge Model
 
 Treat each analyzer target as a contributor:
@@ -136,6 +144,11 @@ Use `rejected_by_merge` only for a strong target-specific reason: already
 shipped, forbidden scope, or optimizer-rule violation. Otherwise emit a
 singleton target.
 
+Cross-session dedup is deterministic and coordinator-owned. Do not invent,
+drop, or reinterpret `dedup:` rejections. The coordinator appends those rows to
+`optimization-targets.json` after your merge output is written. Use the
+dedup-rejections input only to summarize skipped targets in `final-message.md`.
+
 # Required Invariants
 
 Before writing JSON, verify:
@@ -173,7 +186,7 @@ Top-level JSON:
 ```
 
 `{{ opt_session_dir }}/merge/final-message.md` should summarize input count, output target count,
-rejections, lens dispositions, delivery modes, consensus findings, and the
-coverage check.
+rejections, deterministic dedup skips, lens dispositions, delivery modes,
+consensus findings, and the coverage check.
 
 Do not modify inputs, source code, or benchmarks.

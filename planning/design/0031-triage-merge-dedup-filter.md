@@ -1,9 +1,10 @@
 # Design: Triage / Merge Dedup Filter
 
 - **id:** `0031-triage-merge-dedup-filter`
-- **status:** `planned`
+- **status:** `shipped`
 - **priority:** `low`
-- **iteration:** [v12: Cross-Session Dedup Filter](../iterations/v12-cross-session-dedup-filter.md)
+- **archive:** [0031: Triage / Merge Dedup Filter](../archive/completed/0031-triage-merge-dedup-filter.md)
+- **iteration:** [v12: Cross-Session Dedup Filter](../archive/completed/v12-cross-session-dedup-filter.md)
 - **source:** [assets/autonomous-roadmap.md](../../assets/autonomous-roadmap.md)
 
 ## Problem
@@ -25,8 +26,9 @@ v12 implements this without the deferred unified event log: the coordinator
 precomputes dedup decisions, removes blocked targets from the merge prompt
 input, and appends deterministic `rejected_by_merge` rows with a stable
 `dedup:` reason before validation and write. The closed reasons are
-`dedup:open-pr`, `dedup:merged`, and `dedup:repeated-failure`. Stale open PRs
-are retained as context but do not hard-block.
+`dedup:open-pr`, `dedup:open-issue`, `dedup:merged`, and
+`dedup:repeated-failure`. Stale open PRs are retained as context but do not
+hard-block.
 
 `TargetRecord.id` in `sessions.jsonl` is the archived fix signature; v12 treats
 it as the same key as analyzer `target.fix_signature`. The policy applies to all

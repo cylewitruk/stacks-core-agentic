@@ -13,6 +13,7 @@ pub mod calibration;
 pub mod cargo;
 pub mod clean;
 pub mod db_consistency;
+pub mod dedup;
 pub mod finalize;
 pub mod layout;
 pub mod ledger_reader;

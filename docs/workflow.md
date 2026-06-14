@@ -341,3 +341,24 @@ The ledger entry that Phase 6 archive appends to `sessions.jsonl`
 mirrors the relevant subset of this — see
 [session-archive.md](session-archive.md) for the `SessionRecord`
 schema.
+
+## Cross-session dedup
+
+The merge phase applies exact-signature cross-session dedup before optimizer
+fan-out. It reads `sessions.jsonl` plus `maintain.jsonl`, compares analyzer
+`fix_signature` values against archived `TargetRecord.id` values, and records
+deterministic skips as `rejected_by_merge` rows with `dedup:` reasons in
+`merge/optimization-targets.json`.
+
+The current policy is intentionally narrow:
+
+- open, non-stale PRs block with `dedup:open-pr`;
+- open issues block with `dedup:open-issue`;
+- merged PRs block with `dedup:merged`;
+- lifetime unsuccessful attempts at or above
+  `autonomy.dedup_failure_threshold` block with
+  `dedup:repeated-failure`;
+- stale open PRs are context, not a hard block.
+
+`optimization-targets.json` is authoritative. `merge/final-message.md`
+summarizes dedup skips for operators, but the JSON is the durable contract.

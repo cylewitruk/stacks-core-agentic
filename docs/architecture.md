@@ -161,12 +161,15 @@ that converge on the same fix.
   `fix_signature`. Produces `analysis/<family-id>/analysis.json` with
   `status: accepted | rejected`.
 - **Merge** runs once over the accepted analyses (LLM consolidation
-  pass; smaller / faster model is appropriate here). Identifies
-  analyses that propose the same structural change and collapses them
-  into a single optimization target with cross-family provenance.
-  Produces `merge/optimization-targets.json`. The coverage invariant
-  is enforced: every accepted family appears in exactly one target's
-  `merged_from` or in `rejected_by_merge`.
+  pass; smaller / faster model is appropriate here). Before the LLM
+  call, sbagent applies exact-signature cross-session dedup from
+  `sessions.jsonl` + `maintain.jsonl`. It then identifies analyses
+  that propose the same structural change and collapses them into a
+  single optimization target with cross-family provenance. Produces
+  `merge/optimization-targets.json`. The coverage invariant is
+  enforced: every accepted family appears in exactly one target's
+  `merged_from` or in `rejected_by_merge`; deduped rows use stable
+  `dedup:` reasons.
 - **Optimizer** runs in parallel, one per merged target, each in its
   own per-target git clone. Implements the change, runs tests, leaves
   a release binary for the bench phase to measure. Writes into

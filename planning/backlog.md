@@ -42,11 +42,6 @@ optimizer agents once enough session history exists.
 **Acceptance:** A new session can avoid at least one previously rejected or
 already-attempted target through durable memory.
 
-## Scheduled Items
-
-- `0031-triage-merge-dedup-filter` is scheduled in
-  [v12: Cross-Session Dedup Filter](iterations/v12-cross-session-dedup-filter.md).
-
 ## Autonomous Closed-Loop Items
 
 Imported from [assets/autonomous-roadmap.md](../assets/autonomous-roadmap.md).

@@ -193,18 +193,20 @@ Status: `[ ]` · Estimate: ~1 day
 
 ### 2B. Triage / merge dedup filter
 
-Status: `[~]` · Planned in
-[`v12-cross-session-dedup-filter`](../planning/iterations/v12-cross-session-dedup-filter.md)
-· Estimate: ~½ day
+Status: `[x]` · Shipped in
+[`0031-triage-merge-dedup-filter`](../planning/archive/completed/0031-triage-merge-dedup-filter.md)
 
 - Phase 1.7 (merge) reads projection at start.
 - For each candidate target, look up `fix_signature` in projection. Drop if:
   - Status is `pr_open` and PR is not stale (define stale via config: e.g. `pr_stale_after_days = 30`).
+  - Status is `issue_open`.
   - Status is `pr_merged` (upstream already has it).
   - Status is `tried_n_times_no_signal` with N ≥ `dedup_failure_threshold` (config; default 3).
 - v12 implements this against `sessions.jsonl` + `maintain.jsonl` rather than
   waiting for the deferred 2A unified event log. Dedup skips are recorded as
-  deterministic `rejected_by_merge` rows with `dedup:` reasons.
+  deterministic `rejected_by_merge` rows with closed `dedup:` reasons
+  (`dedup:open-pr`, `dedup:open-issue`, `dedup:merged`,
+  `dedup:repeated-failure`).
 
 ### 2C. Per-session commit + push
 
