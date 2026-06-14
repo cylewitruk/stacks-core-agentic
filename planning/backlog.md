@@ -2,6 +2,14 @@
 
 Items here are recoverable but not currently assigned to an iteration.
 
+## Scheduled Items
+
+The following items are scheduled into current iteration docs and are tracked
+there instead of as standalone backlog entries:
+
+- `0028-optimizer-memory` — planned in
+  [v13: Cross-Session Optimizer Memory](iterations/v13-cross-session-optimizer-memory.md).
+
 ## Candidate Items
 
 <a id="0025-named-phases"></a>
@@ -23,24 +31,6 @@ numbering history.
 
 **Deferred / non-goals:** Do not change artifact paths unless paired with a
 separate migration.
-
-<a id="0028-optimizer-memory"></a>
-
-### Cross-Session Optimizer Memory
-
-- **id:** `0028-optimizer-memory`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0028-optimizer-memory.md](design/0028-optimizer-memory.md)
-
-**Problem:** Optimizers start cold and can rediscover fixes or dead ends from
-prior sessions.
-
-**Scope:** Surface remembered prior attempts/rejections to triage, analyzer, or
-optimizer agents once enough session history exists.
-
-**Acceptance:** A new session can avoid at least one previously rejected or
-already-attempted target through durable memory.
 
 ## Autonomous Closed-Loop Items
 
