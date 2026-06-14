@@ -42,6 +42,11 @@ optimizer agents once enough session history exists.
 **Acceptance:** A new session can avoid at least one previously rejected or
 already-attempted target through durable memory.
 
+## Scheduled Items
+
+- `0031-triage-merge-dedup-filter` is scheduled in
+  [v12: Cross-Session Dedup Filter](iterations/v12-cross-session-dedup-filter.md).
+
 ## Autonomous Closed-Loop Items
 
 Imported from [assets/autonomous-roadmap.md](../assets/autonomous-roadmap.md).
@@ -61,23 +66,6 @@ These are not near-term until live manual sessions prove the core loop.
 **Scope:** Add append-only event JSONL plus a disposable SQLite projection.
 
 **Acceptance:** `sbagent history show` can render replayed session/target state.
-
-<a id="0031-triage-merge-dedup-filter"></a>
-
-### Triage / Merge Dedup Filter
-
-- **id:** `0031-triage-merge-dedup-filter`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0031-triage-merge-dedup-filter.md](design/0031-triage-merge-dedup-filter.md)
-
-**Problem:** New sessions can re-propose targets already tried, open, merged, or
-repeatedly rejected.
-
-**Scope:** Use event-history projection to skip duplicate fix signatures.
-
-**Acceptance:** Merge emits skip events for deduped targets and does not send
-them to optimizer.
 
 <a id="0032-per-session-commit-push"></a>
 
