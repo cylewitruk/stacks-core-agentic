@@ -4,7 +4,13 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-No items are currently scheduled into active iteration docs.
+The following items are scheduled into current iteration docs and are tracked
+there instead of as standalone backlog entries:
+
+<a id="0043-history-report"></a>
+
+- `0043-history-report` — planned in
+  [v17: History Report](iterations/v17-history-report.md).
 
 ## Candidate Items
 
@@ -65,41 +71,6 @@ baseline measurements for every promoted representative.
 
 **Acceptance:** Analyzer, optimizer, and verification can compare against the
 same anchor recipe and cache regime.
-
-<a id="0043-history-report"></a>
-
-### History Report (Markdown)
-
-- **id:** `0043-history-report`
-- **status:** `backlog`
-- **priority:** `low`
-- **source:** v6 Phase 5 (deferred); see
-  [v6 archive](archive/completed/v6-observability-surface.md#phase-5-stretch-sbagent-history-report).
-
-**Problem:** Operators have `sbagent history list` + `show` (v6) but no
-single document they can commit / share / paste into a weekly digest.
-
-**Scope:** Add `sbagent history report [--since <ref>] [--out <path>]`.
-Default `--since` is "the most recent ISO week with archived sessions";
-default `--out` is stdout. Markdown sections:
-
-- **Summary**: session count, target outcome rollup, total wall-clock
-  across the period.
-- **Per-session table**: same columns as `history list`, rendered as a
-  markdown table.
-- **PRs opened**: bulleted list of `pr_url`s grouped by session.
-- **Issues opened**: bulleted list of `issue_url`s.
-
-**Promotion trigger:** Best picked up as v17 now that
-[v16: Projection Migration Completion](archive/completed/v16-projection-migration-completion.md)
-has shipped. `0033-maintain-command` added GitHub-side reconciliation (open /
-merged / closed / stale PR state) to `maintain.jsonl`, and v15 introduced the
-shared projection. v16 finished migrating read-side consumers so the report can
-consume `HistoryProjectionV1` instead of adding another raw ledger pass.
-
-**Acceptance:** Default invocation produces a markdown document with
-the four sections above against a fixture ledger.
-`--out reports/<iso-week>.md` writes to disk; stdout stays empty.
 
 <a id="0045-ephemeral-codex-runtime-state"></a>
 

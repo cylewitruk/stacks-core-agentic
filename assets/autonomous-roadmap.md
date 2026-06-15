@@ -291,14 +291,15 @@ The pause file + rate limits + circuit breaker are not nice-to-haves — they're
 
 ### 3D. Observability surface
 
-Status: `[ ]` · Estimate: ~1 day · Depends on: 2A, 3A
+Status: `[~]` · Planned in
+[`v17-history-report`](../planning/iterations/v17-history-report.md) · Depends
+on: 2A, 3A
 
 - `sbagent history report --format=markdown` — human-readable weekly digest: sessions count, PRs opened/merged/closed, top fix_signatures by attempts, agent token spend if tracked, time-to-merge distribution.
 - Optional: commit that report to `reports/<iso-week>.md` weekly so the repo itself serves as a dashboard.
 - Skip if no usage interest — defer to a v2 if running manually for a while suffices.
-- Planning note: now that v16 completed the projection migration, v17 should
-  implement this as `0043-history-report` on top of `HistoryProjectionV1`
-  rather than reading ledgers directly.
+- Planning note: v17 implements `0043-history-report` on top of
+  `HistoryProjectionV1` rather than reading ledgers directly.
 
 ---
 
