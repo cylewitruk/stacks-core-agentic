@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-15T00:00:00Z",
+  "current_source_sha": "source-current",
+  "families": [
+    {
+      "family_id": "family-a",
+      "signatures": [
+        {
+          "fix_signature": "fix-b",
+          "attempts": [
+            {
+              "session_id": "s-memory-2",
+              "target_id": "fix-b",
+              "finished_at": "2026-06-13T00:00:00Z",
+              "status": "failed",
+              "delivery_mode": "normal_pr",
+              "reason_code": "no_signal"
+            }
+          ],
+          "omitted_attempts": 0
+        },
+        {
+          "fix_signature": "fix-a",
+          "attempts": [
+            {
+              "session_id": "s-memory-1",
+              "target_id": "fix-a",
+              "finished_at": "2026-06-12T00:00:00Z",
+              "status": "accepted",
+              "delivery_mode": "normal_pr",
+              "source_sha": "source-1",
+              "pr_url": "https://github.com/owner/repo/pull/1",
+              "lifecycle_kind": "pr_merged",
+              "lifecycle_state": "merged",
+              "lifecycle_observed_at": "2026-06-14T00:00:00Z",
+              "head_sha": "pr-head"
+            }
+          ],
+          "omitted_attempts": 0
+        }
+      ],
+      "omitted_sibling_signatures": 0
+    }
+  ]
+}

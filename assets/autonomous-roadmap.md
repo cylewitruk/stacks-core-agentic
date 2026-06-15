@@ -172,24 +172,19 @@ Status: `[ ]`
 
 Without this, every session restarts from zero; sbagent re-proposes things it already tried, ignores things it already merged. **Required for "closed loop."**
 
-### 2A. Event log skeleton
+### 2A. Shared cross-session projection
 
-Status: `[ ]` · Estimate: ~1 day
+Status: `[x]` · Shipped in
+[`v15-cross-session-projection-facade`](../planning/archive/completed/v15-cross-session-projection-facade.md)
 
-- Define event types as a Rust enum + schemars-emitted JSON Schema. Initial set:
-  - Session-level: `session_started`, `session_finalized`.
-  - Triage: `candidate_proposed`, `candidate_skipped_by_dedup` (filled in by 2B).
-  - Analysis: `analysis_accepted`, `analysis_rejected`.
-  - Merge: `target_merged`, `target_rejected_by_merge`.
-  - Optimize: `attempt_started`, `attempt_kept`, `attempt_reverted`, `attempt_crashed` (from 1B).
-  - Bench: `bench_completed`, `bench_failed`.
-  - Finalize: `experiment_accepted`, `experiment_rejected`, `experiment_aborted`.
-  - Publish (Phase 5): `pr_opened`, `pr_opened_failed`, `issue_opened`.
-- Every event carries `event_version: 1` (versioning enforced from day one).
-- Writer: append-only JSONL to `events/<session-id>.jsonl`. Use `OpenOptions::append(true)` so concurrent writes can't corrupt.
-- Replay: `crates/stacks-bench-agent/src/session/history.rs` (new module) reads all `events/*.jsonl` and builds a `<layout.sessions_root>/.cache/history.db` SQLite projection. Cache is gitignored, disposable.
-- Projection schema: one indexed row per `(fix_signature, session_id)` with current PR state, baseline_head, improvement_pct, latest event timestamp.
-- Subcommand: `sbagent history show [--format=markdown|tsv]` renders the projection.
+- v15 rescopes the original event-log skeleton into a read-side projection
+  facade over the ledgers that already shipped:
+  - `sessions.jsonl` for archived sessions / targets;
+  - `maintain.jsonl` for PR / issue lifecycle observations.
+- The projection is rebuildable and read-only. It is not a new source ledger,
+  SQLite cache, or migration boundary.
+- Initial consumers: v12 dedup and v13 optimizer memory.
+- Deferred: append-only `events/*.jsonl` and disposable SQLite projection.
 
 ### 2B. Triage / merge dedup filter
 

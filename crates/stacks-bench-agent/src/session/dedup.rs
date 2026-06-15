@@ -15,6 +15,7 @@ use crate::models::analyze::AnalyzerTarget;
 use crate::models::maintain_event::{MaintEvent, MaintEventKind};
 use crate::models::session_record::{SessionRecord, TargetStatus};
 use crate::models::targets::RejectedByMerge;
+use crate::session::history_projection::{HistoryProjectionV1, ProjectedArtifactStateV1};
 
 /// Stable prefix used for deterministic dedup rejections.
 pub const DEDUP_REASON_OPEN_PR: &str = "dedup:open-pr";
@@ -98,26 +99,32 @@ impl DedupProjection {
         maintain_events: &[MaintEvent],
         threshold: usize,
     ) -> Self {
-        let artifact_states = project_artifacts_by_observed_at(maintain_events);
+        let history = HistoryProjectionV1::from_ledgers_v1(sessions, maintain_events);
+        Self::from_history_projection(&history, threshold)
+    }
+
+    /// Build a dedup policy projection from the shared read-side history
+    /// projection.
+    pub fn from_history_projection(history: &HistoryProjectionV1, threshold: usize) -> Self {
         let mut out = Self {
             by_signature: BTreeMap::new(),
             threshold,
         };
 
-        for session in sessions {
-            for target in &session.targets {
+        for signature in history.signatures() {
+            for attempt in history.attempts_for_signature(&signature.fix_signature) {
                 let state = out
                     .by_signature
-                    .entry(target.id.clone())
+                    .entry(attempt.fix_signature.clone())
                     .or_default();
-                if unsuccessful_from_archived_status(target.status) {
+                if unsuccessful_from_archived_status(attempt.status) {
                     state.unsuccessful_attempts += 1;
                 }
 
-                if let Some(pr_url) = &target.pr_url {
-                    match artifact_states
-                        .get(pr_url)
-                        .copied()
+                if let Some(pr_url) = &attempt.pr_url {
+                    match history
+                        .latest_artifact_state(pr_url)
+                        .map(artifact_state_from_projection)
                         .unwrap_or(ArtifactState::Open)
                     {
                         ArtifactState::Open => {
@@ -136,10 +143,10 @@ impl DedupProjection {
                     }
                 }
 
-                if let Some(issue_url) = &target.issue_url {
-                    match artifact_states
-                        .get(issue_url)
-                        .copied()
+                if let Some(issue_url) = &attempt.issue_url {
+                    match history
+                        .latest_artifact_state(issue_url)
+                        .map(artifact_state_from_projection)
                         .unwrap_or(ArtifactState::IssueOpen)
                     {
                         ArtifactState::IssueOpen => {
@@ -214,36 +221,16 @@ fn unsuccessful_from_archived_status(status: TargetStatus) -> bool {
     matches!(status, TargetStatus::Rejected | TargetStatus::Failed | TargetStatus::Aborted)
 }
 
-fn project_artifacts_by_observed_at(events: &[MaintEvent]) -> BTreeMap<String, ArtifactState> {
-    let mut sorted: Vec<&MaintEvent> = events.iter().collect();
-    sorted.sort_by(|a, b| {
-        a.observed_at
-            .cmp(&b.observed_at)
-            .then_with(|| a.pr_url.cmp(&b.pr_url))
-            .then_with(|| a.issue_url.cmp(&b.issue_url))
-    });
-
-    let mut out = BTreeMap::new();
-    for event in sorted {
-        let Some(url) = event
-            .pr_url
-            .as_ref()
-            .or(event.issue_url.as_ref())
-        else {
-            continue;
-        };
-        let state = match event.kind {
-            MaintEventKind::PrOpen | MaintEventKind::PrForcePushed => ArtifactState::Open,
-            MaintEventKind::PrMerged => ArtifactState::Merged,
-            MaintEventKind::PrClosedUnmerged => ArtifactState::ClosedUnmerged,
-            MaintEventKind::PrStale => ArtifactState::Stale,
-            MaintEventKind::PrBranchDeleted => ArtifactState::BranchDeleted,
-            MaintEventKind::IssueOpen => ArtifactState::IssueOpen,
-            MaintEventKind::IssueClosed => ArtifactState::IssueClosed,
-        };
-        out.insert(url.clone(), state);
+fn artifact_state_from_projection(state: &ProjectedArtifactStateV1) -> ArtifactState {
+    match state.kind {
+        MaintEventKind::PrOpen | MaintEventKind::PrForcePushed => ArtifactState::Open,
+        MaintEventKind::PrMerged => ArtifactState::Merged,
+        MaintEventKind::PrClosedUnmerged => ArtifactState::ClosedUnmerged,
+        MaintEventKind::PrStale => ArtifactState::Stale,
+        MaintEventKind::PrBranchDeleted => ArtifactState::BranchDeleted,
+        MaintEventKind::IssueOpen => ArtifactState::IssueOpen,
+        MaintEventKind::IssueClosed => ArtifactState::IssueClosed,
     }
-    out
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ use crate::models::targets::{OptimizationTargets, RejectedByMerge};
 use crate::models::{ToJson, ValidateModel};
 use crate::prompts;
 use crate::session::dedup::{self, DedupDecision};
-use crate::session::{SessionLayout, ledger_reader, loader, maintain_ledger, optimizer_memory};
+use crate::session::{SessionLayout, history_projection, loader, optimizer_memory};
 use crate::settings::Settings;
 
 /// Inputs to a merge run.
@@ -369,25 +369,22 @@ fn compute_dedup_filtered_inputs(
     let operator = inputs
         .framework
         .require_operator_repo_root()?;
-    let sessions = ledger_reader::read_all(&operator.join("sessions.jsonl"))
-        .context("reading sessions.jsonl for merge dedup projection")?;
-    for skipped in &sessions.skipped {
+    let history = history_projection::read_operator_projection_v1(operator)
+        .context("reading operator ledgers for merge dedup projection")?;
+    for skipped in &history.skipped_sessions {
         eprintln!(
             "merge dedup: skipping malformed sessions.jsonl line {}: {}",
             skipped.line_number, skipped.error
         );
     }
-    let maintain = maintain_ledger::read_all(&operator.join("maintain.jsonl"))
-        .context("reading maintain.jsonl for merge dedup projection")?;
-    for skipped in &maintain.skipped {
+    for skipped in &history.skipped_maintain {
         eprintln!(
             "merge dedup: skipping malformed maintain.jsonl line {}: {}",
             skipped.line_number, skipped.error
         );
     }
-    let projection = dedup::DedupProjection::from_ledgers(
-        &sessions.records,
-        &maintain.events,
+    let projection = dedup::DedupProjection::from_history_projection(
+        &history.projection,
         inputs
             .settings
             .autonomy

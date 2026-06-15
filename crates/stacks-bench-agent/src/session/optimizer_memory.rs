@@ -5,7 +5,7 @@
 //! artifact is prompt context only. It must never remove targets or replace
 //! v12's deterministic dedup gate.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
@@ -13,12 +13,15 @@ use anyhow::{Context as _, Result};
 use crate::analyzed_rejections::now_utc_iso8601;
 use crate::models::FromJsonValidated;
 use crate::models::candidates::Candidates;
-use crate::models::maintain_event::{MaintEvent, MaintEventKind};
+use crate::models::maintain_event::MaintEvent;
 use crate::models::optimizer_memory::{
     OptimizerMemoryAttempt, OptimizerMemoryFamily, OptimizerMemoryJson, OptimizerMemorySignature,
 };
-use crate::models::session_record::{SessionRecord, TargetRecord};
-use crate::session::{SessionLayout, ledger_reader, maintain_ledger};
+use crate::models::session_record::SessionRecord;
+use crate::session::SessionLayout;
+use crate::session::history_projection::{
+    self, HistoryProjectionV1, ProjectedArtifactStateV1, ProjectedAttemptV1,
+};
 
 /// Default max attempts retained per exact signature.
 pub const MAX_ATTEMPTS_PER_SIGNATURE: usize = 5;
@@ -51,27 +54,24 @@ pub fn write_for_current_candidates(
         .map(|c| c.id.clone())
         .collect();
 
-    let sessions = ledger_reader::read_all(&operator_repo_root.join("sessions.jsonl"))
-        .context("reading sessions.jsonl for optimizer memory")?;
-    for skipped in &sessions.skipped {
+    let history = history_projection::read_operator_projection_v1(operator_repo_root)
+        .context("reading operator ledgers for optimizer memory")?;
+    for skipped in &history.skipped_sessions {
         eprintln!(
             "optimizer memory: skipping malformed sessions.jsonl line {}: {}",
             skipped.line_number, skipped.error
         );
     }
-    let maintain = maintain_ledger::read_all(&operator_repo_root.join("maintain.jsonl"))
-        .context("reading maintain.jsonl for optimizer memory")?;
-    for skipped in &maintain.skipped {
+    for skipped in &history.skipped_maintain {
         eprintln!(
             "optimizer memory: skipping malformed maintain.jsonl line {}: {}",
             skipped.line_number, skipped.error
         );
     }
 
-    let memory = build_for_families(
+    let memory = build_for_families_from_projection(
         &family_ids,
-        &sessions.records,
-        &maintain.events,
+        &history.projection,
         current_source_sha.map(str::to_owned),
         now_utc_iso8601(),
     );
@@ -87,36 +87,32 @@ pub fn build_for_families(
     current_source_sha: Option<String>,
     generated_at: String,
 ) -> OptimizerMemoryJson {
-    let lifecycle = project_latest_lifecycle(maintain_events);
-    let mut by_family: BTreeMap<String, BTreeMap<String, Vec<OptimizerMemoryAttempt>>> =
-        BTreeMap::new();
+    let history = HistoryProjectionV1::from_ledgers_v1(sessions, maintain_events);
+    build_for_families_from_projection(family_ids, &history, current_source_sha, generated_at)
+}
 
-    for session in sessions {
-        for target in &session.targets {
-            if !family_ids.contains(&target.family_id) {
-                continue;
-            }
-            by_family
-                .entry(target.family_id.clone())
-                .or_default()
-                .entry(target.id.clone())
-                .or_default()
-                .push(attempt_from_target(session, target, &lifecycle));
-        }
-    }
-
+/// Build a memory artifact from the shared history projection.
+pub fn build_for_families_from_projection(
+    family_ids: &BTreeSet<String>,
+    history: &HistoryProjectionV1,
+    current_source_sha: Option<String>,
+    generated_at: String,
+) -> OptimizerMemoryJson {
     let families = family_ids
         .iter()
         .map(|family_id| {
-            let mut signatures: Vec<OptimizerMemorySignature> = by_family
-                .get(family_id)
-                .map(|by_sig| {
-                    by_sig
+            let mut signatures: Vec<OptimizerMemorySignature> = history
+                .signatures_for_family(family_id)
+                .iter()
+                .map(|signature| {
+                    let attempts: Vec<OptimizerMemoryAttempt> = signature
+                        .attempts
                         .iter()
-                        .map(|(fix_signature, attempts)| signature_row(fix_signature, attempts))
-                        .collect()
+                        .map(|attempt| attempt_from_projection(attempt, history))
+                        .collect();
+                    signature_row(&signature.fix_signature, &attempts)
                 })
-                .unwrap_or_default();
+                .collect();
             signatures.sort_by(|a, b| {
                 latest_finished_at(b)
                     .cmp(latest_finished_at(a))
@@ -231,72 +227,38 @@ fn latest_finished_at(sig: &OptimizerMemorySignature) -> &str {
         .unwrap_or("")
 }
 
-#[derive(Debug, Clone)]
-struct LifecycleState {
-    kind: MaintEventKind,
-    observed_at: String,
-    new_state: String,
-    head_sha: Option<String>,
-}
-
-fn project_latest_lifecycle(events: &[MaintEvent]) -> BTreeMap<String, LifecycleState> {
-    let mut sorted: Vec<&MaintEvent> = events.iter().collect();
-    sorted.sort_by(|a, b| {
-        a.observed_at
-            .cmp(&b.observed_at)
-            .then_with(|| a.pr_url.cmp(&b.pr_url))
-            .then_with(|| a.issue_url.cmp(&b.issue_url))
-    });
-
-    let mut out = BTreeMap::new();
-    for event in sorted {
-        let Some(url) = event
-            .pr_url
-            .as_ref()
-            .or(event.issue_url.as_ref())
-        else {
-            continue;
-        };
-        out.insert(
-            url.clone(),
-            LifecycleState {
-                kind: event.kind,
-                observed_at: event.observed_at.clone(),
-                new_state: event.new_state.clone(),
-                head_sha: event.head_sha.clone(),
-            },
-        );
-    }
-    out
-}
-
-fn attempt_from_target(
-    session: &SessionRecord,
-    target: &TargetRecord,
-    lifecycle: &BTreeMap<String, LifecycleState>,
+fn attempt_from_projection(
+    attempt: &ProjectedAttemptV1,
+    history: &HistoryProjectionV1,
 ) -> OptimizerMemoryAttempt {
-    let lifecycle_state = target
+    let lifecycle_state = attempt
         .pr_url
         .as_ref()
-        .or(target.issue_url.as_ref())
-        .and_then(|url| lifecycle.get(url));
+        .or(attempt.issue_url.as_ref())
+        .and_then(|url| history.latest_artifact_state(url));
     OptimizerMemoryAttempt {
-        session_id: session.id.clone(),
-        target_id: target.id.clone(),
-        finished_at: session.finished_at.clone(),
-        status: target.status,
-        delivery_mode: target.delivery_mode,
-        reason_code: target.reason_code.clone(),
-        source_sha: session.source_sha.clone(),
-        pr_url: target.pr_url.clone(),
-        issue_url: target.issue_url.clone(),
+        session_id: attempt.session_id.clone(),
+        target_id: attempt.target_id.clone(),
+        finished_at: attempt.finished_at.clone(),
+        status: attempt.status,
+        delivery_mode: attempt.delivery_mode,
+        reason_code: attempt.reason_code.clone(),
+        source_sha: attempt.source_sha.clone(),
+        pr_url: attempt.pr_url.clone(),
+        issue_url: attempt.issue_url.clone(),
         lifecycle_kind: lifecycle_state.map(|s| s.kind),
         lifecycle_state: lifecycle_state.map(|s| s.new_state.clone()),
         lifecycle_observed_at: lifecycle_state.map(|s| s.observed_at.clone()),
-        head_sha: lifecycle_state
-            .and_then(|s| s.head_sha.clone())
-            .or_else(|| target.head_sha.clone()),
+        head_sha: artifact_head_sha(lifecycle_state).or_else(|| {
+            attempt
+                .target_head_sha
+                .clone()
+        }),
     }
+}
+
+fn artifact_head_sha(state: Option<&ProjectedArtifactStateV1>) -> Option<String> {
+    state.and_then(|s| s.head_sha.clone())
 }
 
 fn render_family(
@@ -416,8 +378,10 @@ fn truncate_with_marker(s: String, max_chars: usize, label: &str) -> String {
 mod tests {
     use super::*;
     use crate::models::common::{DeliveryMode, SchemaVersionV1, SchemaVersionV3};
+    use crate::models::maintain_event::MaintEventKind;
     use crate::models::session_record::{
-        SessionRange, SessionRecordKind, SessionStatus, TargetStatus, TargetStatusStage,
+        SessionRange, SessionRecordKind, SessionStatus, TargetRecord, TargetStatus,
+        TargetStatusStage,
     };
 
     #[test]

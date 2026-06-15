@@ -33,21 +33,6 @@ separate migration.
 Imported from [assets/autonomous-roadmap.md](../assets/autonomous-roadmap.md).
 These are not near-term until live manual sessions prove the core loop.
 
-<a id="0030-event-log-skeleton"></a>
-
-### Event Log Skeleton
-
-- **id:** `0030-event-log-skeleton`
-- **status:** `backlog`
-- **priority:** `low`
-- **design:** [design/0030-event-log-skeleton.md](design/0030-event-log-skeleton.md)
-
-**Problem:** Closed-loop autonomy needs durable event history across sessions.
-
-**Scope:** Add append-only event JSONL plus a disposable SQLite projection.
-
-**Acceptance:** `sbagent history show` can render replayed session/target state.
-
 <a id="0032-per-session-commit-push"></a>
 
 ### Per-Session Commit And Push

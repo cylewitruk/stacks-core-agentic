@@ -1,0 +1,2 @@
+{"schema_version":1,"kind":"pr_stale","observed_at":"2026-06-12T00:00:00Z","session_id":"s-force-push-reblocks","target_id":"fix-a","family_id":"family-a","fix_signature":"fix-a","pr_url":"https://github.com/owner/repo/pull/1","new_state":"stale"}
+{"schema_version":1,"kind":"pr_force_pushed","observed_at":"2026-06-13T00:00:00Z","session_id":"s-force-push-reblocks","target_id":"fix-a","family_id":"family-a","fix_signature":"fix-a","pr_url":"https://github.com/owner/repo/pull/1","new_state":"open","head_sha":"new-head"}
