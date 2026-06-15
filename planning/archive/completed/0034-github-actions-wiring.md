@@ -44,5 +44,5 @@ chainstate, disk, and runtime capacity.
 
 - Live workflow dispatch remains operator-side validation: copy the template
   into the operator repo, configure secrets, and run `workflow_dispatch`.
-- Scheduled benchmark sessions remain local-cron / dedicated-host work tracked
-  by `0050-local-session-cron`.
+- Scheduled benchmark sessions remain dedicated-host work, with systemd
+  templates shipped in [0050: Local Session Cron](0050-local-session-cron.md).

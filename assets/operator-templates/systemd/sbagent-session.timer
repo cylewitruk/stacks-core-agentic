@@ -1,0 +1,25 @@
+# Copy to /etc/systemd/system/sbagent-session.timer and tune the schedule.
+#
+# OnCalendar is best for predictable wall-clock cadence. OnUnitInactiveSec is
+# the alternative when sessions have variable duration and you want "N hours
+# after the last run completed" rather than a fixed clock time.
+[Unit]
+Description=Schedule sbagent benchmark sessions
+
+[Timer]
+Unit=sbagent-session.service
+
+# Conservative default: one weekly session, early Sunday morning local time.
+OnCalendar=Sun *-*-* 03:15:00
+
+# Alternative cadence style:
+# OnUnitInactiveSec=7d
+
+# Do not queue surprise catch-up benchmark sessions after host downtime.
+Persistent=false
+
+# Avoid synchronized starts if several hosts copy the same template.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

@@ -455,32 +455,68 @@ you serialize against any concurrent `sbagent session run`.
 GitHub-hosted CI is not the current substrate for `sbagent session run`.
 Benchmark sessions need a dedicated host with the chainstate source,
 shadow root, benchmark DB, disk, and CPU budget configured up front.
-Use GitHub Actions for `sbagent maintain`; use local cron, launchd, or
-systemd timers for benchmark sessions.
+Use GitHub Actions for `sbagent maintain`; use local systemd timers for
+benchmark sessions.
 
-Before enabling a timer on a benchmark host:
+### Server prerequisites
+
+Before enabling the timer on a benchmark host, verify:
+
+- chainstate/source storage is mounted;
+- `stacks_bench.shadow_dir` exists on the expected filesystem;
+- `stacks_bench.data_dir` is writable by the service user;
+- `sbagent` is installed at the path used by the service template;
+- the operator repo is clean, writable, and on the expected branch;
+- the service user can read `config.toml` and the configured
+  `publish.token_file`;
+- `sbagent check --with-publish` passes.
+
+Then run:
 
 ```bash
 sbagent -c ~/.config/sbagent/config.toml check --with-publish
 sbagent -c ~/.config/sbagent/config.toml maintain --dry-run
+sbagent -c ~/.config/sbagent/config.toml session run --publish-accepted-prs --archive
 ```
 
-Then run one supervised `sbagent session run` manually on that host. Only
-enable the timer after the preflight gates, publish wiring, archive path,
-and maintain reconciliation all behave as expected.
+Only enable the timer after the preflight gates, publish wiring, archive path,
+and maintain reconciliation all behave as expected during that supervised run.
 
-The timer command should serialize against the same lockfiles `sbagent`
-uses internally. If either lock is already held, skip the run and let the
-next timer tick try again:
+### Systemd install
 
 ```bash
-OPERATOR_DIR="/path/to/stacks-core-autopilot"
-CONFIG="$HOME/.config/sbagent/config.toml"
-LOCK_DIR="$OPERATOR_DIR/data/run"
+sudo install -D -m 0644 \
+  assets/operator-templates/systemd/sbagent-session.service \
+  /etc/systemd/system/sbagent-session.service
+sudo install -D -m 0644 \
+  assets/operator-templates/systemd/sbagent-session.timer \
+  /etc/systemd/system/sbagent-session.timer
+sudo install -D -m 0640 \
+  assets/operator-templates/systemd/sbagent-session.env.example \
+  /etc/sbagent/sbagent-session.env
+```
 
-flock -n "$LOCK_DIR/benchmark.lock" \
-  flock -n "$LOCK_DIR/test.lock" \
-  sbagent -c "$CONFIG" session run --publish --archive
+Edit all three installed files:
+
+- `sbagent-session.service`: set `User=`, `Group=`,
+  `WorkingDirectory=`, `EnvironmentFile=`, and the `ExecStart=` binary
+  path.
+- `sbagent-session.env`: set `SBAGENT_CONFIG`,
+  `SBAGENT_OPERATOR_DIR`, and optional `SBAGENT_SESSION_ARGS`.
+- `sbagent-session.timer`: tune `OnCalendar=`. If the host should run
+  N hours after the previous run completes, comment `OnCalendar=` and
+  enable the documented `OnUnitInactiveSec=` alternative.
+
+Validate and enable:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/sbagent-session.service
+sudo systemd-analyze verify /etc/systemd/system/sbagent-session.timer
+sudo systemctl daemon-reload
+sudo systemctl start sbagent-session.service
+sudo journalctl -u sbagent-session.service -n 200 --no-pager
+sudo systemctl enable --now sbagent-session.timer
+systemctl list-timers --all sbagent-session.timer
 ```
 
 The safety gates remain the source of truth. A committed
@@ -488,6 +524,29 @@ The safety gates remain the source of truth. A committed
 allows `sbagent maintain` to keep PR lifecycle state fresh. The
 `[autonomy]` queue, cadence, and zero-accepted circuit-breaker settings
 also run before source materialization or benchmark work starts.
+
+To pause policy while leaving the timer installed:
+
+```bash
+touch "$OPERATOR_DIR/.sbagent/pause"
+```
+
+To disable scheduling entirely:
+
+```bash
+sudo systemctl disable --now sbagent-session.timer
+```
+
+If `sbagent-session.service` exits non-zero, systemd marks that invocation
+failed; it does not disable the timer. Inspect:
+
+```bash
+sudo journalctl -u sbagent-session.service --since=today --no-pager
+systemctl status sbagent-session.service
+```
+
+Create `.sbagent/pause` if investigation should stop future sessions.
+Remove it only after addressing the diagnostic that caused the failed run.
 
 ## Hand-running stacks-bench
 

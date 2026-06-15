@@ -1,0 +1,42 @@
+# Copy to /etc/systemd/system/sbagent-session.service, then edit User=,
+# WorkingDirectory=, EnvironmentFile=, and ExecStart's sbagent path for your
+# benchmark server.
+#
+# The environment file stores paths and optional args only. Do not put PATs,
+# tokens, or other secret values in this unit or in sbagent-session.env.
+# Keep publish.token_file in config.toml pointed at the token file path.
+[Unit]
+Description=sbagent scheduled benchmark session
+Documentation=https://github.com/cylewitruk/stacks-bench-agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=sbagent
+Group=sbagent
+WorkingDirectory=/srv/stacks-core-autopilot
+EnvironmentFile=/etc/sbagent/sbagent-session.env
+
+# Direct sbagent invocation by design: no wrapper script in the default
+# template. v11 safety gates still run inside `session run`.
+ExecStart=/usr/local/bin/sbagent -c ${SBAGENT_CONFIG} session run --publish-accepted-prs --archive ${SBAGENT_SESSION_ARGS}
+
+# Long benchmark sessions should finish or fail visibly. Tune this to your
+# largest expected session; systemd marks the unit failed on timeout, but the
+# timer remains enabled for the next scheduled tick.
+TimeoutStartSec=36h
+
+# Optional hardening. Enable once ReadWritePaths= covers every path referenced
+# by config.toml: operator repo, agent workspace, stacks-bench data_dir,
+# shadow_dir, source/chainstate mounts that need writes, config path, and token
+# file path. ProtectHome=true will block home-directory data/token paths unless
+# ReadWritePaths= grants them explicitly.
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=true
+# PrivateTmp=true
+# ReadWritePaths=/srv/stacks-core-autopilot /var/lib/sbagent /var/lib/stacks-bench /etc/sbagent
+
+[Install]
+WantedBy=multi-user.target

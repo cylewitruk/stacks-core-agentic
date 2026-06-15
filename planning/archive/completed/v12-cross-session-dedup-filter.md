@@ -309,7 +309,7 @@ raw JSON.
   avoid previously-failed patch shapes.
 - `0030-event-log-skeleton` — reconsider when another consumer needs a unified
   event stream. v12 deliberately avoids introducing it just for dedup.
-- `0050-local-session-cron` — after dedup lands, local scheduled sessions have
-  enough memory to avoid obvious duplicate PR churn.
+- `0050-local-session-cron` — shipped in v14 as systemd templates for local
+  scheduled sessions on a dedicated benchmark host.
 - Potential future fuzzy dedup item: compare semantically similar proposed
   changes when exact `fix_signature` proves too narrow.

@@ -4,11 +4,7 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-The following items are scheduled into current iteration docs and are tracked
-there instead of as standalone backlog entries:
-
-- `0050-local-session-cron` — planned in
-  [v14: Local Session Systemd Schedule](iterations/v14-local-session-systemd-schedule.md).
+No items are currently scheduled into active iteration docs.
 
 ## Candidate Items
 

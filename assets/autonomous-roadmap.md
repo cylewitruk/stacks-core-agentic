@@ -272,7 +272,8 @@ Status: `[x]` · Shipped in
 - Loop-detection guard: `if: github.actor != 'stacks-bench-bot'`.
 - `sbagent session run` is not scheduled in GitHub-hosted CI. Benchmark
   sessions need a dedicated host with chainstate/data mounts and should use
-  local cron / launchd / systemd once v11's safety gates exist.
+  local scheduling, with systemd templates shipped in
+  [`0050-local-session-cron`](../planning/archive/completed/0050-local-session-cron.md).
 
 ### 3C. Hygiene (required, not optional)
 

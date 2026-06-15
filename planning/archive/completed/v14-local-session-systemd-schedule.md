@@ -1,11 +1,12 @@
 # v14: Local Session Systemd Schedule
 
-Successor to [v13: Cross-Session Optimizer Memory](../archive/completed/v13-cross-session-optimizer-memory.md).
+Successor to [v13: Cross-Session Optimizer Memory](v13-cross-session-optimizer-memory.md).
 v11 added the safety gates required before unattended sessions, while v10-v13
 made maintain, dedup, and optimizer memory useful between sessions. v14 makes
 the benchmark-session scheduler concrete for a dedicated host.
 
-> **Status:** planned
+> **Status:** shipped — implementation, review, and local validation complete;
+> live benchmark-server validation remains an operator follow-up.
 >
 > v14 deliberately schedules `sbagent session run` locally, not in
 > GitHub-hosted CI. The target deployment is a benchmark server with chainstate,
@@ -16,7 +17,7 @@ the benchmark-session scheduler concrete for a dedicated host.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0050-local-session-cron` | primary | planned |
+| `0050-local-session-cron` | primary | shipped |
 
 ## Why
 
@@ -30,8 +31,9 @@ The autonomous loop now has the pieces that make unattended sessions plausible:
   advisory memory.
 
 The remaining gap is operational: a server needs a small, auditable,
-drop-in schedule that runs `sbagent session run --publish --archive` under the
-same operator config a human would use, without relying on GitHub-hosted CI.
+drop-in schedule that runs
+`sbagent session run --publish-accepted-prs --archive` under the same operator
+config a human would use, without relying on GitHub-hosted CI.
 
 ## Scope
 
@@ -141,24 +143,24 @@ when those hardening knobs are enabled.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Template service invokes `sbagent session run`, not `maintain`.
-- [ ] Template includes `--publish-accepted-prs` and `--archive`.
-- [ ] Template does not embed secrets or PAT values.
-- [ ] Template is explicit about `User=`, `WorkingDirectory=`, config path, and
+- [x] Template service invokes `sbagent session run`, not `maintain`.
+- [x] Template includes `--publish-accepted-prs` and `--archive`.
+- [x] Template does not embed secrets or PAT values.
+- [x] Template is explicit about `User=`, `WorkingDirectory=`, config path, and
       binary path.
-- [ ] Timer has `Persistent=false` or an explicit documented equivalent.
-- [ ] Timer comments show `OnCalendar` and `OnUnitInactiveSec` as the two
+- [x] Timer has `Persistent=false` or an explicit documented equivalent.
+- [x] Timer comments show `OnCalendar` and `OnUnitInactiveSec` as the two
       supported scheduling styles.
-- [ ] Hardening directives are present as commented options with a note
+- [x] Hardening directives are present as commented options with a note
       explaining when to enable them.
-- [ ] Timer and service names are stable and operator-specific enough to avoid
+- [x] Timer and service names are stable and operator-specific enough to avoid
       collision with maintain workflow naming.
 
 **Tests:**
@@ -199,21 +201,21 @@ debug the timer without reading source code.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Docs state session scheduling belongs on a dedicated host, not CI.
-- [ ] Docs state maintain remains the GitHub Actions scheduled job.
-- [ ] Docs include copy/edit/enable commands for the systemd templates.
-- [ ] Docs include the supervised first-run checklist.
-- [ ] Docs explain pause vs disable.
-- [ ] Docs show `journalctl` and `systemctl list-timers` inspection commands.
-- [ ] Docs explain `systemd-analyze verify` for local template validation.
-- [ ] Docs explain failed service behavior and when to create `.sbagent/pause`.
+- [x] Docs state session scheduling belongs on a dedicated host, not CI.
+- [x] Docs state maintain remains the GitHub Actions scheduled job.
+- [x] Docs include copy/edit/enable commands for the systemd templates.
+- [x] Docs include the supervised first-run checklist.
+- [x] Docs explain pause vs disable.
+- [x] Docs show `journalctl` and `systemctl list-timers` inspection commands.
+- [x] Docs explain `systemd-analyze verify` for local template validation.
+- [x] Docs explain failed service behavior and when to create `.sbagent/pause`.
 
 **Tests:**
 
@@ -239,20 +241,20 @@ the safety gates.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Static test fails if `sbagent maintain` appears in the session service.
-- [ ] Static test fails if `--archive` is removed.
-- [ ] Static test fails if publish is disabled or omitted without an explicit
+- [x] Static test fails if `sbagent maintain` appears in the session service.
+- [x] Static test fails if `--archive` is removed.
+- [x] Static test fails if publish is disabled or omitted without an explicit
       documented reason.
-- [ ] Static test fails on obvious secret placeholders such as raw PAT values.
-- [ ] Static test fails if a wrapper script path appears in `ExecStart`.
-- [ ] Static test pins the `systemd-analyze verify` command documented for
+- [x] Static test fails on obvious secret placeholders such as raw PAT values.
+- [x] Static test fails if a wrapper script path appears in `ExecStart`.
+- [x] Static test pins the `systemd-analyze verify` command documented for
       manual validation.
 
 **Tests:**
@@ -278,17 +280,17 @@ the safety gates.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
 - [ ] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Plan distinguishes code/template readiness from live server validation.
-- [ ] Live validation checkbox remains open until run on the benchmark server.
-- [ ] Docs say how to collect evidence for closing the live-validation box.
-- [ ] Evidence list includes:
+- [x] Plan distinguishes code/template readiness from live server validation.
+- [x] Live validation checkbox remains open until run on the benchmark server.
+- [x] Docs say how to collect evidence for closing the live-validation box.
+- [x] Evidence list includes:
   - `systemctl list-timers --all sbagent-session.timer`;
   - `journalctl -u sbagent-session.service --since=<date>` showing one
     successful service execution;
@@ -301,11 +303,11 @@ the safety gates.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache`
-- [ ] `just test --summary --no-sccache`
-- [ ] Template fixture tests pass.
-- [ ] Docs describe a copyable systemd install path.
-- [ ] Live server validation is either completed or explicitly left open with
+- [x] `just lint --no-sccache`
+- [x] `just test --summary --no-sccache`
+- [x] Template fixture tests pass.
+- [x] Docs describe a copyable systemd install path.
+- [x] Live server validation is either completed or explicitly left open with
       the exact commands to run.
 
 ## Follow-Ups
