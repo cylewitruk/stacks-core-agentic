@@ -50,10 +50,11 @@ benchmark, and publish artifacts for that target.
 | 0a | (runs at session start; no standalone command) | per-session source checkout at `<workspace>/sessions/<id>/repos/<cache_id>/` (materialized from `[source]` + the shared bare cache), HEAD pinned in `results/source.json` | `baseline/bin/{stacks-bench, manifest.json}` — archived binary + `{source_sha, dirty, cargo_version, build_flags, archived_at}` manifest. Strict-binary contract: every subsequent discovery-pass, calibration, and verification invocation uses this archived path; no silent rebuild fallback. |
 | 0b | `sbagent session baseline run` OR `sbagent session baseline import` | `config.toml` (range fields), or existing run id(s) in stacks-bench DB | `baseline/{bench-run.json, rerun.json, run-id, rerun-id, bench-list.json, profiler-hotspots.json, noise-floor-pct}`. Discovery-pass artifact set. Single `bench run` invocation; rerun id aliased to run id; `noise-floor-pct` sources from `triage.single_run_noise_floor_pct` (default 1%). |
 | 1 | `sbagent session triage run` | discovery-pass artifacts | `triage/{candidates.json, candidates.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id, queries/, drilldowns/}` |
-| 1.5 | `sbagent session analysis run` | `triage/candidates.json` | `analysis/<family-id>/{analysis.json, analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
-| 1.7 | `sbagent session analysis merge` | `triage/candidates.json`, `analysis/*/analysis.json` | `merge/{optimization-targets.json, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
+| 1.2 | (runs after triage, before analyzer fan-out; no standalone command) | `triage/candidates.json`, operator `sessions.jsonl` + `maintain.jsonl` | `optimizer-memory.json` — compact advisory cross-session memory for the current candidate families. Analyzer, merge, and optimizer prompts can cite it, but deterministic hard skips remain owned by v12 dedup in Phase 1.7. |
+| 1.5 | `sbagent session analysis run` | `triage/candidates.json`, `optimizer-memory.json` when present | `analysis/<family-id>/{analysis.json, analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
+| 1.7 | `sbagent session analysis merge` | `triage/candidates.json`, `analysis/*/analysis.json`, `optimizer-memory.json` when present | `merge/{optimization-targets.json, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}` |
 | 1.8 | (runs after merge, before optimize; no standalone command) | `merge/optimization-targets.json`, `baseline/bin/stacks-bench` | `verify/<target>/<invocation-id>/bench-run.json`, `verify/<target>/baseline-run-ids.json`. Target calibration baseline for every `normal_pr` target — one `stacks-bench bench run` per `verification_replay.invocations[]` entry. Pass 1c invariant: `verification_replay` is required on every `bench_eligible` target; missing → merge validation hard-fails before this phase ever runs. |
-| 2 | `sbagent session optimize run` | `merge/optimization-targets.json` | `optimize/<target-id>/{prompt.md, events.jsonl, final-message.md, conversation-id, optimizer-report.json, implementation.md OR abort.md OR consensus-issue.md, nextest.log, cargo-build.log, stderr.log}` |
+| 2 | `sbagent session optimize run` | `merge/optimization-targets.json`, `optimizer-memory.json` when present | `optimize/<target-id>/{prompt.md, events.jsonl, final-message.md, conversation-id, optimizer-report.json, implementation.md OR abort.md OR consensus-issue.md, nextest.log, cargo-build.log, stderr.log}` |
 | 3 | `sbagent session bench run` | per-target release binary built in Phase 2 | `optimize/<target-id>/<invocation-id>/bench-run.json`, `optimize/<target-id>/candidate-run-ids.json`, `optimize/<target-id>/bin/stacks-bench`. Verification bench: one `stacks-bench bench run` per invocation, mirroring Phase 1.8. |
 | 3.5 | `sbagent session analyze-results run` | `merge/optimization-targets.json`, target calibration baseline outputs under `verify/<target>/...`, verification bench outputs under `optimize/<target>/...`, bench DB (read-only) | `analyze/<target-id>/{results-analysis.json, results-analysis.md, prompt.md, events.jsonl, stderr.log, final-message.md, conversation-id}`. Per-target results-analyzer agent fan-out (parallel under `analyzer.concurrency_cap`) — judges measured vs `expected_signal` and writes a typed verdict. Phase 4 sources `improvement_pct` + `status` from this file. |
 | 4 | `sbagent session finalize run` | `merge/optimization-targets.json`, `analyze/<target>/results-analysis.json`, `verify/<target>/baseline-run-ids.json`, `optimize/<target>/candidate-run-ids.json` | `finalize/{summary.json, summary.md, targets.md}`. `Experiment.improvement_pct` + `Experiment.status` sourced verbatim from each target's Phase 3.5 verdict; missing verdict → Aborted. Missing target calibration baseline file → hard error. Verification bench / target calibration baseline id sets MUST match the target's VR invocation set; mismatched verification bench → Aborted. |
@@ -178,30 +179,32 @@ The first session should:
 5. Run the discovery-pass benchmark (single invocation; rerun id aliased)
    (Phase 0b).
 6. Run the triage agent → `triage/candidates.json` (Phase 1).
-7. Fan out analyzer agents → `analysis/<family-id>/analysis.json`
+7. Build compact advisory cross-session memory for the candidate families →
+   `optimizer-memory.json` (Phase 1.2).
+8. Fan out analyzer agents → `analysis/<family-id>/analysis.json`
    (Phase 1.5).
-8. Run `sbagent session analysis merge` →
+9. Run `sbagent session analysis merge` →
    `merge/optimization-targets.json` (Phase 1.7).
-9. Per-target target calibration baseline — one stacks-bench run
+10. Per-target target calibration baseline — one stacks-bench run
    per `verification_replay.invocations[]` entry on every `normal_pr`
    target → `verify/<target>/baseline-run-ids.json` +
    `verify/<target>/<invocation-id>/bench-run.json` (Phase 1.8).
-10. Fan out optimizer agents → per-target
+11. Fan out optimizer agents → per-target
     `optimize/<target>/implementation.md` (or `abort.md`) (Phase 2).
     Each target gets its own git clone under
     `<workspace>/optimizers/<id>/<target>/`.
-11. Build + serially run the verification bench for each accepted target — one
+12. Build + serially run the verification bench for each accepted target — one
     `stacks-bench bench run` per invocation →
     `optimize/<target>/<invocation-id>/bench-run.json` and
     `optimize/<target>/candidate-run-ids.json` (Phase 3).
-12. Fan out results-analyzer agents → `analyze/<target>/results-
+13. Fan out results-analyzer agents → `analyze/<target>/results-
     analysis.json` (Phase 3.5). Each agent judges measured vs
     `expected_signal` per invocation and commits a verdict +
     confidence.
-13. Run `sbagent session finalize run` → `finalize/summary.json`,
+14. Run `sbagent session finalize run` → `finalize/summary.json`,
     sourcing each `Experiment.improvement_pct` + `Experiment.status`
     verbatim from the Phase 3.5 verdict (Phase 4).
-14. (Optional) `sbagent session archive --dry-run` to rehearse the
+15. (Optional) `sbagent session archive --dry-run` to rehearse the
     archive flow locally before shipping anything to the operator's
     remote.
 
@@ -362,3 +365,19 @@ The current policy is intentionally narrow:
 
 `optimization-targets.json` is authoritative. `merge/final-message.md`
 summarizes dedup skips for operators, but the JSON is the durable contract.
+
+## Cross-session optimizer memory
+
+After triage, `sbagent session run` writes
+`results/optimizer-memory.json` from the operator ledgers
+(`sessions.jsonl` + `maintain.jsonl`) and the current candidate
+families. The artifact is compact prompt context for analyzer, merge,
+and optimizer agents: prior status, lifecycle URL, reason code, and
+`source_sha` when archived sessions recorded one. Missing `source_sha`
+means drift is unknown, not that the historical attempt used the same
+source.
+
+This memory is advisory. It can change how agents explain risk or choose a
+fresh patch variant, but it must not silently remove targets. Exact hard skips
+remain the Phase 1.7 dedup contract above. Inside one family, fix signatures
+stay distinct: same-family history is context, not fuzzy matching.

@@ -30,13 +30,14 @@ use tokio::task::JoinSet;
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::common::{DeliveryMode, SchemaVersionV2};
+use crate::models::optimizer_memory::OptimizerMemoryJson;
 use crate::models::optimizer_report::{
     AbortedOutcomeTag, AbortedReport, FailedGate, ImplementedReport, OptimizerReport,
 };
 use crate::models::targets::MergedTarget;
 use crate::models::{FromJsonValidated, ToJson, ValidateModel};
 use crate::prompts;
-use crate::session::{SessionLayout, loader};
+use crate::session::{SessionLayout, loader, optimizer_memory};
 use crate::settings::Settings;
 
 /// Manages per-target git checkouts for the optimizer fan-out. Each
@@ -460,6 +461,11 @@ where
     if targets.targets.is_empty() {
         return Ok(Outputs::default());
     }
+    let optimizer_memory = OptimizerMemoryJson::read_optional(
+        &inputs
+            .layout
+            .optimizer_memory_json(),
+    )?;
     let total = targets.targets.len();
     let requested = inputs
         .parallel
@@ -541,6 +547,7 @@ where
             git: inputs.git.clone(),
             resume: inputs.resume,
             source_checkout: inputs.source_checkout.clone(),
+            optimizer_memory: optimizer_memory.clone(),
         };
         set.spawn(run_one(task));
     }
@@ -616,6 +623,8 @@ struct OptimizerTaskInputs<H: AgentHarness + 'static, G: GitCheckoutManager + 's
     /// [`Inputs::source_checkout`]. Per-target clones fork from this
     /// (`git clone --reference <source_checkout> --local ...`).
     source_checkout: PathBuf,
+    /// Compact cross-session memory artifact, when present.
+    optimizer_memory: Option<OptimizerMemoryJson>,
 }
 
 async fn run_one<H, G>(state: OptimizerTaskInputs<H, G>) -> Result<()>
@@ -812,6 +821,18 @@ where
                 .optimizer
                 .effective_budget_minutes()
                 .to_string(),
+            optimizer_memory_markdown: optimizer_memory::render_target_memory(
+                state
+                    .optimizer_memory
+                    .as_ref(),
+                state
+                    .target
+                    .merged_from
+                    .first()
+                    .map(|mf| mf.family_id.as_str())
+                    .unwrap_or(&state.target.id),
+                &state.target.id,
+            ),
         },
         prompts_dir,
     )?;

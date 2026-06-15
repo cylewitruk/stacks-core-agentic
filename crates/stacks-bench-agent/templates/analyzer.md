@@ -46,6 +46,21 @@ Important fields:
 - Bucket anchors: `{{ bucket_anchors_path }}`
 - Output schema: `{{ analysis_schema_path }}`
 
+# Cross-Session Optimizer Memory
+
+The coordinator built this advisory memory from prior `sessions.jsonl` and
+`maintain.jsonl` rows for this family. Use it as context, not as a gate:
+v12 coordinator dedup owns hard skips. Cite memory in `evidence` or
+`proposed_change` when it changes your recommendation.
+
+If a prior row has no `source_sha`, treat codebase drift as unknown and be
+cautious. Do not assume missing `source_sha` means the attempt ran against the
+current source.
+
+```text
+{{ optimizer_memory_markdown }}
+```
+
 # Valid Outcomes
 
 1. `accepted` + `lens_disposition.status = "addressed"` + at least one target.

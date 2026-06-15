@@ -343,6 +343,11 @@ Phase 3.5 results-analyzer verdicts under `analyze/<target-id>/`.
     queries/<n>.csv             # prerendered orientation queries
     drilldowns/<n>.csv          # agent-issued drilldowns
 
+  # Phase 1.2: compact advisory cross-session memory
+  optimizer-memory.json         # schema: schemas/optimizer-memory.schema.json
+                                # built from sessions.jsonl + maintain.jsonl
+                                # after triage identifies current families
+
   # Phase 1.5: analyzer agents (one per family)
   analysis/
     <family-id>/

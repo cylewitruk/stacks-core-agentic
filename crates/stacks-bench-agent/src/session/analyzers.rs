@@ -15,9 +15,10 @@ use tokio::task::JoinSet;
 use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::analyze::Analysis;
+use crate::models::optimizer_memory::OptimizerMemoryJson;
 use crate::models::{FromJson, ToJson};
 use crate::prompts;
-use crate::session::{SessionLayout, loader};
+use crate::session::{SessionLayout, loader, optimizer_memory};
 use crate::settings::Settings;
 
 /// Inputs to an analyzer fan-out.
@@ -61,6 +62,11 @@ where
     {
         return Ok(Outputs::default());
     }
+    let optimizer_memory = OptimizerMemoryJson::read_optional(
+        &inputs
+            .layout
+            .optimizer_memory_json(),
+    )?;
 
     // Concurrency cap resolution order:
     //   1. Explicit `inputs.parallel` (per-invocation override).
@@ -103,6 +109,7 @@ where
             sem: semaphore.clone(),
             harness: inputs.harness.clone(),
             source_checkout: inputs.source_checkout.clone(),
+            optimizer_memory: optimizer_memory.clone(),
         };
         set.spawn(run_one(task_inputs));
     }
@@ -160,6 +167,8 @@ struct AnalyzerTaskInputs<H: AgentHarness + 'static> {
     /// `base` field + as an `add_dirs` entry granting the agent read
     /// access to the source.
     source_checkout: PathBuf,
+    /// Compact cross-session memory artifact, when present.
+    optimizer_memory: Option<OptimizerMemoryJson>,
 }
 
 async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Result<()> {
@@ -247,6 +256,12 @@ async fn run_one<H: AgentHarness + 'static>(state: AnalyzerTaskInputs<H>) -> Res
                 .analyzer
                 .effective_max_invocations_per_target()
                 .to_string(),
+            optimizer_memory_markdown: optimizer_memory::render_family_memory(
+                state
+                    .optimizer_memory
+                    .as_ref(),
+                &state.family_id,
+            ),
         },
         prompts_dir,
     )?;

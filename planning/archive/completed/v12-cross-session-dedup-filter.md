@@ -305,8 +305,8 @@ raw JSON.
 
 ## Follow-Ups
 
-- `0028-optimizer-memory` — once dedup keeps exact duplicate signatures out,
-  use history to help optimizers avoid previously-failed patch shapes.
+- `0028-optimizer-memory` — shipped in v13, using history to help optimizers
+  avoid previously-failed patch shapes.
 - `0030-event-log-skeleton` — reconsider when another consumer needs a unified
   event stream. v12 deliberately avoids introducing it just for dedup.
 - `0050-local-session-cron` — after dedup lands, local scheduled sessions have

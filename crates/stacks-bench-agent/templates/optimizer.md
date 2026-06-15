@@ -18,6 +18,23 @@ An upstream analyzer agent already investigated this hotspot and produced the ta
 
 If `target_json` contains `verification_replay`, treat it as coordinator replay guidance only; do not execute it.
 
+# Cross-Session Optimizer Memory
+
+The coordinator built this advisory memory from prior sessions for this
+target's family. Use it to avoid repeating known-bad patch shapes and to reuse
+concrete implementation lessons from successful sibling signatures. This is not
+fuzzy similarity matching: exact-signature and same-family rows are context,
+not proof that unrelated code is equivalent.
+
+If a prior row has no `source_sha`, treat codebase drift as unknown. If a repeat
+is justified because this source is newer or your approach is materially
+different, say so in `deviation_from_proposed_change` or
+`implementation_summary`.
+
+```text
+{{ optimizer_memory_markdown }}
+```
+
 # Delivery mode
 
 Your delivery mode is `{{ delivery_mode }}`. The keep/abort criterion depends on it:

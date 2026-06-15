@@ -83,6 +83,10 @@ that converge on the same fix.
              │    points; NOT span identity │      suspected_spans?, ...}
              │  • no codebase exploration   │
              └──────────────┬───────────────┘
+                            │ after triage, sbagent writes
+                            │ optimizer-memory.json from
+                            │ sessions.jsonl + maintain.jsonl
+                            │ (advisory context, not a gate)
                             │ one analyzer per family
                 ┌───────────┴────────────┐
                 ▼           ▼            ▼
@@ -157,9 +161,11 @@ that converge on the same fix.
   `triage/candidates.json`.
 - **Analyzer** runs in parallel, one per family. Each gets its full
   context budget for one family; reads `${BASE}` deeply, runs trace
-  queries on the family's representative ids, commits `target_span` +
-  `fix_signature`. Produces `analysis/<family-id>/analysis.json` with
-  `status: accepted | rejected`.
+  queries on the family's representative ids, sees compact advisory
+  cross-session memory for the family when available, commits
+  `target_span` + `fix_signature`. Produces
+  `analysis/<family-id>/analysis.json` with `status: accepted |
+  rejected`.
 - **Merge** runs once over the accepted analyses (LLM consolidation
   pass; smaller / faster model is appropriate here). Before the LLM
   call, sbagent applies exact-signature cross-session dedup from
@@ -169,13 +175,17 @@ that converge on the same fix.
   `merge/optimization-targets.json`. The coverage invariant is
   enforced: every accepted family appears in exactly one target's
   `merged_from` or in `rejected_by_merge`; deduped rows use stable
-  `dedup:` reasons.
+  `dedup:` reasons. Merge also sees the same advisory memory so it can
+  explain risk and repeat attempts, but only v12 dedup may hard-skip a
+  target.
 - **Optimizer** runs in parallel, one per merged target, each in its
   own per-target git clone. Implements the change, runs tests, leaves
   a release binary for the bench phase to measure. Writes into
   `optimize/<target-id>/` — the shared per-target audit folder also
   used by Phase 3 (per-invocation verification bench outputs under
   `<invocation-id>/bench-run.json`) and Phase 5 (publish artifacts).
+  Its prompt receives target/family memory so it can avoid repeating
+  known-bad patch shapes and cite why a repeat is materially different.
 - **Results-analyzer** runs in parallel after Phase 3, one per
   `bench_eligible` target. Reads the target's `verification_replay`
   (analyzer hypothesis), the `optimizer-report.json` (claim + diff),
@@ -198,7 +208,9 @@ The `sbagent` orchestrator owns: archiving the strict
 `stacks-bench` binary (Phase 0a) + a single discovery-pass benchmark run
 with `rerun-id` aliased to the run id (Phase 0b — no second `bench
 rerun` is taken; the noise floor sources from
-`triage.single_run_noise_floor_pct`), Phase 1.8 per-target calibration
+`triage.single_run_noise_floor_pct`), the compact
+`optimizer-memory.json` advisory context built after triage from the
+operator ledgers, Phase 1.8 per-target calibration
 baselines (one stacks-bench run per VR invocation against the
 archived binary), release builds + per-invocation verification benches
 (Phase 3), and finalize (Phase 4) — which now **sources**

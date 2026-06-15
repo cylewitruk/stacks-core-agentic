@@ -208,7 +208,21 @@ Status: `[x]` · Shipped in
   (`dedup:open-pr`, `dedup:open-issue`, `dedup:merged`,
   `dedup:repeated-failure`).
 
-### 2C. Per-session commit + push
+### 2C. Advisory optimizer memory
+
+Status: `[x]` · Shipped in
+[`0028-optimizer-memory`](../planning/archive/completed/0028-optimizer-memory.md)
+
+- After triage identifies current families, `sbagent session run` writes
+  `results/optimizer-memory.json` from `sessions.jsonl` + `maintain.jsonl`.
+- The memory is compact and exact: last 5 attempts per signature, last 3
+  sibling signatures per family, plus latest lifecycle URL/state and
+  `source_sha` when available.
+- Analyzer, merge, and optimizer prompts receive the memory as advisory
+  context. It can shape recommendations and implementation choices, but only
+  v12 dedup produces deterministic hard skips.
+
+### 2D. Per-session commit + push
 
 Status: `[ ]` · Estimate: ~½ day · Depends on: 2A
 

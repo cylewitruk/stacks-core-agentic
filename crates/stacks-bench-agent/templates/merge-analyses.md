@@ -39,6 +39,15 @@ The JSON must match `{{ optimization_targets_schema_path }}`.
 {{ dedup_rejections_json }}
 ```
 
+- Cross-session optimizer memory for the accepted families. This is advisory
+  context only. v12 dedup owns hard skips, and the coordinator appends those
+  deterministic `dedup:` rows after merge. Use memory to explain risk,
+  confidence, or variant choice; do not invent/drop/reinterpret dedup rows.
+
+```text
+{{ optimizer_memory_markdown }}
+```
+
 # Merge Model
 
 Treat each analyzer target as a contributor:

@@ -29,7 +29,7 @@ use crate::session::finalize::{self, FinalizeInputs};
 use crate::session::phase_timing::PhaseTimingsRecorder;
 use crate::session::{
     SessionLayout, analyzers, baseline, bench_experiments, db_consistency, loader, merge,
-    optimizers, publish, triage,
+    optimizer_memory, optimizers, publish, triage,
 };
 use crate::types::SessionId;
 
@@ -282,6 +282,10 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
     timings.record("triage", t.elapsed())?;
 
     let t = Instant::now();
+    phase_1_2_optimizer_memory(&env)?;
+    timings.record("analysis", t.elapsed())?;
+
+    let t = Instant::now();
     phase_1_5_analyzers(&env).await?;
     timings.record("analysis", t.elapsed())?;
 
@@ -456,6 +460,23 @@ async fn phase_1_triage(env: &PhaseEnv<'_>) -> Result<()> {
     })
     .await
     .context("Phase 1: triage")?;
+    Ok(())
+}
+
+/// Phase 1.2: write compact cross-session optimizer memory after triage
+/// identifies the current candidate families. Later prompt-consuming phases
+/// read this same artifact without refreshing it.
+fn phase_1_2_optimizer_memory(env: &PhaseEnv<'_>) -> Result<()> {
+    let operator = env
+        .ctx
+        .layout
+        .require_operator_repo_root()?;
+    optimizer_memory::write_for_current_candidates(
+        &env.layout,
+        operator,
+        Some(env.source.source.sha.as_str()),
+    )
+    .context("Phase 1.2: optimizer memory")?;
     Ok(())
 }
 

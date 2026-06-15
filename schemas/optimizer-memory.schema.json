@@ -1,0 +1,287 @@
+{
+  "$defs": {
+    "DeliveryMode": {
+      "description": "Derived routing decision computed by the merge phase from\n`consensus_breaking` + `poc_implementable`. Drives Phase 5 publishing.",
+      "oneOf": [
+        {
+          "const": "normal_pr",
+          "description": "Performance fix — full bench, normal PR.",
+          "type": "string"
+        },
+        {
+          "const": "consensus_poc_pr",
+          "description": "Deliberate consensus change shipped as a PoC PR (scoped tests, no\nbenchmark, draft PR with safety labels).",
+          "type": "string"
+        },
+        {
+          "const": "consensus_issue",
+          "description": "Consensus change too large for PoC mode — issue-only.",
+          "type": "string"
+        }
+      ]
+    },
+    "MaintEventKind": {
+      "description": "Discriminator for one maintenance observation.",
+      "oneOf": [
+        {
+          "const": "pr_open",
+          "description": "First time `sbagent maintain` observes a PR as open. Publish\ncreates the PR; maintain records the first observation.",
+          "type": "string"
+        },
+        {
+          "const": "pr_merged",
+          "description": "PR merged into its base branch.",
+          "type": "string"
+        },
+        {
+          "const": "pr_closed_unmerged",
+          "description": "PR closed without merging.",
+          "type": "string"
+        },
+        {
+          "const": "pr_stale",
+          "description": "PR stayed open past the configured stale threshold.",
+          "type": "string"
+        },
+        {
+          "const": "pr_force_pushed",
+          "description": "PR head sha changed after a prior observation.",
+          "type": "string"
+        },
+        {
+          "const": "pr_branch_deleted",
+          "description": "PR is open but its head ref no longer exists.",
+          "type": "string"
+        },
+        {
+          "const": "issue_open",
+          "description": "First time `sbagent maintain` observes an issue as open.\nPublish creates the issue; maintain records the first\nobservation.",
+          "type": "string"
+        },
+        {
+          "const": "issue_closed",
+          "description": "Issue closed.",
+          "type": "string"
+        }
+      ]
+    },
+    "OptimizerMemoryAttempt": {
+      "additionalProperties": false,
+      "description": "One archived attempt enriched with the latest known lifecycle state.",
+      "properties": {
+        "delivery_mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "description": "Delivery mode used by the archived target."
+        },
+        "finished_at": {
+          "description": "Session finished timestamp. Used for deterministic newest-first order.",
+          "type": "string"
+        },
+        "head_sha": {
+          "description": "Latest PR head SHA, when GitHub reported one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issue_url": {
+          "description": "Issue URL, when the archived target opened an issue.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycle_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MaintEventKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Latest maintain event kind for the PR/issue URL, when known."
+        },
+        "lifecycle_observed_at": {
+          "description": "Timestamp of the latest maintain observation, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycle_state": {
+          "description": "Latest normalized maintain state, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr_url": {
+          "description": "PR URL, when the archived target opened a PR.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason_code": {
+          "description": "Optional reason code from the archived target row.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "description": "Archived session id.",
+          "type": "string"
+        },
+        "source_sha": {
+          "description": "Source SHA recorded by the archived session. Missing means drift\nunknown, not \"same source.\"",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TargetStatus",
+          "description": "Archived target status."
+        },
+        "target_id": {
+          "description": "Archived target id.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "target_id",
+        "finished_at",
+        "status",
+        "delivery_mode"
+      ],
+      "type": "object"
+    },
+    "OptimizerMemoryFamily": {
+      "additionalProperties": false,
+      "description": "Memory relevant to one current-session family.",
+      "properties": {
+        "family_id": {
+          "description": "Current-session family id.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "omitted_sibling_signatures": {
+          "description": "Number of same-family historical signatures omitted for compactness.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "signatures": {
+          "description": "Prior signatures in this family, bounded by relevance/recency.",
+          "items": {
+            "$ref": "#/$defs/OptimizerMemorySignature"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "family_id",
+        "signatures",
+        "omitted_sibling_signatures"
+      ],
+      "type": "object"
+    },
+    "OptimizerMemorySignature": {
+      "additionalProperties": false,
+      "description": "Memory for one historical fix signature.",
+      "properties": {
+        "attempts": {
+          "description": "Recent attempts for this exact signature, newest first.",
+          "items": {
+            "$ref": "#/$defs/OptimizerMemoryAttempt"
+          },
+          "type": "array"
+        },
+        "fix_signature": {
+          "description": "Historical fix signature / archived target id.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "omitted_attempts": {
+          "description": "Number of older attempts omitted for compactness.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fix_signature",
+        "attempts",
+        "omitted_attempts"
+      ],
+      "type": "object"
+    },
+    "SchemaVersionV1": {
+      "const": 1,
+      "type": "integer"
+    },
+    "TargetStatus": {
+      "description": "Terminal status of a single target inside the session. Wider than\n[`crate::models::summary::ExperimentStatus`] because the ledger\ncaptures targets that never reached benchmarking (i.e. they got\naborted at the optimizer or merge stage and never produced a\nsummary row).",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "Bench measured a real improvement (NormalPr) or the PoC PR\nlanded (ConsensusPocPr) or the issue routing marker was\nproduced (ConsensusIssue).",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "NormalPr: bench did not show improvement above the noise\nfloor. Not applicable to consensus modes.",
+          "type": "string"
+        },
+        {
+          "const": "aborted",
+          "description": "Target was dropped before producing a publishable artifact\n(e.g. `optimizer-report.json` declared `outcome: \"aborted\"`, or\nthe merge phase pruned it). [`TargetRecord::status_stage`]\nnames where.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Pipeline error stopped this target — distinct from aborted in\nthat the framework (not the agent) decided the target couldn't\nproceed.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "v1 of the optimizer-memory artifact.",
+  "properties": {
+    "current_source_sha": {
+      "description": "Current session source SHA, when source materialization recorded one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "families": {
+      "description": "One compact row per current-session family.",
+      "items": {
+        "$ref": "#/$defs/OptimizerMemoryFamily"
+      },
+      "type": "array"
+    },
+    "generated_at": {
+      "description": "ISO 8601 UTC timestamp when this memory snapshot was generated.",
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersionV1",
+      "description": "Constant: 1."
+    }
+  },
+  "required": [
+    "schema_version",
+    "generated_at",
+    "families"
+  ],
+  "title": "OptimizerMemoryJson",
+  "type": "object"
+}

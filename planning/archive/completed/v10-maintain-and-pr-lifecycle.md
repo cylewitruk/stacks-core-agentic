@@ -625,8 +625,9 @@ Live / operator (not blocking v10 ship):
 - v11 candidate: `0034-github-actions-wiring` + `0035-autonomy-hygiene`.
   Schedules `sbagent maintain` (and eventually `sbagent session run`) under
   cron with concurrency guards, rate-limit budgeting, and circuit breakers.
-- `0028-optimizer-memory` — now reads maintain.jsonl to surface "this fix
-  signature shipped" / "this fix signature was rejected" to the optimizer.
+- `0028-optimizer-memory` — shipped in v13, reading maintain.jsonl to surface
+  "this fix signature shipped" / "this fix signature was rejected" to the
+  optimizer.
 - `0031-triage-merge-dedup-filter` — now reads maintain.jsonl to skip
   targets whose fix_signature is already on an open or recently-terminal
   artifact.

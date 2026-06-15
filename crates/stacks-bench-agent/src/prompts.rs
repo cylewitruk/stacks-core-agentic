@@ -543,6 +543,8 @@ pub struct AnalyzerPrompt {
     /// this cap rejects the analyzer's output after the (expensive)
     /// Codex call.
     pub max_invocations_per_target: String,
+    /// Bounded cross-session optimizer memory for this family. Advisory only.
+    pub optimizer_memory_markdown: String,
 }
 
 impl Prompt for AnalyzerPrompt {
@@ -574,6 +576,8 @@ pub struct MergePrompt {
     pub accepted_analyses_json: String,
     /// Deterministic coordinator-computed dedup rejections, as JSON.
     pub dedup_rejections_json: String,
+    /// Bounded cross-session optimizer memory for accepted families.
+    pub optimizer_memory_markdown: String,
 }
 
 impl Prompt for MergePrompt {
@@ -627,6 +631,8 @@ pub struct OptimizerPrompt {
     pub optimizer_attempts: String,
     /// Wall-clock budget for future coordinator-owned optimizer loops.
     pub optimizer_budget_minutes: String,
+    /// Bounded cross-session optimizer memory for this target/family.
+    pub optimizer_memory_markdown: String,
 }
 
 impl Prompt for OptimizerPrompt {
@@ -771,6 +777,7 @@ impl AnalyzerPrompt {
             domain_context_path: "/tmp/lint/stacks-domain-context.md".into(),
             analysis_schema_path: "/tmp/lint/analysis.schema.json".into(),
             max_invocations_per_target: "8".into(),
+            optimizer_memory_markdown: "No cross-session optimizer memory.".into(),
         }
     }
 }
@@ -788,6 +795,7 @@ impl MergePrompt {
             codex_merge_model: "gpt-test".into(),
             accepted_analyses_json: "[]".into(),
             dedup_rejections_json: "[]".into(),
+            optimizer_memory_markdown: "No cross-session optimizer memory.".into(),
         }
     }
 }
@@ -812,6 +820,7 @@ impl OptimizerPrompt {
             bench_shadow_dir_root: "/tmp/lint/shadows".into(),
             optimizer_attempts: "5".into(),
             optimizer_budget_minutes: "60".into(),
+            optimizer_memory_markdown: "No cross-session optimizer memory.".into(),
         }
     }
 }
@@ -1074,6 +1083,64 @@ mod tests {
             "deterministic and coordinator-owned",
             "or reinterpret `dedup:` rejections",
             "coordinator appends those rows",
+        ] {
+            assert!(rendered.contains(expected), "missing `{expected}`:\n{rendered}");
+        }
+    }
+
+    #[test]
+    fn analyzer_and_merge_prompts_treat_optimizer_memory_as_advisory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+
+        let mut analyzer = AnalyzerPrompt::synthetic_for_lint();
+        analyzer.optimizer_memory_markdown = "### Family `fam-a`".into();
+        let analyzer_rendered = render("analyzer", &analyzer, tmp.path()).expect("render analyzer");
+        for expected in [
+            "Cross-Session Optimizer Memory",
+            "advisory memory",
+            "Use it as context, not as a gate",
+            "v12 coordinator dedup owns hard skips",
+            "source_sha",
+        ] {
+            assert!(
+                analyzer_rendered.contains(expected),
+                "analyzer missing `{expected}`:\n{analyzer_rendered}"
+            );
+        }
+
+        let mut merge = MergePrompt::synthetic_for_lint();
+        merge.optimizer_memory_markdown = "### Family `fam-a`".into();
+        let merge_rendered = render("merge-analyses", &merge, tmp.path()).expect("render merge");
+        for expected in [
+            "Cross-session optimizer memory",
+            "advisory",
+            "context only",
+            "v12 dedup owns hard skips",
+            "Use memory to explain risk",
+        ] {
+            assert!(
+                merge_rendered.contains(expected),
+                "merge missing `{expected}`:\n{merge_rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn optimizer_prompt_uses_memory_without_fuzzy_matching() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_to(tmp.path()).expect("seed");
+        let mut prompt = OptimizerPrompt::synthetic_for_lint();
+        prompt.optimizer_memory_markdown = "- Signature `fix-a`".into();
+        let rendered = render("optimizer", &prompt, tmp.path()).expect("render");
+
+        for expected in [
+            "Cross-Session Optimizer Memory",
+            "avoid repeating known-bad patch shapes",
+            "fuzzy similarity matching",
+            "source_sha",
+            "materially",
+            "different",
         ] {
             assert!(rendered.contains(expected), "missing `{expected}`:\n{rendered}");
         }

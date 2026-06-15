@@ -4,11 +4,7 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-The following items are scheduled into current iteration docs and are tracked
-there instead of as standalone backlog entries:
-
-- `0028-optimizer-memory` — planned in
-  [v13: Cross-Session Optimizer Memory](iterations/v13-cross-session-optimizer-memory.md).
+No items are currently scheduled into active iteration docs.
 
 ## Candidate Items
 

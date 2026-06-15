@@ -28,11 +28,12 @@ use crate::harnesses::{AgentHarness, InvokeInputs};
 use crate::layout::Layout;
 use crate::models::analyze::{AcceptedAnalysis, Analysis};
 use crate::models::common::{BreakageClass, Bucket, LensDispositionEntry, SchemaVersionV4};
+use crate::models::optimizer_memory::OptimizerMemoryJson;
 use crate::models::targets::{OptimizationTargets, RejectedByMerge};
 use crate::models::{ToJson, ValidateModel};
 use crate::prompts;
 use crate::session::dedup::{self, DedupDecision};
-use crate::session::{SessionLayout, ledger_reader, loader, maintain_ledger};
+use crate::session::{SessionLayout, ledger_reader, loader, maintain_ledger, optimizer_memory};
 use crate::settings::Settings;
 
 /// Inputs to a merge run.
@@ -175,6 +176,8 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
     let dedup_json = dedup_decisions
         .to_json_pretty()
         .context("serializing dedup decisions for merge prompt")?;
+    let memory = OptimizerMemoryJson::read_optional(&layout.optimizer_memory_json())?;
+    let memory_markdown = optimizer_memory::render_all_memory(memory.as_ref());
     let merge_reasoning_effort = inputs
         .settings
         .codex
@@ -234,6 +237,7 @@ pub async fn run<H: AgentHarness>(inputs: &Inputs<'_, H>) -> Result<Outputs> {
             codex_merge_model: merge_model_id.to_owned(),
             accepted_analyses_json: accepted_json,
             dedup_rejections_json: dedup_json,
+            optimizer_memory_markdown: memory_markdown,
         },
         prompts_dir,
     )?;

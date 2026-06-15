@@ -278,6 +278,13 @@ impl SessionLayout {
             .join("drilldowns")
     }
 
+    /// `results/optimizer-memory.json` — compact cross-session memory
+    /// generated once after triage identifies the current candidate families.
+    pub fn optimizer_memory_json(&self) -> PathBuf {
+        self.results_dir
+            .join("optimizer-memory.json")
+    }
+
     // ── Phase 1.5: analysis (analyzer fan-out) ───────────────────────
 
     /// `results/analysis` — root for `analysis/<family-id>/...`.

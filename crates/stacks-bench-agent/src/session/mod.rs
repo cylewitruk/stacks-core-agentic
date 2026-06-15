@@ -21,6 +21,7 @@ pub mod loader;
 pub mod maintain;
 pub mod maintain_ledger;
 pub mod merge;
+pub mod optimizer_memory;
 pub mod optimizers;
 pub mod phase_timing;
 pub mod preflight;

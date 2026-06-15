@@ -1,11 +1,11 @@
 # v13: Cross-Session Optimizer Memory
 
-Successor to [v12: Cross-Session Dedup Filter](../archive/completed/v12-cross-session-dedup-filter.md).
+Successor to [v12: Cross-Session Dedup Filter](v12-cross-session-dedup-filter.md).
 v12 prevents exact duplicate signatures from reaching optimizer fan-out. v13
 uses the same durable history as context so future agents can learn from prior
 attempts before they propose, merge, or implement another patch shape.
 
-> **Status:** planned
+> **Status:** shipped — code-complete, reviewed, validated, and archived.
 >
 > v13 is intentionally advisory. Deterministic blocking remains owned by v12's
 > dedup filter. This iteration surfaces concise memory to agents so they can
@@ -16,7 +16,7 @@ attempts before they propose, merge, or implement another patch shape.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0028-optimizer-memory` | primary | planned |
+| `0028-optimizer-memory` | primary | shipped |
 
 ## Why
 
@@ -135,21 +135,21 @@ attempts by family and fix signature.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Projection records open PR / issue context for a matching signature.
-- [ ] Projection records merged PR context for a matching signature.
-- [ ] Projection records stale PR context without marking it as a hard block.
-- [ ] Projection records closed-unmerged and closed-issue attempts.
-- [ ] Projection records archived rejected / failed / aborted attempts.
-- [ ] Projection groups sibling signatures under the same `family_id`.
-- [ ] Projection sorts maintain events by `observed_at`, not file order.
-- [ ] Exact-signature rows do not bleed across different signatures in the same
+- [x] Projection records open PR / issue context for a matching signature.
+- [x] Projection records merged PR context for a matching signature.
+- [x] Projection records stale PR context without marking it as a hard block.
+- [x] Projection records closed-unmerged and closed-issue attempts.
+- [x] Projection records archived rejected / failed / aborted attempts.
+- [x] Projection groups sibling signatures under the same `family_id`.
+- [x] Projection sorts maintain events by `observed_at`, not file order.
+- [x] Exact-signature rows do not bleed across different signatures in the same
       family.
 
 **Tests:**
@@ -167,9 +167,10 @@ artifact that prompts and future audits can inspect.
 - Add a typed model such as `OptimizerMemoryJson` with schema version 1.
 - Write a session-scoped artifact under `results/`, for example
   `results/optimizer-memory.json`.
-- Write it once at session start, after source materialization and before the
-  first prompt-consuming phase. Later phases read the same file without
-  refreshing it.
+- Write it once during a chained session run after triage identifies current
+  candidate families and before analyzer fan-out. Later phases read the same
+  file without refreshing it. Resume/rerun flows may regenerate the derived
+  artifact from the ledgers.
 - Include only memory relevant to current candidate / analyzer / merged target
   families and signatures.
 - Use bounded lists:
@@ -183,21 +184,22 @@ artifact that prompts and future audits can inspect.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Artifact round-trips through the typed model.
-- [ ] Artifact validates with `additionalProperties: false`.
-- [ ] Artifact is deterministic for the same input ledgers.
-- [ ] Empty history writes either an empty-but-valid artifact or omits the file
+- [x] Artifact round-trips through the typed model.
+- [x] Artifact validates with `additionalProperties: false`.
+- [x] Artifact row ordering is deterministic for the same input ledgers
+      (apart from `generated_at`).
+- [x] Empty history writes either an empty-but-valid artifact or omits the file
       with a documented reader fallback.
-- [ ] The artifact stays compact in a fixture with many unrelated historical
+- [x] The artifact stays compact in a fixture with many unrelated historical
       sessions.
-- [ ] Artifact rows include `source_sha` when available and omit it cleanly for
+- [x] Artifact rows include `source_sha` when available and omit it cleanly for
       legacy rows.
 
 **Tests:**
@@ -228,20 +230,20 @@ optimizer spends work.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Analyzer prompt receives memory for matching family/signature fixtures.
-- [ ] Merge prompt receives memory for matching family/signature fixtures.
-- [ ] Prompts explicitly say memory is advisory and v12 dedup owns hard blocks.
-- [ ] Prompts ask agents to cite memory when it changes a recommendation.
-- [ ] Analyzer and merge memory sections are bounded to roughly 2k tokens per
+- [x] Analyzer prompt receives memory for matching family/signature fixtures.
+- [x] Merge prompt receives memory for matching family/signature fixtures.
+- [x] Prompts explicitly say memory is advisory and v12 dedup owns hard blocks.
+- [x] Prompts ask agents to cite memory when it changes a recommendation.
+- [x] Analyzer and merge memory sections are bounded to roughly 2k tokens per
       family context and render an omitted-row marker when truncated.
-- [ ] Existing prompt lint remains clean.
+- [x] Existing prompt lint remains clean.
 
 **Tests:**
 
@@ -272,20 +274,20 @@ successful prior attempts.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Optimizer prompt receives memory relevant to the target.
-- [ ] Optimizer prompt omits unrelated family history.
-- [ ] Prompt instructs the agent not to repeat a known failed patch shape.
-- [ ] Prompt allows a justified variant when the new approach is materially
+- [x] Optimizer prompt receives memory relevant to the target.
+- [x] Optimizer prompt omits unrelated family history.
+- [x] Prompt instructs the agent not to repeat a known failed patch shape.
+- [x] Prompt allows a justified variant when the new approach is materially
       different.
-- [ ] Prompt says v13 does not add fuzzy similarity matching.
-- [ ] Optimizer fan-out target count is unchanged by memory context.
+- [x] Prompt says v13 does not add fuzzy similarity matching.
+- [x] Optimizer fan-out target count is unchanged by memory context.
 
 **Tests:**
 
@@ -308,17 +310,17 @@ differs from dedup.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Docs state memory is advisory context, not a hard gate.
-- [ ] Docs state v12 dedup remains responsible for deterministic skips.
-- [ ] Docs state where the memory artifact lives and when it is written.
-- [ ] Docs explain that exact signatures remain distinct inside a family.
+- [x] Docs state memory is advisory context, not a hard gate.
+- [x] Docs state v12 dedup remains responsible for deterministic skips.
+- [x] Docs state where the memory artifact lives and when it is written.
+- [x] Docs explain that exact signatures remain distinct inside a family.
 
 **Tests:**
 
@@ -327,14 +329,14 @@ differs from dedup.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache`
-- [ ] `just test --summary --no-sccache`
-- [ ] Fixture session with prior failed history surfaces memory to prompts but
-      does not remove targets by itself.
-- [ ] Fixture session with a prior merged sibling signature surfaces useful
-      context to analyzer / merge / optimizer.
-- [ ] Fixture session with no relevant history keeps prompts compact and
-      produces no spurious memory warnings.
+- [x] `just lint --no-sccache`
+- [x] `just test --summary --no-sccache`
+- [x] Synthetic ledger fixture with prior failed history surfaces memory to
+      prompts but does not remove targets by itself.
+- [x] Synthetic ledger fixture with a prior merged sibling signature surfaces
+      useful context to analyzer / merge / optimizer.
+- [x] No-relevant-history render path keeps prompts compact and produces no
+      spurious memory warnings.
 
 ## Follow-Ups
 
