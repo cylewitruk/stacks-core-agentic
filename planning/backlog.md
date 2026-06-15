@@ -4,7 +4,11 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-No items are currently scheduled into active iteration docs.
+The following items are scheduled into current iteration docs and are tracked
+there instead of as standalone backlog entries:
+
+- `0050-local-session-cron` — planned in
+  [v14: Local Session Systemd Schedule](iterations/v14-local-session-systemd-schedule.md).
 
 ## Candidate Items
 
@@ -168,22 +172,3 @@ verification results. Keep this separate from results-analyzer verdict policy.
 
 **Acceptance:** Analyzer output gives more realistic magnitude ranges without
 making results-analyzer confidence depend on forecast accuracy.
-
-<a id="0050-local-session-cron"></a>
-
-### Local Session Cron
-
-- **id:** `0050-local-session-cron`
-- **status:** `backlog`
-- **priority:** `medium`
-- **source:** v11 planning.
-
-**Problem:** `sbagent session run` cannot currently run on GitHub-hosted CI
-because benchmark sessions require a dedicated machine with chainstate, disk,
-and runtime capacity.
-
-**Scope:** Provide a dedicated-host scheduling recipe and hardening for local
-cron / launchd / systemd timers once v11's safety gates exist.
-
-**Acceptance:** A configured benchmark host can run scheduled sessions without
-racing maintain, bypassing `.sbagent/pause`, or starting when safety gates fail.
