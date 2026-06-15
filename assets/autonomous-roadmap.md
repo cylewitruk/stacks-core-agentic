@@ -185,9 +185,9 @@ Status: `[x]` · Shipped in
   SQLite cache, or migration boundary.
 - Initial consumers: v12 dedup and v13 optimizer memory.
 - Follow-up:
-  [`v16-projection-migration-completion`](../planning/iterations/v16-projection-migration-completion.md)
-  is planned to migrate the remaining read-side autonomy / history consumers
-  and wire one projection build across chained session phases.
+  [`v16-projection-migration-completion`](../planning/archive/completed/v16-projection-migration-completion.md)
+  migrated the remaining read-side autonomy / history consumers and wired one
+  projection build across chained session phases.
 - Deferred: append-only `events/*.jsonl` and disposable SQLite projection.
 
 ### 2B. Triage / merge dedup filter
@@ -296,7 +296,7 @@ Status: `[ ]` · Estimate: ~1 day · Depends on: 2A, 3A
 - `sbagent history report --format=markdown` — human-readable weekly digest: sessions count, PRs opened/merged/closed, top fix_signatures by attempts, agent token spend if tracked, time-to-merge distribution.
 - Optional: commit that report to `reports/<iso-week>.md` weekly so the repo itself serves as a dashboard.
 - Skip if no usage interest — defer to a v2 if running manually for a while suffices.
-- Planning note: after v16 completes the projection migration, v17 should
+- Planning note: now that v16 completed the projection migration, v17 should
   implement this as `0043-history-report` on top of `HistoryProjectionV1`
   rather than reading ledgers directly.
 

@@ -18,10 +18,10 @@ use clap::{Args, Subcommand};
 
 use crate::cli::CliContext;
 use crate::models::common::DeliveryMode;
-use crate::models::maintain_event::{MaintEvent, MaintEventKind};
+use crate::models::maintain_event::MaintEventKind;
 use crate::models::session_record::{SessionRecord, SessionStatus, TargetRecord, TargetStatus};
+use crate::session::history_projection::{self, ProjectedMaintenanceEventV1};
 use crate::session::ledger_reader::{LedgerReadReport, read_all, session_total_secs};
-use crate::session::maintain_ledger::read_all as read_maintain;
 
 /// `sbagent history ...`.
 #[derive(Debug, Args)]
@@ -446,18 +446,26 @@ fn weekday_from_serial(serial: i64) -> u32 {
 const BAR_WIDTH: usize = 60;
 
 fn run_show(args: ShowArgs, ctx: &CliContext) -> Result<()> {
-    let ledger_path = ledger_path(ctx)?;
-    let LedgerReadReport { records, skipped } = read_all(&ledger_path)?;
-    for s in &skipped {
+    let operator = ctx
+        .layout
+        .require_operator_repo_root()?;
+    let history = history_projection::read_operator_projection_v1(operator)?;
+    for s in &history.skipped_sessions {
         eprintln!(
             "sbagent history: skipping malformed sessions.jsonl line {}: {}",
             s.line_number, s.error,
         );
     }
+    for s in &history.skipped_maintain {
+        eprintln!(
+            "sbagent history: skipping malformed maintain.jsonl line {}: {}",
+            s.line_number, s.error,
+        );
+    }
 
-    let record = match records
-        .into_iter()
-        .find(|r| r.id == args.session_id)
+    let record = match history
+        .projection
+        .session(&args.session_id)
     {
         Some(r) => r,
         None => {
@@ -471,30 +479,17 @@ fn run_show(args: ShowArgs, ctx: &CliContext) -> Result<()> {
 
     let mut out = std::io::stdout().lock();
     let use_color = out.is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    let maintain_path = ctx
-        .layout
-        .require_operator_repo_root()?
-        .join("maintain.jsonl");
-    let maintain = read_maintain(&maintain_path)?;
-    for s in &maintain.skipped {
-        eprintln!(
-            "sbagent history: skipping malformed maintain.jsonl line {}: {}",
-            s.line_number, s.error,
-        );
-    }
-    let maint_events = maintain
-        .events
-        .into_iter()
-        .filter(|e| e.session_id == record.id)
-        .collect::<Vec<_>>();
-    render_show(&mut out, &record, &maint_events, use_color)?;
+    let maint_events = history
+        .projection
+        .maintenance_events_for_session(&record.id);
+    render_show(&mut out, record, maint_events, use_color)?;
     Ok(())
 }
 
 fn render_show<W: Write>(
     out: &mut W,
     record: &SessionRecord,
-    maint_events: &[MaintEvent],
+    maint_events: &[ProjectedMaintenanceEventV1],
     use_color: bool,
 ) -> Result<()> {
     render_header_section(out, record, use_color)?;
@@ -722,7 +717,10 @@ where
     Ok(())
 }
 
-fn render_maintenance_section<W: Write>(out: &mut W, events: &[MaintEvent]) -> Result<()> {
+fn render_maintenance_section<W: Write>(
+    out: &mut W,
+    events: &[ProjectedMaintenanceEventV1],
+) -> Result<()> {
     writeln!(out, "Maintenance events")?;
     let mut rows = events
         .iter()
@@ -763,7 +761,7 @@ struct MaintenanceRow {
     url: String,
 }
 
-fn build_maintenance_row(event: &MaintEvent) -> MaintenanceRow {
+fn build_maintenance_row(event: &ProjectedMaintenanceEventV1) -> MaintenanceRow {
     MaintenanceRow {
         observed_at: event.observed_at.clone(),
         kind: maint_kind_text(event.kind).to_owned(),

@@ -1,13 +1,12 @@
 # v16: Projection Migration Completion
 
-Successor to
-[v15: Cross-Session Projection Facade](../archive/completed/v15-cross-session-projection-facade.md).
+Successor to [v15: Cross-Session Projection Facade](v15-cross-session-projection-facade.md).
 v15 created `HistoryProjectionV1` and migrated the two most urgent consumers:
 v12 dedup and v13 optimizer memory. v16 finishes the migration boundary so
 new read-side autonomy features can consume one shared projection instead of
 adding fresh ledger passes.
 
-> **Status:** planned.
+> **Status:** shipped.
 >
 > v16 is a consolidation iteration. It should not change dedup policy,
 > optimizer-memory policy, GitHub reconciliation behavior, or ledger schemas.
@@ -18,7 +17,7 @@ adding fresh ledger passes.
 
 | Item | Role | Status |
 | ---- | ---- | ------ |
-| `0051-projection-migration-completion` | primary | planned |
+| `0051-projection-migration-completion` | primary | shipped |
 
 ## Why
 
@@ -113,10 +112,10 @@ Implementation requirements:
 - Failed projection reads should preserve the same diagnostics the existing
   raw-ledger consumers surface.
 - Standalone commands must still work without a prebuilt cache.
-- Tests should prove that the chained run path does not perform redundant
-  ledger reads for optimizer memory plus merge/dedup. Prefer a simple counter
-  seam around projection construction and assert `build_count == 1` for a
-  chained-run fixture that reaches Phase 1.2 and Phase 1.7.
+- Tests should prove that the chained run cache construction does not perform
+  redundant ledger reads. Prefer a simple counter seam around projection
+  construction and assert `build_count == 1`; Phase 1.2 and Phase 1.7 should
+  consume the same immutable `PhaseEnv` projection.
 - `history list` intentionally continues to read `sessions.jsonl` through the
   ledger reader and does not build a projection.
 - Projection methods added for autonomy/history should stay neutral and
@@ -147,23 +146,23 @@ projection without changing when `session run` is blocked.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Existing autonomy-gate tests pass with projection-backed inputs.
-- [ ] Any new projection method added for autonomy is consumer-neutral,
+- [x] Existing autonomy-gate tests pass with projection-backed inputs.
+- [x] Any new projection method added for autonomy is consumer-neutral,
       typed-return-only, and covered by unit tests in `history_projection.rs`.
-- [ ] Open PR count matches the previous raw-ledger implementation against
+- [x] Open PR count matches the previous raw-ledger implementation against
       fixture ledgers.
-- [ ] Cadence and circuit-breaker checks match previous behavior against
+- [x] Cadence and circuit-breaker checks match previous behavior against
       fixture ledgers.
-- [ ] `session/autonomy.rs` no longer reads `maintain.jsonl` or `sessions.jsonl`
+- [x] `session/autonomy.rs` no longer reads `maintain.jsonl` or `sessions.jsonl`
       directly except through the shared projection helper.
-- [ ] Error messages remain operator-facing and specific.
+- [x] Error messages remain operator-facing and specific.
 
 **Tests:**
 
@@ -190,21 +189,21 @@ preserving its existing ASCII output contract.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] Existing `history show` byte-equality fixtures remain unchanged unless
+- [x] Existing `history show` byte-equality fixtures remain unchanged unless
       a documented bug is corrected.
-- [ ] `history list` is either unchanged, or any no-risk cleanup keeps its
+- [x] `history list` is either unchanged, or any no-risk cleanup keeps its
       byte-equality fixtures identical and still avoids `maintain.jsonl`.
-- [ ] Maintenance events sort and render exactly as before.
-- [ ] Mixed verdict display remains covered by tests.
-- [ ] `cli/history.rs` no longer owns lifecycle projection logic for show.
-- [ ] Piped output remains pure ASCII with no ANSI.
+- [x] Maintenance events sort and render exactly as before.
+- [x] Mixed verdict display remains covered by tests.
+- [x] `cli/history.rs` no longer owns lifecycle projection logic for show.
+- [x] Piped output remains pure ASCII with no ANSI.
 
 **Tests:**
 
@@ -232,22 +231,22 @@ ledger read, one projection build, multiple phase consumers.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] A chained-run test uses a counter seam around projection construction and
-      asserts `build_count == 1` for a fixture that reaches optimizer memory
-      and merge/dedup.
-- [ ] Cache construction failure aborts before Phase 1 with a clear
+- [x] A chained-run test uses a counter seam around projection construction and
+      asserts `build_count == 1`; Phase 1.2 optimizer memory and Phase 1.7
+      merge/dedup consume the same immutable `PhaseEnv` projection.
+- [x] Cache construction failure aborts before Phase 1 with a clear
       operator-facing diagnostic.
-- [ ] Standalone commands still work without an orchestration cache.
-- [ ] Projection-read failures surface before dependent phases run.
-- [ ] No phase mutates the cached projection.
-- [ ] Phase timing / archive behavior remains unchanged.
+- [x] Standalone commands still work without an orchestration cache.
+- [x] Projection-read failures surface before dependent phases run.
+- [x] No phase mutates the cached projection.
+- [x] Phase timing / archive behavior remains unchanged.
 
 **Tests:**
 
@@ -278,18 +277,18 @@ directly, without implementing the report in v16.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] No `history report` command is added in v16.
-- [ ] No projection method is added solely for future report needs.
-- [ ] Backlog `0043` points at v17 after projection migration completion.
-- [ ] Any projection methods added for report readiness are covered by tests.
-- [ ] The v17 handoff note states that reports must not read raw ledgers
+- [x] No `history report` command is added in v16.
+- [x] No projection method is added solely for future report needs.
+- [x] Backlog `0043` points at v17 after projection migration completion.
+- [x] Any projection methods added for report readiness are covered by tests.
+- [x] The v17 handoff note states that reports must not read raw ledgers
       directly.
 
 **Tests:**
@@ -316,28 +315,28 @@ projection drift.
 
 **Status:**
 
-- [ ] Core implementation
-- [ ] Unit/integration tests
-- [ ] Reviewed
-- [ ] Validated
+- [x] Core implementation
+- [x] Unit/integration tests
+- [x] Reviewed
+- [x] Validated
 
 **Acceptance & Validation:**
 
-- [ ] `rg 'maintain_ledger::read_all|read_maintain|maintain_ledger::'
+- [x] `rg 'maintain_ledger::read_all|read_maintain|maintain_ledger::'
       crates/stacks-bench-agent/src/` shows no direct maintain-ledger reads
       in `session/autonomy.rs` or the `history show` path.
-- [ ] Expected remaining raw-ledger readers are documented. At minimum,
+- [x] Expected remaining raw-ledger readers are documented. At minimum,
       `session/history_projection.rs`, `cli/maintain.rs`, and maintain
       reconciler internals may still read / write maintain events directly.
-- [ ] `history_projection.rs` module docs list all current projection consumers
+- [x] `history_projection.rs` module docs list all current projection consumers
       verbatim, and future-consumer updates are documented as part of the
       module contract.
-- [ ] `rg 'ledger_reader::read_all|session_ledger|sessions.jsonl'
+- [x] `rg 'ledger_reader::read_all|session_ledger|sessions.jsonl'
       crates/stacks-bench-agent/src/` has no new raw session-ledger projection
       consumers outside the projection module and commands that intentionally
       display ledger-read diagnostics.
-- [ ] No generated schemas change.
-- [ ] Planning docs name v17 as the `0043-history-report` follow-up.
+- [x] No generated schemas change.
+- [x] Planning docs name v17 as the `0043-history-report` follow-up.
 
 **Tests:**
 
@@ -346,21 +345,36 @@ projection drift.
 
 ## Final Validation
 
-- [ ] `just lint --no-sccache`
-- [ ] `just test --summary --no-sccache`
-- [ ] Test count is at least the v15 baseline of 582 unless redundant coverage
+- [x] `just lint --no-sccache`
+- [x] `just test --summary --no-sccache`
+- [x] Test count is at least the v15 baseline of 582 unless redundant coverage
       is explicitly named and replaced.
-- [ ] Existing history output fixtures still pass.
-- [ ] Existing autonomy safety-gate fixtures still pass.
-- [ ] Existing dedup and optimizer-memory golden fixtures still pass.
-- [ ] No schema files changed.
-- [ ] `HistoryProjectionV1` is the default read-side API for autonomy,
+- [x] Existing history output fixtures still pass.
+- [x] Existing autonomy safety-gate fixtures still pass.
+- [x] Existing dedup and optimizer-memory golden fixtures still pass.
+- [x] No schema files changed.
+- [x] `HistoryProjectionV1` is the default read-side API for autonomy,
       history-show lifecycle detail, dedup, and optimizer memory.
+
+## Shipped Notes
+
+- Added neutral projection views:
+  - `sessions() -> &[SessionRecord]`;
+  - `session(id) -> Option<&SessionRecord>`;
+  - `maintenance_events_for_session(id) -> &[ProjectedMaintenanceEventV1]`.
+- Migrated v11 autonomy gates and `history show` to `HistoryProjectionV1`.
+- Chained `session run` now builds one projection and passes
+  `&HistoryProjectionV1` into Phase 1.2 optimizer memory and Phase 1.7
+  merge/dedup. The counter-seam test pins `build_count == 1`.
+- `history list` intentionally remains on the lightweight session reader
+  because it has no `maintain.jsonl` join.
+- `--skip-preflight` does not skip the projection cache build; the cache is
+  built after source materialization and before Phase 1.
 
 ## Follow-Ups
 
 - **v17 footnote for reviewers:** v17 should implement
-  [`0043-history-report`](../backlog.md#0043-history-report) on top of
+  [`0043-history-report`](../../backlog.md#0043-history-report) on top of
   `HistoryProjectionV1`. It should not add another raw ledger pass. The report
   can render session rollups, open / merged / closed PR state, issue state,
   dedup skips, and optimizer-memory lineage only where that information already

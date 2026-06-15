@@ -5,8 +5,11 @@
 //! consumers. It deliberately differs from
 //! [`crate::session::maintain::ArtifactProjection`]: maintain's projection is
 //! write-side and invocation-scoped, deciding which new lifecycle events to
-//! emit. `HistoryProjectionV1` is read-side and shared by consumers such as
-//! dedup and optimizer memory.
+//! emit. `HistoryProjectionV1` is read-side and shared by consumers:
+//! v11 autonomy gates (`session/autonomy.rs`), v12 dedup
+//! (`session/dedup.rs`), v13 optimizer memory
+//! (`session/optimizer_memory.rs`), v6 history show (`cli/history.rs`), and
+//! the chained-session orchestrator.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,11 +33,13 @@ pub struct HistoryProjectionReadReport {
 }
 
 /// v1 read-side projection built from parsed ledger records.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct HistoryProjectionV1 {
+    sessions: Vec<SessionRecord>,
     attempts_by_signature: BTreeMap<String, Vec<ProjectedAttemptV1>>,
     signatures_by_family: BTreeMap<String, Vec<ProjectedSignatureV1>>,
     artifacts_by_url: BTreeMap<String, ProjectedArtifactStateV1>,
+    maintenance_events_by_session: BTreeMap<String, Vec<ProjectedMaintenanceEventV1>>,
 }
 
 /// One historical attempt copied from an archived target row.
@@ -90,6 +95,25 @@ pub struct ProjectedArtifactStateV1 {
     pub new_state: String,
     /// PR head SHA when maintain reported one.
     pub head_sha: Option<String>,
+}
+
+/// One lifecycle event projected for history/report rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedMaintenanceEventV1 {
+    /// Archived session id this lifecycle event belongs to.
+    pub session_id: String,
+    /// Event kind.
+    pub kind: MaintEventKind,
+    /// Observation timestamp.
+    pub observed_at: String,
+    /// Target id, when maintain recorded one.
+    pub target_id: Option<String>,
+    /// Normalized state recorded by maintain.
+    pub new_state: String,
+    /// PR URL, when this is a PR lifecycle event.
+    pub pr_url: Option<String>,
+    /// Issue URL, when this is an issue lifecycle event.
+    pub issue_url: Option<String>,
 }
 
 impl HistoryProjectionV1 {
@@ -160,10 +184,24 @@ impl HistoryProjectionV1 {
             .collect();
 
         Self {
+            sessions: sessions.to_vec(),
             attempts_by_signature,
             signatures_by_family,
             artifacts_by_url,
+            maintenance_events_by_session: project_maintenance_events_by_session(maintain_events),
         }
+    }
+
+    /// Archived session records in ledger order.
+    pub fn sessions(&self) -> &[SessionRecord] {
+        &self.sessions
+    }
+
+    /// Archived session record by id.
+    pub fn session(&self, id: &str) -> Option<&SessionRecord> {
+        self.sessions
+            .iter()
+            .find(|session| session.id == id)
     }
 
     /// Attempts for an exact fix signature, newest first.
@@ -193,6 +231,17 @@ impl HistoryProjectionV1 {
     /// Latest lifecycle state for a PR/issue URL.
     pub fn latest_artifact_state(&self, url: &str) -> Option<&ProjectedArtifactStateV1> {
         self.artifacts_by_url.get(url)
+    }
+
+    /// Maintenance events for an archived session, sorted by `observed_at`.
+    pub fn maintenance_events_for_session(
+        &self,
+        session_id: &str,
+    ) -> &[ProjectedMaintenanceEventV1] {
+        self.maintenance_events_by_session
+            .get(session_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 }
 
@@ -247,6 +296,36 @@ fn project_artifacts_by_observed_at(
         );
     }
     out
+}
+
+fn project_maintenance_events_by_session(
+    events: &[MaintEvent],
+) -> BTreeMap<String, Vec<ProjectedMaintenanceEventV1>> {
+    let mut by_session: BTreeMap<String, Vec<ProjectedMaintenanceEventV1>> = BTreeMap::new();
+    for event in events {
+        by_session
+            .entry(event.session_id.clone())
+            .or_default()
+            .push(ProjectedMaintenanceEventV1 {
+                session_id: event.session_id.clone(),
+                kind: event.kind,
+                observed_at: event.observed_at.clone(),
+                target_id: event.target_id.clone(),
+                new_state: event.new_state.clone(),
+                pr_url: event.pr_url.clone(),
+                issue_url: event.issue_url.clone(),
+            });
+    }
+    for events in by_session.values_mut() {
+        events.sort_by(|a, b| {
+            a.observed_at
+                .cmp(&b.observed_at)
+                .then_with(|| a.target_id.cmp(&b.target_id))
+                .then_with(|| a.pr_url.cmp(&b.pr_url))
+                .then_with(|| a.issue_url.cmp(&b.issue_url))
+        });
+    }
+    by_session
 }
 
 fn sort_attempts_newest_first(attempts: &mut [ProjectedAttemptV1]) {
@@ -370,6 +449,50 @@ mod tests {
 
         let attempt = &projection.attempts_for_signature("fix-a")[0];
         assert_eq!(attempt.source_sha, None);
+    }
+
+    #[test]
+    fn exposes_session_records_by_id() {
+        let projection = HistoryProjectionV1::from_ledgers_v1(
+            &[session("s1", "2026-06-11T00:00:00Z", None, vec![])],
+            &[],
+        );
+
+        assert_eq!(projection.sessions().len(), 1);
+        assert_eq!(
+            projection
+                .session("s1")
+                .map(|session| session.id.as_str()),
+            Some("s1"),
+        );
+        assert!(
+            projection
+                .session("missing")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn exposes_session_maintenance_events_sorted_by_observed_at() {
+        let pr = "https://github.com/owner/repo/pull/1";
+        let mut later = event(MaintEventKind::PrMerged, pr, "2026-06-13T02:00:00Z");
+        later.session_id = "s1".to_owned();
+        let mut earlier = event(MaintEventKind::PrOpen, pr, "2026-06-13T01:00:00Z");
+        earlier.session_id = "s1".to_owned();
+        let mut other = event(MaintEventKind::PrOpen, pr, "2026-06-13T00:00:00Z");
+        other.session_id = "s2".to_owned();
+
+        let projection = HistoryProjectionV1::from_ledgers_v1(&[], &[later, other, earlier]);
+
+        let events = projection.maintenance_events_for_session("s1");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, MaintEventKind::PrOpen);
+        assert_eq!(events[1].kind, MaintEventKind::PrMerged);
+        assert!(
+            projection
+                .maintenance_events_for_session("missing")
+                .is_empty()
+        );
     }
 
     fn session(

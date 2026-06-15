@@ -33,6 +33,7 @@ use crate::models::targets::{OptimizationTargets, RejectedByMerge};
 use crate::models::{ToJson, ValidateModel};
 use crate::prompts;
 use crate::session::dedup::{self, DedupDecision};
+use crate::session::history_projection::HistoryProjectionV1;
 use crate::session::{SessionLayout, history_projection, loader, optimizer_memory};
 use crate::settings::Settings;
 
@@ -46,6 +47,10 @@ pub struct Inputs<'a, H: AgentHarness> {
     pub settings: &'a Settings,
     /// Agent harness for the LLM consolidation pass.
     pub harness: &'a H,
+    /// Optional shared read-side projection for chained `session run`.
+    /// Standalone merge invocations leave this unset and build one projection
+    /// locally.
+    pub history_projection: Option<&'a HistoryProjectionV1>,
 }
 
 /// Outputs of a merge run.
@@ -366,25 +371,32 @@ fn compute_dedup_filtered_inputs(
     inputs: &Inputs<'_, impl AgentHarness>,
     accepted: &[&AcceptedAnalysis],
 ) -> Result<(Vec<AcceptedAnalysis>, Vec<DedupDecision>)> {
-    let operator = inputs
-        .framework
-        .require_operator_repo_root()?;
-    let history = history_projection::read_operator_projection_v1(operator)
-        .context("reading operator ledgers for merge dedup projection")?;
-    for skipped in &history.skipped_sessions {
-        eprintln!(
-            "merge dedup: skipping malformed sessions.jsonl line {}: {}",
-            skipped.line_number, skipped.error
-        );
-    }
-    for skipped in &history.skipped_maintain {
-        eprintln!(
-            "merge dedup: skipping malformed maintain.jsonl line {}: {}",
-            skipped.line_number, skipped.error
-        );
-    }
+    let owned_history;
+    let history = if let Some(history) = inputs.history_projection {
+        history
+    } else {
+        let operator = inputs
+            .framework
+            .require_operator_repo_root()?;
+        let report = history_projection::read_operator_projection_v1(operator)
+            .context("reading operator ledgers for merge dedup projection")?;
+        for skipped in &report.skipped_sessions {
+            eprintln!(
+                "merge dedup: skipping malformed sessions.jsonl line {}: {}",
+                skipped.line_number, skipped.error
+            );
+        }
+        for skipped in &report.skipped_maintain {
+            eprintln!(
+                "merge dedup: skipping malformed maintain.jsonl line {}: {}",
+                skipped.line_number, skipped.error
+            );
+        }
+        owned_history = report.projection;
+        &owned_history
+    };
     let projection = dedup::DedupProjection::from_history_projection(
-        &history.projection,
+        history,
         inputs
             .settings
             .autonomy

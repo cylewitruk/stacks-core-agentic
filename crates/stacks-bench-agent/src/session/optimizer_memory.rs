@@ -37,23 +37,6 @@ pub fn write_for_current_candidates(
     operator_repo_root: &Path,
     current_source_sha: Option<&str>,
 ) -> Result<OptimizerMemoryJson> {
-    let candidates = Candidates::from_json_validated(
-        &std::fs::read_to_string(layout.candidates_json()).with_context(|| {
-            format!(
-                "reading {}",
-                layout
-                    .candidates_json()
-                    .display()
-            )
-        })?,
-    )
-    .context("loading candidates.json for optimizer memory")?;
-    let family_ids: BTreeSet<String> = candidates
-        .candidates
-        .iter()
-        .map(|c| c.id.clone())
-        .collect();
-
     let history = history_projection::read_operator_projection_v1(operator_repo_root)
         .context("reading operator ledgers for optimizer memory")?;
     for skipped in &history.skipped_sessions {
@@ -69,14 +52,48 @@ pub fn write_for_current_candidates(
         );
     }
 
-    let memory = build_for_families_from_projection(
-        &family_ids,
+    write_for_current_candidates_from_projection(
+        layout,
         &history.projection,
         current_source_sha.map(str::to_owned),
+    )
+}
+
+/// Build and write the current session's optimizer-memory artifact from an
+/// already-built shared history projection.
+pub fn write_for_current_candidates_from_projection(
+    layout: &SessionLayout,
+    history: &HistoryProjectionV1,
+    current_source_sha: Option<String>,
+) -> Result<OptimizerMemoryJson> {
+    let family_ids = current_candidate_family_ids(layout)?;
+    let memory = build_for_families_from_projection(
+        &family_ids,
+        history,
+        current_source_sha,
         now_utc_iso8601(),
     );
     memory.write_atomic(&layout.optimizer_memory_json())?;
     Ok(memory)
+}
+
+fn current_candidate_family_ids(layout: &SessionLayout) -> Result<BTreeSet<String>> {
+    let candidates = Candidates::from_json_validated(
+        &std::fs::read_to_string(layout.candidates_json()).with_context(|| {
+            format!(
+                "reading {}",
+                layout
+                    .candidates_json()
+                    .display()
+            )
+        })?,
+    )
+    .context("loading candidates.json for optimizer memory")?;
+    Ok(candidates
+        .candidates
+        .iter()
+        .map(|c| c.id.clone())
+        .collect())
 }
 
 /// Build a memory artifact from already-read ledgers.

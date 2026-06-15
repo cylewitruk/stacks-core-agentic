@@ -14,6 +14,7 @@
 //! [`baseline::ArchiveBinaryOutputs`] Phase 0a produces and Phase 0
 //! consumes.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,10 +27,11 @@ use crate::harnesses::codex::CodexHarness;
 use crate::session::bench::StacksBenchCli;
 use crate::session::cargo::StdCargoRunner;
 use crate::session::finalize::{self, FinalizeInputs};
+use crate::session::history_projection::{HistoryProjectionReadReport, HistoryProjectionV1};
 use crate::session::phase_timing::PhaseTimingsRecorder;
 use crate::session::{
-    SessionLayout, analyzers, baseline, bench_experiments, db_consistency, loader, merge,
-    optimizer_memory, optimizers, publish, triage,
+    SessionLayout, analyzers, baseline, bench_experiments, db_consistency, history_projection,
+    loader, merge, optimizer_memory, optimizers, publish, triage,
 };
 use crate::types::SessionId;
 
@@ -125,6 +127,10 @@ struct PhaseEnv<'a> {
     /// `<operator>/repos/<base>/` now reads
     /// `source.session_checkout` instead.
     source: crate::source::ResolvedSource,
+    /// Shared read-side cross-session projection. Built once for a chained
+    /// session run and passed immutably to phases that need historical
+    /// context.
+    history_projection: HistoryProjectionV1,
 }
 
 impl<'a> PhaseEnv<'a> {
@@ -135,6 +141,7 @@ impl<'a> PhaseEnv<'a> {
         ctx: &'a CliContext,
         session_id: &'a SessionId,
         source: crate::source::ResolvedSource,
+        history_projection: HistoryProjectionV1,
     ) -> Result<Self> {
         // Phase 0 (baseline) AND Phase 3 (per-target experiments) must
         // replay the same blocks — candidate selection during triage /
@@ -173,8 +180,41 @@ impl<'a> PhaseEnv<'a> {
             axis_weights,
             base_branch,
             source,
+            history_projection,
         })
     }
+}
+
+fn read_chained_history_projection(ctx: &CliContext) -> Result<HistoryProjectionV1> {
+    read_chained_history_projection_with(ctx, history_projection::read_operator_projection_v1)
+}
+
+fn read_chained_history_projection_with<F>(ctx: &CliContext, read: F) -> Result<HistoryProjectionV1>
+where
+    F: FnOnce(&Path) -> Result<HistoryProjectionReadReport>,
+{
+    let operator = ctx
+        .layout
+        .require_operator_repo_root()?;
+    let report = read(operator).with_context(|| {
+        format!(
+            "building chained-session history projection from operator repo {}",
+            operator.display()
+        )
+    })?;
+    for skipped in &report.skipped_sessions {
+        eprintln!(
+            "session run projection: skipping malformed sessions.jsonl line {}: {}",
+            skipped.line_number, skipped.error
+        );
+    }
+    for skipped in &report.skipped_maintain {
+        eprintln!(
+            "session run projection: skipping malformed maintain.jsonl line {}: {}",
+            skipped.line_number, skipped.error
+        );
+    }
+    Ok(report.projection)
 }
 
 /// Run the full pipeline.
@@ -249,7 +289,9 @@ pub async fn run(args: RunSessionArgs, ctx: &CliContext, session_id: &SessionId)
             .min(10)],
     );
 
-    let env = PhaseEnv::resolve(&args, ctx, session_id, source)?;
+    let history_projection =
+        read_chained_history_projection(ctx).context("session-start history projection")?;
+    let env = PhaseEnv::resolve(&args, ctx, session_id, source, history_projection)?;
 
     // When Phase 5 is requested, validate publish wiring NOW — before
     // Phases 0-4 burn an hour of compute. Catches an unreadable/empty
@@ -467,14 +509,10 @@ async fn phase_1_triage(env: &PhaseEnv<'_>) -> Result<()> {
 /// identifies the current candidate families. Later prompt-consuming phases
 /// read this same artifact without refreshing it.
 fn phase_1_2_optimizer_memory(env: &PhaseEnv<'_>) -> Result<()> {
-    let operator = env
-        .ctx
-        .layout
-        .require_operator_repo_root()?;
-    optimizer_memory::write_for_current_candidates(
+    optimizer_memory::write_for_current_candidates_from_projection(
         &env.layout,
-        operator,
-        Some(env.source.source.sha.as_str()),
+        &env.history_projection,
+        Some(env.source.source.sha.clone()),
     )
     .context("Phase 1.2: optimizer memory")?;
     Ok(())
@@ -506,6 +544,7 @@ async fn phase_1_7_merge(env: &PhaseEnv<'_>) -> Result<()> {
         framework: &env.ctx.layout,
         settings: &env.ctx.settings,
         harness: env.harness.as_ref(),
+        history_projection: Some(&env.history_projection),
     })
     .await
     .context("Phase 1.7: merge")?;
@@ -809,4 +848,85 @@ fn session_end_cleanup(env: &PhaseEnv<'_>) -> Result<()> {
         println!("session-end cleanup: dropped {dropped} aborted experiment(s)");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::layout::Layout;
+    use crate::models::common::SchemaVersionV3;
+    use crate::models::session_record::{
+        SessionRange, SessionRecord, SessionRecordKind, SessionStatus,
+    };
+    use crate::settings::{LayoutSettings, Settings};
+
+    #[test]
+    fn chained_projection_reader_builds_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            layout: LayoutSettings {
+                operator_repo_root: Some(tmp.path().to_path_buf()),
+                ..LayoutSettings::default()
+            },
+            ..Settings::default()
+        };
+        let ctx = CliContext {
+            layout: Layout::from_settings(&settings).expect("layout"),
+            settings,
+        };
+        let build_count = Cell::new(0usize);
+
+        let projection = read_chained_history_projection_with(&ctx, |operator| {
+            build_count.set(build_count.get() + 1);
+            assert_eq!(operator, tmp.path());
+            Ok(HistoryProjectionReadReport {
+                projection: HistoryProjectionV1::from_ledgers_v1(&[session("s1")], &[]),
+                skipped_sessions: vec![],
+                skipped_maintain: vec![],
+            })
+        })
+        .expect("projection");
+
+        assert_eq!(build_count.get(), 1);
+        assert_eq!(
+            projection
+                .session("s1")
+                .map(|session| session.id.as_str()),
+            Some("s1"),
+        );
+    }
+
+    fn session(id: &str) -> SessionRecord {
+        SessionRecord {
+            kind: SessionRecordKind::SessionCompleted,
+            schema_version: SchemaVersionV3,
+            id: id.to_owned(),
+            artifact_branch: format!("session/{id}"),
+            artifact_sha: "cafebabecafebabecafebabecafebabecafebabe".to_owned(),
+            artifact_url: None,
+            started_at: "2026-06-10T00:00:00Z".to_owned(),
+            finished_at: "2026-06-10T00:30:00Z".to_owned(),
+            status: SessionStatus::Succeeded,
+            failure_phase: None,
+            failure_reason: None,
+            sbagent_version: "0.1.0".to_owned(),
+            sbagent_git_sha: None,
+            range: SessionRange {
+                start_at: None,
+                count: None,
+                warmup: None,
+                filter: None,
+                network: "mainnet".to_owned(),
+            },
+            baseline_run_ids: vec![],
+            phase_durations_secs: Default::default(),
+            targets: vec![],
+            source_url: None,
+            source_branch: None,
+            source_sha: None,
+            source_fetched_at: None,
+        }
+    }
 }

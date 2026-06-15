@@ -23,6 +23,7 @@ pub async fn run(_args: AnalysisMergeArgs, ctx: &CliContext, session_id: &Sessio
         framework: &ctx.layout,
         settings: &ctx.settings,
         harness: &harness,
+        history_projection: None,
     })
     .await?;
 

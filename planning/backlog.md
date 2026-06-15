@@ -4,11 +4,7 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-The following items are scheduled into current iteration docs and are tracked
-there instead of as standalone backlog entries:
-
-- `0051-projection-migration-completion` — planned in
-  [v16: Projection Migration Completion](iterations/v16-projection-migration-completion.md).
+No items are currently scheduled into active iteration docs.
 
 ## Candidate Items
 
@@ -94,13 +90,12 @@ default `--out` is stdout. Markdown sections:
 - **PRs opened**: bulleted list of `pr_url`s grouped by session.
 - **Issues opened**: bulleted list of `issue_url`s.
 
-**Promotion trigger:** Best picked up as v17 after
-[v16: Projection Migration Completion](iterations/v16-projection-migration-completion.md)
-ships. `0033-maintain-command` added GitHub-side reconciliation (open /
+**Promotion trigger:** Best picked up as v17 now that
+[v16: Projection Migration Completion](archive/completed/v16-projection-migration-completion.md)
+has shipped. `0033-maintain-command` added GitHub-side reconciliation (open /
 merged / closed / stale PR state) to `maintain.jsonl`, and v15 introduced the
-shared projection. v16 should finish migrating read-side consumers so the
-report can consume `HistoryProjectionV1` instead of adding another raw ledger
-pass.
+shared projection. v16 finished migrating read-side consumers so the report can
+consume `HistoryProjectionV1` instead of adding another raw ledger pass.
 
 **Acceptance:** Default invocation produces a markdown document with
 the four sections above against a fixture ledger.

@@ -4,16 +4,14 @@
 //! which writes `.sbagent/pause` when recent completed sessions show a
 //! repeated zero-accepted pattern.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 
-use crate::models::maintain_event::{MaintEvent, MaintEventKind};
 use crate::models::session_record::{SessionRecord, SessionStatus, TargetStatus};
-use crate::session::ledger_reader::read_all as read_sessions;
-use crate::session::maintain_ledger::read_all as read_maintain;
+use crate::session::history_projection::{self, HistoryProjectionV1};
 use crate::settings::AutonomySettings;
 
 /// One blocking autonomy gate.
@@ -68,17 +66,15 @@ fn check_operator_gates_inner(
     let mut blocks = Vec::new();
     check_pause_file(operator_repo_root, &mut blocks);
 
-    let sessions_path = operator_repo_root.join("sessions.jsonl");
-    let maintain_path = operator_repo_root.join("maintain.jsonl");
-    let sessions = read_sessions(&sessions_path)?;
-    let maintain = read_maintain(&maintain_path)?;
+    let history = history_projection::read_operator_projection_v1(operator_repo_root)
+        .context("reading operator ledgers for autonomy gates")?;
 
-    check_open_pr_limit(settings, &sessions.records, &maintain.events, &mut blocks);
-    check_session_interval(settings, &sessions.records, now, &mut blocks);
+    check_open_pr_limit(settings, &history.projection, &mut blocks);
+    check_session_interval(settings, history.projection.sessions(), now, &mut blocks);
     check_zero_accepted_breaker(
         operator_repo_root,
         settings,
-        &sessions.records,
+        history.projection.sessions(),
         now,
         breaker_action,
         &mut blocks,
@@ -103,11 +99,10 @@ fn check_pause_file(operator: &Path, blocks: &mut Vec<AutonomyBlock>) {
 
 fn check_open_pr_limit(
     settings: &AutonomySettings,
-    sessions: &[SessionRecord],
-    maintain: &[MaintEvent],
+    projection: &HistoryProjectionV1,
     blocks: &mut Vec<AutonomyBlock>,
 ) {
-    let open = open_pr_urls(sessions, maintain);
+    let open = open_pr_urls(projection);
     if open.len() >= settings.max_open_agent_prs {
         blocks.push(AutonomyBlock {
             gate: "max-open-agent-prs",
@@ -249,37 +244,28 @@ fn check_zero_accepted_breaker(
     Ok(())
 }
 
-/// Return PR URLs currently considered open by sessions + maintain projection.
-pub fn open_pr_urls(sessions: &[SessionRecord], maintain: &[MaintEvent]) -> BTreeSet<String> {
+/// Return PR URLs currently considered open by the shared history projection.
+pub fn open_pr_urls(projection: &HistoryProjectionV1) -> BTreeSet<String> {
     let mut urls = BTreeSet::new();
-    for session in sessions {
+    for session in projection.sessions() {
         for target in &session.targets {
             if let Some(url) = &target.pr_url {
                 urls.insert(url.clone());
             }
         }
     }
-    let terminal = terminal_pr_urls(maintain);
-    for url in terminal {
-        urls.remove(&url);
-    }
+    urls.retain(|url| {
+        !projection
+            .latest_artifact_state(url)
+            .is_some_and(|state| {
+                matches!(
+                    state.kind,
+                    crate::models::maintain_event::MaintEventKind::PrMerged
+                        | crate::models::maintain_event::MaintEventKind::PrClosedUnmerged
+                )
+            })
+    });
     urls
-}
-
-fn terminal_pr_urls(events: &[MaintEvent]) -> BTreeSet<String> {
-    let mut latest = BTreeMap::<String, MaintEventKind>::new();
-    for event in events {
-        if let Some(url) = &event.pr_url {
-            latest.insert(url.clone(), event.kind);
-        }
-    }
-    latest
-        .into_iter()
-        .filter_map(|(url, kind)| {
-            matches!(kind, MaintEventKind::PrMerged | MaintEventKind::PrClosedUnmerged)
-                .then_some(url)
-        })
-        .collect()
 }
 
 fn latest_session_time(sessions: &[SessionRecord]) -> Option<(&str, SystemTime)> {
@@ -386,7 +372,7 @@ mod tests {
 
     use super::*;
     use crate::models::common::{DeliveryMode, SchemaVersionV1, SchemaVersionV3};
-    use crate::models::maintain_event::MaintEventKind;
+    use crate::models::maintain_event::{MaintEvent, MaintEventKind};
     use crate::models::session_record::{
         SessionRange, SessionRecordKind, TargetRecord, TargetStatusStage,
     };
@@ -461,6 +447,10 @@ mod tests {
         }
     }
 
+    fn projection(sessions: &[SessionRecord], maintain: &[MaintEvent]) -> HistoryProjectionV1 {
+        HistoryProjectionV1::from_ledgers_v1(sessions, maintain)
+    }
+
     #[test]
     fn open_pr_urls_subtracts_terminal_maintain_events() {
         let pr1 = "https://github.com/owner/repo/pull/1";
@@ -475,7 +465,8 @@ mod tests {
             ],
         )];
         let maintain = vec![event(MaintEventKind::PrMerged, pr1)];
-        let open = open_pr_urls(&sessions, &maintain);
+        let history = projection(&sessions, &maintain);
+        let open = open_pr_urls(&history);
         assert_eq!(open, BTreeSet::from([pr2.to_owned()]));
     }
 
@@ -497,7 +488,8 @@ mod tests {
             ..AutonomySettings::default()
         };
         let mut blocks = Vec::new();
-        check_open_pr_limit(&settings, &sessions, &[], &mut blocks);
+        let history = projection(&sessions, &[]);
+        check_open_pr_limit(&settings, &history, &mut blocks);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].gate, "max-open-agent-prs");
     }
@@ -520,12 +512,9 @@ mod tests {
             ..AutonomySettings::default()
         };
         let mut blocks = Vec::new();
-        check_open_pr_limit(
-            &settings,
-            &sessions,
-            &[event(MaintEventKind::PrClosedUnmerged, pr2)],
-            &mut blocks,
-        );
+        let maintain = vec![event(MaintEventKind::PrClosedUnmerged, pr2)];
+        let history = projection(&sessions, &maintain);
+        check_open_pr_limit(&settings, &history, &mut blocks);
         assert!(blocks.is_empty());
     }
 
@@ -572,7 +561,8 @@ mod tests {
             vec![target("a", TargetStatus::Accepted, Some(pr1))],
         )];
         let mut blocks = Vec::new();
-        check_open_pr_limit(&settings, &sessions, &[], &mut blocks);
+        let history = projection(&sessions, &[]);
+        check_open_pr_limit(&settings, &history, &mut blocks);
         check_session_interval(
             &settings,
             &sessions,
