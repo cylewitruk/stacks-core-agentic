@@ -124,3 +124,60 @@ verification results. Keep this separate from results-analyzer verdict policy.
 
 **Acceptance:** Analyzer output gives more realistic magnitude ranges without
 making results-analyzer confidence depend on forecast accuracy.
+
+<a id="0052-session-artifact-layout-and-retention"></a>
+
+### Session Artifact Layout And Retention
+
+- **id:** `0052-session-artifact-layout-and-retention`
+- **status:** `backlog`
+- **priority:** `medium`
+- **source:** Post-smoke archive review. Operator archive branches currently
+  carry large duplicated session artifacts, including multiple
+  `stacks-bench` binaries at roughly 19 MB each.
+
+**Problem:** The session artifact tree grew phase-by-phase and now mixes
+session-global artifacts, target-local artifacts, agent transcripts, publish
+sidecars, and large local build outputs in paths that do not always reflect
+ownership or retention value. Archive pushes can become unnecessarily large,
+and target artifacts such as optimizer binaries are often redundant with the
+bot-fork branch and commit SHA that already preserve the optimized source.
+
+**Scope:**
+
+- Inventory every artifact written under a session directory:
+  - producer phase / agent;
+  - consumer phases;
+  - approximate size;
+  - whether it is durable audit data, reproducible metadata, local scratch, or
+    publish/debug-only output.
+- Define a retention policy for large artifacts:
+  - prefer source commit SHA, build metadata, and checksums over archiving
+    optimizer binaries when the bot fork branch is the durable artifact;
+  - keep any truly session-global binary/build artifacts at most once per
+    session unless a stronger reproducibility need is documented;
+  - exclude local scratch/build outputs from archive branches by default.
+- Propose a v2 layout that separates session-global and per-target ownership,
+  for example:
+  - `sessions/<id>/<session-phase>/...` for session-global phases;
+  - `sessions/<id>/targets/<target>/prepare/...`;
+  - `sessions/<id>/targets/<target>/optimize/...`;
+  - `sessions/<id>/targets/<target>/verify/...`;
+  - `sessions/<id>/targets/<target>/results-analysis/...`;
+  - `sessions/<id>/targets/<target>/publish/...`.
+- Preserve read compatibility for existing archived sessions, including the
+  smoke session `20260611-172955`.
+- Add tests or archive guards that prevent accidentally archiving large local
+  binaries or duplicated phase outputs without an explicit allowlist.
+
+**Acceptance:**
+
+- A documented artifact inventory classifies all current session outputs by
+  producer, consumer, size class, and retention class.
+- Archive output no longer includes optimizer binaries when a bot-fork branch
+  and target `head_sha` are available.
+- Any remaining archived binary artifacts have a documented durability reason.
+- New layout rules make it clear which agent owns each per-target artifact.
+- Existing session readers continue to handle pre-layout-v2 archives.
+- Tests fail if a session archive would include unallowlisted large binaries or
+  duplicate known build artifacts.
