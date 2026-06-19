@@ -10,7 +10,7 @@ planning debt before the next iteration uses preflight as a hook.
 
 > **Status:** shipped (Phases 1–4). Phase 5 (markdown report)
 > deferred to
-> [`0043-history-report`](../../backlog.md#0043-history-report) —
+> [`0043-history-report`](0043-history-report.md) —
 > best promoted after `0033-maintain-command` lands so the report
 > gains the open/merged/closed PR dimension it currently lacks.
 >
@@ -422,7 +422,7 @@ a raw string + `#[rustfmt::skip]` kept the bytes verbatim.
 ### Phase 5 (Stretch): `sbagent history report` — DEFERRED
 
 Extracted to
-[`0043-history-report`](../../backlog.md#0043-history-report) on
+[`0043-history-report`](0043-history-report.md) on
 2026-06-11. Rationale: without `0033-maintain-command`'s
 GitHub-side reconciliation (open / merged / closed / stale PR
 state), a markdown report can only render "PR opened" — which
@@ -444,7 +444,7 @@ In-process / unit:
 - [x] `history show` per-session detail renders the three
       sections.
 - ~~(Stretch) `history report` renders markdown.~~ — deferred to
-  [`0043-history-report`](../../backlog.md#0043-history-report).
+  [`0043-history-report`](0043-history-report.md).
 
 Live / operator:
 
@@ -484,7 +484,7 @@ extracted to `0043-history-report`, to be promoted after
   reader as foundation. Reconciling PR state with GitHub gives
   the deferred report the open/merged/closed dimension it
   currently lacks.
-- [`0043-history-report`](../../backlog.md#0043-history-report) —
+- [`0043-history-report`](0043-history-report.md) —
   the extracted Phase 5 (markdown report). Best promoted as a
   v7 stretch (or v8 primary) immediately after `0033` lands so
   the report can carry PR state, not just "PR opened".

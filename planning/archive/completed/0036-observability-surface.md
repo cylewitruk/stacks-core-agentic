@@ -33,7 +33,7 @@ Add `sbagent history report --format=markdown` with:
 Optionally commit weekly reports to `reports/<iso-week>.md`.
 
 This report slice is now tracked separately as
-[`0043-history-report`](../../backlog.md#0043-history-report), best picked up
+[`0043-history-report`](0043-history-report.md), best picked up
 after `0033-maintain-command` adds GitHub PR lifecycle state.
 
 ## Validation

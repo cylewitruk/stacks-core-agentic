@@ -235,6 +235,53 @@ reason) and a totals footer listing freed bytes. In dry-run mode the
 footer reports the would-be-freed figure so an operator can size up
 recovery before committing.
 
+## History reports: `sbagent history report`
+
+`sbagent history report` renders a deterministic ASCII markdown digest
+of archived sessions. **Read-only**: it never mutates GitHub, appends
+ledgers, schedules workflows, or rewrites session state — it consumes
+`HistoryProjectionV1` over `sessions.jsonl` + `maintain.jsonl` and
+prints. For per-session detail use `sbagent history show <id>`; for
+the leaderboard view use `sbagent history list`.
+
+```bash
+# Digest of the most recent ISO week with archived sessions
+# (default cutoff = Monday of that week). Prints to stdout.
+sbagent history report
+
+# Pin the cutoff to an ISO calendar date.
+sbagent history report --since 2026-06-01
+
+# Pin the cutoff to an ISO week id.
+sbagent history report --since 2026-W23
+
+# Write to a file instead of stdout. Parent directories are created
+# as needed; stdout stays empty so scripts can rely on the path.
+sbagent history report --since 2026-W23 --out reports/2026-W23.md
+```
+
+Sections rendered:
+
+- `Summary` — session count by status (succeeded / failed / aborted),
+  target outcome rollup (A/R/Ab; `mixed` annotated only when present),
+  total wall-clock.
+- `Sessions` — newest-first table with
+  `id | started_at | status | targets | wall-clock | prs | issues`.
+- `Pull requests` — lifecycle table grouped by latest state, only when
+  `maintain` has observed at least one PR URL in the range.
+- `Issues` — same shape as `Pull requests`, only when observed.
+- `Mixed verdicts` — accepted targets whose `reason_code` starts with
+  `mixed:`, only when present.
+
+Empty optional sections are omitted entirely. When no sessions match
+the cutoff (or the ledger is empty), the report prints the
+`no sessions archived yet` notice — matching `sbagent history list`'s
+empty-ledger phrasing.
+
+Output is pure ASCII and never contains ANSI escapes, so it's safe to
+pipe into files, commits, chat, and PR bodies. The markdown is
+byte-identical regardless of whether stdout is a TTY or a pipe.
+
 ## Session-start disk preflight
 
 The session-start preflight includes a `free-disk` check probing

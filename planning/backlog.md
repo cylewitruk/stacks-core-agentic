@@ -4,13 +4,8 @@ Items here are recoverable but not currently assigned to an iteration.
 
 ## Scheduled Items
 
-The following items are scheduled into current iteration docs and are tracked
-there instead of as standalone backlog entries:
-
-<a id="0043-history-report"></a>
-
-- `0043-history-report` — planned in
-  [v17: History Report](iterations/v17-history-report.md).
+No items currently scheduled. (Last shipped: `0043-history-report` in
+[v17: History Report](archive/completed/v17-history-report.md).)
 
 ## Candidate Items
 

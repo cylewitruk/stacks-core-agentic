@@ -291,15 +291,24 @@ The pause file + rate limits + circuit breaker are not nice-to-haves — they're
 
 ### 3D. Observability surface
 
-Status: `[~]` · Planned in
-[`v17-history-report`](../planning/iterations/v17-history-report.md) · Depends
-on: 2A, 3A
+Status: `[x]` · Shipped in
+[`v17-history-report`](../planning/archive/completed/v17-history-report.md) ·
+Depends on: 2A, 3A
 
-- `sbagent history report --format=markdown` — human-readable weekly digest: sessions count, PRs opened/merged/closed, top fix_signatures by attempts, agent token spend if tracked, time-to-merge distribution.
-- Optional: commit that report to `reports/<iso-week>.md` weekly so the repo itself serves as a dashboard.
-- Skip if no usage interest — defer to a v2 if running manually for a while suffices.
-- Planning note: v17 implements `0043-history-report` on top of
-  `HistoryProjectionV1` rather than reading ledgers directly.
+- `sbagent history report [--since <YYYY-MM-DD | YYYY-Www>] [--out <path>]`
+  — deterministic ASCII markdown digest of archived sessions, sourced
+  from `HistoryProjectionV1` (no raw-ledger reads). Sections: `Summary`
+  (session + target outcome rollup, total wall-clock), `Sessions`
+  (newest-first), optional `Pull requests` / `Issues` lifecycle
+  tables, optional `Mixed verdicts`. Empty optional sections are
+  omitted entirely. Stdout by default; `--out` writes the file
+  (creating parents) and keeps stdout empty for scripting.
+- Defaults: when `--since` is absent, the cutoff is the Monday of the
+  ISO week containing the most-recent archived session.
+- Follow-up (deferred): scheduled report generation + weekly
+  `reports/<iso-week>.md` commits. Hold until operators confirm the
+  manual report shape is useful in practice; see Phase 4 follow-ups in
+  the v17 doc.
 
 ---
 
@@ -362,7 +371,8 @@ After 1A lands and one session has run successfully through the new code path:
 1. **Layer 1A → 1B** as a unit. Ship a session, verify quality jump.
 2. **Layer 2A → 2B → 2C** as a cohesive bundle (partial state is worse than no state).
 3. **Layer 3A → 3C → 3B**, in that order. Lifecycle awareness + hygiene before scheduled cron.
-4. **Layer 3D** last (or skip until needed).
+4. **Layer 3D** last — shipped in v17 (`sbagent history report`);
+   scheduled commits remain a deferred follow-up.
 
 Total rough effort: 6-8 days to "autonomous closed-loop running on a schedule, safely."
 

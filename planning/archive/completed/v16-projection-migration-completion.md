@@ -374,7 +374,7 @@ projection drift.
 ## Follow-Ups
 
 - **v17 footnote for reviewers:** v17 should implement
-  [`0043-history-report`](../../backlog.md#0043-history-report) on top of
+  [`0043-history-report`](0043-history-report.md) on top of
   `HistoryProjectionV1`. It should not add another raw ledger pass. The report
   can render session rollups, open / merged / closed PR state, issue state,
   dedup skips, and optimizer-memory lineage only where that information already
