@@ -176,3 +176,108 @@ bot-fork branch and commit SHA that already preserve the optimized source.
 - Existing session readers continue to handle pre-layout-v2 archives.
 - Tests fail if a session archive would include unallowlisted large binaries or
   duplicate known build artifacts.
+
+<a id="0053-operator-performance-dashboard"></a>
+
+### Operator Performance Dashboard
+
+- **id:** `0053-operator-performance-dashboard`
+- **status:** `backlog`
+- **priority:** `medium`
+- **depends on:** `0052-session-artifact-layout-and-retention`
+- **source:** Post-v17 report review. `sbagent history report` provides a
+  recent activity digest, but the operator repo still lacks a cumulative
+  public status surface for the autonomous loop.
+
+**Problem:** A visitor to the operator repo should be able to understand the
+loop's cumulative performance from the README without running local commands:
+what the loop has found, how often analyzer hypotheses survive verification,
+how many PRs exist and where they stand, and whether the loop is healthy. The
+current history report is useful for recent activity, but it is not a durable
+repo-level dashboard and does not expose machine-readable metrics for future
+self-improvement agents.
+
+**Scope:**
+
+- Define a versioned metrics model, for example `OperatorMetricsV1`, that can
+  be rendered to both Markdown and `reports/status/metrics.json`. Generate
+  `schemas/operator-metrics.v1.json` from the Rust model through the existing
+  schema export pipeline; do not hand-author schema mirrors.
+- Compute cumulative metrics from durable operator data:
+  - `sessions.jsonl` via `HistoryProjectionV1` for session outcomes, target
+    outcomes, wall-clock, PR / issue URLs, and measured improvements;
+  - `maintain.jsonl` via `HistoryProjectionV1` for PR / issue lifecycle state;
+  - selected per-session archive artifacts through a separate archive-artifact
+    reader for:
+    - analyzer outputs: estimates, impact classifications, risk, bucket, and
+      fix signatures;
+    - merge / optimization-targets outputs: merge survivors, merge rejections,
+      and dedup decisions;
+    - results-analysis outputs: verdicts, confidence,
+      `matches_expected_signal`, measured-vs-expected deltas, and caveats.
+- Keep ledger access on the v15/v16 projection substrate. Only archive-branch
+  artifact reads may use a separate reader, and that reader should target the
+  post-`0052` stable artifact layout.
+- Render a compact README status block between stable markers such as
+  `<!-- sbagent:status:start -->` and `<!-- sbagent:status:end -->`.
+- Render deeper drill-down artifacts such as:
+  - `reports/status/latest.md`;
+  - `reports/status/metrics.json` for future self-improvement agents.
+- Add a mutating publish/update command, tentatively
+  `sbagent status publish`, that updates the README block and report artifacts,
+  then commits and pushes only when content changed. Reuse the existing
+  publisher PAT / git commit machinery used by `sync`, `archive`, and
+  `maintain`.
+- Keep dashboard publishing as a standalone command. Automation should call it
+  from a separate operator timer/workflow after `sbagent maintain`, rather than
+  having `maintain` shell out to it internally.
+
+**Candidate metrics:**
+
+Each metric should document whether it is ledger-derived, archive-derived, or
+mixed, so reviewers can identify heavyweight archive reads at a glance.
+
+- Discovery (archive / mixed): unique targets, unique fix signatures, unique
+  families, buckets touched, and high / medium / low impact classifications.
+- Analyzer calibration (archive): accepted / mixed / rejected rates, confidence
+  distribution, `matches_expected_signal` rate, estimate error, and within /
+  under / over expected-range buckets.
+- Optimization outcomes (ledger / archive): targets optimized, verification
+  wins, aborted targets, average measured improvement, and mixed-verdict rate.
+- PR lifecycle (ledger): total PRs created, open / merged / closed counts,
+  stale PRs, and time-open summaries where data is available.
+- Loop health (ledger): total sessions, succeeded / failed / aborted counts,
+  zero-accepted sessions, safety pauses, and phase wall-clock trends.
+- Dedup / memory (archive / mixed): targets skipped due open PR, merged prior
+  fix, repeated failure, and families with prior-attempt context. Dedup-decision
+  metrics depend on either exposing v12 dedup rows through
+  `HistoryProjectionV1` or reading the post-`0052` archive artifacts that carry
+  `optimization-targets.json`.
+
+**Acceptance:**
+
+- README has a generated, marker-bounded status block that can be refreshed
+  without disturbing hand-written content.
+- `reports/status/latest.md` provides a cumulative human-readable dashboard.
+- `reports/status/metrics.json` provides the same core metrics in a typed,
+  schema-versioned machine-readable form.
+- `schemas/operator-metrics.v1.json` is generated from the Rust model via the
+  existing schema pipeline.
+- The command fails with a clear diagnostic when README markers are absent; it
+  must not silently append a block at an arbitrary location.
+- The command is idempotent: if generated content is unchanged, no commit or
+  push occurs. Idempotency is checked by rendering the README block and report
+  artifacts in memory, byte-comparing them with current on-disk content, and
+  pushing only on diff.
+- Metrics document which fields are ledger-derived and which require archived
+  session artifacts.
+- Ledger reads go through `HistoryProjectionV1`; archive-branch artifact reads
+  are isolated behind a separate reader.
+- The implementation does not rely on the current pre-cleanup artifact layout
+  in ways that would conflict with `0052`.
+
+**Deferred / non-goals:** Do not implement before the session artifact layout
+and retention policy is settled. Do not make README the source of truth; it is
+only a rendered summary of ledger and archive-derived metrics. Do not ship
+dated dashboard snapshots in v1; `sbagent history report --out` already covers
+operator-selected weekly snapshots.
